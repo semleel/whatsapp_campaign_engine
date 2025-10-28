@@ -1,32 +1,59 @@
 import express from "express";
 import bodyParser from "body-parser";
+import cors from "cors";
+import dotenv from "dotenv";
 import axios from "axios";
 import { supabase } from "./services/supabaseClient.js";
-import dotenv from "dotenv";
+
+// Import your route modules
+import campaignRoutes from "./routes/campaignRoutes.js";
+import referenceRoutes from "./routes/referenceRoutes.js";
+
 dotenv.config();
 
 const app = express();
-app.use(bodyParser.json());
 
+// ===== Middleware =====
+app.use(bodyParser.json());
+app.use(express.json());
+app.use(
+  cors({
+    origin: "http://localhost:3001",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
+
+// ===== Environment Variables =====
+const PORT = process.env.PORT || 3000;
 const token = process.env.WHATSAPP_TOKEN;
 const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
-// Webhook verification (for Meta)
+// ===== Your Campaign API Routes =====
+app.use("/api/campaign", campaignRoutes);
+app.use("/api/reference", referenceRoutes);
+
+// Root endpoint
+app.get("/", (req, res) => {
+  res.send("🚀 Campaign API & WhatsApp Webhook are running...");
+});
+
+// ===== WhatsApp Webhook Verification (Meta) =====
 app.get("/webhook", (req, res) => {
-  const verify_token = "your_verify_token";
+  const verify_token = "your_verify_token"; // change this to match your Meta App setting
   const mode = req.query["hub.mode"];
   const challenge = req.query["hub.challenge"];
   const token = req.query["hub.verify_token"];
 
   if (mode && token === verify_token) {
-    console.log("Webhook verified");
+    console.log("✅ Webhook verified successfully");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// Handle incoming WhatsApp messages
+// ===== WhatsApp Message Handler =====
 app.post("/webhook", async (req, res) => {
   const data = req.body;
 
@@ -41,9 +68,9 @@ app.post("/webhook", async (req, res) => {
       const from = message.from;
       const text = message.text?.body?.trim().toLowerCase() || "";
 
-      console.log("Received message:", text);
+      console.log("📩 Received message:", text);
 
-      // 1. Save message to Supabase
+      // 1️⃣ Save incoming message
       const { error: insertError } = await supabase.from("message").insert([
         {
           message_content: text,
@@ -54,16 +81,16 @@ app.post("/webhook", async (req, res) => {
       ]);
       if (insertError) console.error("Supabase insert error:", insertError);
 
-      // 2. Check for join command
+      // 2️⃣ If user sends "join"
       if (text === "join") {
         const replyText =
-          "You have successfully joined the campaign. Please wait for further updates.";
+          "✅ You have successfully joined the campaign. Please wait for further updates.";
         await sendWhatsAppMessage(from, replyText);
         await logMessage(from, replyText, "sent");
         return res.sendStatus(200);
       }
 
-      // 3. Check if message matches any keyword
+      // 3️⃣ Check if matches a campaign keyword
       const { data: keywordMatch } = await supabase
         .from("keyword")
         .select("campaignid, value")
@@ -73,7 +100,7 @@ app.post("/webhook", async (req, res) => {
       let replyText = "";
 
       if (keywordMatch) {
-        // 4. Retrieve campaign details
+        // 4️⃣ Fetch campaign details
         const { data: campaignData, error: campaignError } = await supabase
           .from("campaign")
           .select("campaignname, objective")
@@ -83,7 +110,7 @@ app.post("/webhook", async (req, res) => {
         if (campaignError)
           console.error("Error fetching campaign:", campaignError);
 
-        // 5. Try to get live API data (if available)
+        // 5️⃣ Optional: Get API data linked to this campaign
         const { data: apiData } = await supabase
           .from("api")
           .select("url, method")
@@ -103,36 +130,36 @@ app.post("/webhook", async (req, res) => {
               300
             );
           } catch (err) {
-            apiResponseText = "Unable to fetch live data for this campaign.";
+            apiResponseText = "⚠️ Unable to fetch live data for this campaign.";
             console.error("API Fetch Error:", err.message);
           }
         }
 
-        // 6. Format reply message
+        // 6️⃣ Build reply message
         if (campaignData) {
-          replyText = `Campaign: ${campaignData.campaignname}\n\nObjective: ${campaignData.objective}\n\nLive Data (if any):\n${apiResponseText}\n\nType 'JOIN' to participate or 'MENU' for other campaigns.`;
+          replyText = `📢 Campaign: ${campaignData.campaignname}\n\n🎯 Objective: ${campaignData.objective}\n\n📡 Live Data (if any):\n${apiResponseText}\n\nReply 'JOIN' to participate or 'MENU' to see more campaigns.`;
         } else {
-          replyText = `Campaign (ID: ${keywordMatch.campaignid}) found, but no detailed record available.`;
+          replyText = `Campaign (ID: ${keywordMatch.campaignid}) found, but no details available.`;
         }
       } else {
         replyText =
-          "Sorry, I did not recognize that keyword. Please try another campaign keyword.";
+          "❓ Sorry, I didn’t recognize that keyword. Try another campaign keyword or type 'MENU'.";
       }
 
-      // 7. Log and send reply
+      // 7️⃣ Log and send reply
       await logMessage(from, replyText, "sent");
       await sendWhatsAppMessage(from, replyText);
-      console.log("Reply sent to:", from);
+      console.log("✅ Reply sent to:", from);
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("Error in webhook handler:", error);
+    console.error("❌ Error in webhook handler:", error);
     res.sendStatus(500);
   }
 });
 
-// Log messages to Supabase
+// ===== Helper: Log outgoing message to Supabase =====
 async function logMessage(receiver, content, status) {
   await supabase.from("message").insert([
     {
@@ -144,7 +171,7 @@ async function logMessage(receiver, content, status) {
   ]);
 }
 
-// Send WhatsApp message
+// ===== Helper: Send WhatsApp Message via Meta API =====
 async function sendWhatsAppMessage(to, text) {
   try {
     await axios.post(
@@ -167,7 +194,13 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
-// Start server
-app.listen(process.env.PORT, () => {
-  console.log(`Webhook running on port ${process.env.PORT}`);
+// ===== Global Error Handler =====
+app.use((err, req, res, next) => {
+  console.error("Global error:", err.stack);
+  res.status(500).json({ message: "Server Error", error: err.message });
+});
+
+// ===== Start the Server =====
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
