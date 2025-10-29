@@ -41,4 +41,19 @@ router.get('/userflows', async (req, res) => {
   }
 });
 
+router.get('/campaignstatus', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('campaignstatus') // ✅ your table name
+      .select('camstatusid, currentstatus');
+
+    if (error) throw error;
+
+    res.status(200).json(data);
+  } catch (err) {
+    console.error('Error fetching campaign statuses:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
