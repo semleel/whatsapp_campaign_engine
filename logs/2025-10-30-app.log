@@ -1,0 +1,20 @@
+[2025-10-30 02:07:25] INFO: Backend server running on port 3000
+[2025-10-30 02:07:48] INFO: Received message: Jajaj
+[2025-10-30 02:07:50] INFO: Reply sent to: 60172900168
+[2025-10-30 02:10:54] INFO: Backend server running on port 3000
+[2025-10-30 02:11:01] INFO: Received message from 60172900168: hello
+[2025-10-30 02:11:03] INFO: Reply sent to: 60172900168
+[2025-10-30 02:18:51] INFO: Backend server running on port 3000
+[2025-10-30 02:19:06] INFO: Received message from 60172900168: "bonjour"
+[2025-10-30 02:19:08] INFO: Reply sent to: 60172900168
+[2025-10-30 02:19:50] INFO: Received message from 60172900168: "hello"
+[2025-10-30 02:19:52] INFO: Reply sent to: 60172900168
+[2025-10-30 02:22:55] INFO: Received message from 60172900168: "helo"
+[2025-10-30 02:22:57] INFO: Reply sent to: 60172900168
+[2025-10-30 02:34:53] INFO: Backend server running on port 3000
+[2025-10-30 02:35:03] INFO: Received message from 60172900168: "holas"
+[2025-10-30 02:35:05] INFO: Reply sent to: 60172900168
+[2025-10-30 02:35:18] INFO: Received message from 60172900168: "[List reply: Mega Sale Campaign]"
+[2025-10-30 02:35:20] INFO: Reply sent to: 60172900168
+[2025-10-30 02:35:38] INFO: Received message from 60172900168: "[List reply: Loyalty Rewards]"
+[2025-10-30 02:35:39] INFO: Reply sent to: 60172900168
