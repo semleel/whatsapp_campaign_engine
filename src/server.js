@@ -10,6 +10,7 @@ import { supabase } from "../services/supabaseClient.js";
 // --- Routes ---
 import campaignRoutes from "./routes/campaignRoutes.js";
 import referenceRoutes from "./routes/referenceRoutes.js";
+import campaignScheduleRoutes from './routes/campaignScheduleRoutes.js';
 import webhookRoutes from "./routes/webhookRoutes.js";
 
 // --- Middlewares ---
@@ -23,6 +24,7 @@ import { log, error } from "./utils/logger.js";
 dotenv.config();
 
 const app = express();
+
 
 // --- Security & Middleware ---
 app.use(helmet());
@@ -46,6 +48,7 @@ const phoneNumberId = process.env.PHONE_NUMBER_ID;
 
 // --- Campaign & Reference APIs ---
 app.use("/api/campaign", campaignRoutes);
+app.use('/api/campaignschedule', campaignScheduleRoutes);
 app.use("/api/reference", referenceRoutes);
 
 // --- WhatsApp Webhook Verification & Handling ---

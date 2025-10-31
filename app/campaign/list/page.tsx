@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation'; // ✅ import router
 
 interface Campaign {
   campaignid: number;
@@ -14,6 +15,7 @@ export default function CampaignListPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const router = useRouter(); // ✅ initialize router
 
   useEffect(() => {
     fetch('http://localhost:3000/api/campaign/list')
@@ -23,9 +25,9 @@ export default function CampaignListPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // ✅ navigate using router.push instead of window.location.href
   const handleEdit = (id: number) => {
-    // You can navigate to an edit page like /campaigns/edit/[id]
-    window.location.href = `/campaigns/edit/${id}`;
+    router.push(`/campaign/edit/${id}`);
   };
 
   const handleArchive = async (id: number) => {
@@ -84,7 +86,7 @@ export default function CampaignListPage() {
               </td>
               <td className="border p-2 text-center space-x-2">
                 <button
-                  onClick={() => handleEdit(c.campaignid)}
+                  onClick={() => handleEdit(c.campaignid)} // ✅ uses router.push
                   className="text-blue-600 hover:text-blue-800"
                 >
                   ✏️
