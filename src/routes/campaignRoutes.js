@@ -9,24 +9,15 @@ const router = express.Router();
  */
 router.post('/create', async (req, res) => {
   try {
-    const {
-      campaignName,
-      objective,
-      targetRegionID,
-      userFlowID,
-      camStatusID,
-      campaignScheduleID
-    } = req.body;
+    const { campaignName, objective, targetRegionID, userFlowID, campaignScheduleID } = req.body;
 
     const insertData = {
       campaignname: campaignName,
       objective,
       targetregionid: targetRegionID ? parseInt(targetRegionID) : null,
       userflowid: userFlowID ? parseInt(userFlowID) : null,
-      camstatusid: camStatusID ? parseInt(camStatusID) : null,
-      campaignscheduleid: campaignScheduleID
-        ? parseInt(campaignScheduleID)
-        : null
+      // camstatusid is now handled by Supabase default (NEW)
+      campaignscheduleid: campaignScheduleID ? parseInt(campaignScheduleID) : null,
     };
 
     const { data, error } = await supabase
@@ -38,13 +29,14 @@ router.post('/create', async (req, res) => {
 
     res.status(201).json({
       message: '✅ Campaign created successfully!',
-      data
+      data,
     });
   } catch (err) {
     console.error('Create error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 /**
  * READ All Campaigns

@@ -5,12 +5,14 @@ import bodyParser from "body-parser";
 import dotenv from "dotenv";
 import axios from "axios";
 import { supabase } from "../services/supabaseClient.js";
+import cron from "node-cron";
 
 
 // --- Routes ---
 import campaignRoutes from "./routes/campaignRoutes.js";
 import referenceRoutes from "./routes/referenceRoutes.js";
 import campaignScheduleRoutes from './routes/campaignScheduleRoutes.js';
+import { autoCheckCampaignStatuses } from "./routes/campaignScheduleRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 
 // --- Middlewares ---
@@ -57,6 +59,12 @@ app.use("/webhook", verifyWebhook, webhookRoutes);
 // --- Root Endpoint ---
 app.get("/", (req, res) => {
   res.send("🚀 Campaign API & WhatsApp Webhook are running...");
+});
+
+// --- Automatic Schedule Status Checker ---
+cron.schedule("* * * * *", async () => {
+  console.log("⏰ [CRON] Checking campaign statuses...");
+  await autoCheckCampaignStatuses();
 });
 
 // --- WhatsApp Message Handler ---

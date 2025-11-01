@@ -106,61 +106,74 @@ export default function CampaignSchedulerPage() {
       <Card>
         <CardContent className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b bg-gray-100">
-                <th className="p-3 text-left">Campaign Name</th>
-                <th className="p-3 text-left">Start Date</th>
-                <th className="p-3 text-left">Start Time</th>
-                <th className="p-3 text-left">End Date</th>
-                <th className="p-3 text-left">End Time</th>
-                <th className="p-3 text-left">Time Message</th>
-                <th className="p-3 text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="p-4 text-center">
-                    Loading...
-                  </td>
-                </tr>
-              ) : campaigns.length > 0 ? (
-                campaigns.map((c) => (
-                  <tr key={c.campaignid} className="border-b hover:bg-gray-50">
-                    <td className="p-3">{c.campaignname}</td>
-                    <td className="p-3">{c.schedule?.startDate || "-"}</td>
-                    <td className="p-3">{c.schedule?.startTime || "-"}</td>
-                    <td className="p-3">{c.schedule?.endDate || "-"}</td>
-                    <td className="p-3">{c.schedule?.endTime || "-"}</td>
-                    <td className="p-3">{c.schedule?.timeMessage || "-"}</td>
-                    <td className="p-3 text-center">
-                      {c.schedule ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openEditModal(c)}
-                        >
-                          <Pencil className="w-4 h-4 mr-1" /> Edit
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => openAddModal(c)}
-                        >
-                          <PlusCircle className="w-4 h-4 mr-1" /> Add
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="p-4 text-center">
-                    No campaigns found
-                  </td>
-                </tr>
-              )}
-            </tbody>
+           <thead>
+  <tr className="border-b bg-gray-100">
+    <th className="p-3 text-left">Campaign Name</th>
+    <th className="p-3 text-left">Status</th>
+    <th className="p-3 text-left">Start Date</th>
+    <th className="p-3 text-left">Start Time</th>
+    <th className="p-3 text-left">End Date</th>
+    <th className="p-3 text-left">End Time</th>
+    <th className="p-3 text-left">Time Message</th>
+    <th className="p-3 text-center">Action</th>
+  </tr>
+</thead>
+<tbody>
+  {loading ? (
+    <tr>
+      <td colSpan={8} className="p-4 text-center">
+        Loading...
+      </td>
+    </tr>
+  ) : campaigns.length > 0 ? (
+    campaigns.map((c) => (
+      <tr key={c.campaignid} className="border-b hover:bg-gray-50">
+        <td className="p-3">{c.campaignname}</td>
+        <td className="p-3">
+          <span
+            className={`px-2 py-1 rounded text-xs font-medium ${
+              c.status === "Active"
+                ? "bg-green-100 text-green-700"
+                : c.status === "On Hold"
+                ? "bg-yellow-100 text-yellow-700"
+                : c.status === "Inactive"
+                ? "bg-gray-200 text-gray-700"
+                : "bg-blue-100 text-blue-700"
+            }`}
+          >
+            {c.status}
+          </span>
+        </td>
+        <td className="p-3">{c.schedule?.startDate || "-"}</td>
+        <td className="p-3">{c.schedule?.startTime || "-"}</td>
+        <td className="p-3">{c.schedule?.endDate || "-"}</td>
+        <td className="p-3">{c.schedule?.endTime || "-"}</td>
+        <td className="p-3">{c.schedule?.timeMessage || "-"}</td>
+        <td className="p-3 text-center">
+          {c.schedule ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => openEditModal(c)}
+            >
+              <Pencil className="w-4 h-4 mr-1" /> Edit
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => openAddModal(c)}>
+              <PlusCircle className="w-4 h-4 mr-1" /> Add
+            </Button>
+          )}
+        </td>
+      </tr>
+    ))
+  ) : (
+    <tr>
+      <td colSpan={8} className="p-4 text-center">
+        No campaigns found
+      </td>
+    </tr>
+  )}
+</tbody>
           </table>
         </CardContent>
       </Card>

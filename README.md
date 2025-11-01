@@ -8,11 +8,13 @@ This project handles the WhatsApp API integration for the Interactive Campaign E
 
 2. Run `npm install`
 
-3. npm install lucide-react
+3. npm install lucide-react /components
 
-4. npm install react-datepicker
+4. npm install react-datepicker /date format
 
-5. npm install date-fns
+5. npm install date-fns /date format
+
+6. npm install node-cron /this is autocheck
 
 
 
@@ -23,7 +25,7 @@ SUPABASE_URL=your_url
 SUPABASE_KEY=your_key
 PORT=3000
 
-7. Run `node index.js`
+7. Run `node server.js`
 
 
 --------------------------------------------------------------------------------------------
