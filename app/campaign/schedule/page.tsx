@@ -150,20 +150,44 @@ export default function CampaignSchedulerPage() {
         <td className="p-3">{c.schedule?.endTime || "-"}</td>
         <td className="p-3">{c.schedule?.timeMessage || "-"}</td>
         <td className="p-3 text-center">
-          {c.schedule ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => openEditModal(c)}
-            >
-              <Pencil className="w-4 h-4 mr-1" /> Edit
-            </Button>
-          ) : (
-            <Button size="sm" onClick={() => openAddModal(c)}>
-              <PlusCircle className="w-4 h-4 mr-1" /> Add
-            </Button>
-          )}
-        </td>
+  {c.schedule ? (
+    c.status === "Active" ? (
+      <Button
+        size="sm"
+        variant="destructive"
+        onClick={async () => {
+          if (confirm("This campaign is currently Active. Do you want to Pause it before editing?")) {
+            const res = await fetch(`http://localhost:3000/api/campaignschedule/pause/${c.campaignid}`, {
+              method: "PUT",
+            });
+            const result = await res.json();
+            if (res.ok) {
+              alert(result.message);
+              fetchCampaigns();
+            } else {
+              alert(result.error || "Failed to pause campaign");
+            }
+          }
+        }}
+      >
+        Pause
+      </Button>
+    ) : (
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => openEditModal(c)}
+      >
+        <Pencil className="w-4 h-4 mr-1" /> Edit
+      </Button>
+    )
+  ) : (
+    <Button size="sm" onClick={() => openAddModal(c)}>
+      <PlusCircle className="w-4 h-4 mr-1" /> Add
+    </Button>
+  )}
+</td>
+
       </tr>
     ))
   ) : (

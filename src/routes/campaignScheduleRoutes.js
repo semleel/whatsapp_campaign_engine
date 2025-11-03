@@ -1,18 +1,31 @@
-import express from 'express';
-import { supabase } from '../../services/supabaseClient.js';
+import express from "express";
+import { supabase } from "../../services/supabaseClient.js";
 
 const router = express.Router();
 
-/**
- * AutoCheck the Schedule and start it , update the campaign status 
- */
+/* ----------------------------------------------
+   🟢 AUTO CHECK - Only On Hold campaigns
+---------------------------------------------- */
 export async function autoCheckCampaignStatuses() {
   try {
     const now = new Date();
 
+    // 1️⃣ Get "On Hold" status ID
+    const { data: statuses } = await supabase
+      .from("campaignstatus")
+      .select("camstatusid, currentstatus");
+    const getStatusId = (name) =>
+      statuses.find((s) => s.currentstatus.toLowerCase() === name.toLowerCase())?.camstatusid;
+
+    const activeID = getStatusId("Active");
+    const inactiveID = getStatusId("Inactive");
+    const onHoldID = getStatusId("On Hold");
+
+    // 2️⃣ Only fetch On Hold campaigns
     const { data: campaigns, error } = await supabase
       .from("campaign")
-      .select(`
+      .select(
+        `
         campaignid,
         campaignschedule:campaignscheduleid (
           startdate,
@@ -21,18 +34,13 @@ export async function autoCheckCampaignStatuses() {
           endtime
         ),
         camstatusid
-      `);
+      `
+      )
+      .eq("camstatusid", onHoldID);
 
     if (error) throw error;
 
-    const { data: statuses } = await supabase.from("campaignstatus").select("camstatusid, currentstatus");
-    const getStatusId = (name) =>
-      statuses.find((s) => s.currentstatus.toLowerCase() === name.toLowerCase())?.camstatusid;
-
-    const activeID = getStatusId("Active");
-    const inactiveID = getStatusId("Inactive");
-    const onHoldID = getStatusId("On Hold");
-
+    // 3️⃣ Check and update each campaign
     for (const c of campaigns) {
       if (!c.campaignschedule) continue;
 
@@ -40,9 +48,7 @@ export async function autoCheckCampaignStatuses() {
       const end = new Date(`${c.campaignschedule.enddate}T${c.campaignschedule.endtime || "23:59"}+08:00`);
 
       let newStatus = null;
-
-      if (now < start) newStatus = onHoldID;
-      else if (now >= start && now <= end) newStatus = activeID;
+      if (now >= start && now <= end) newStatus = activeID;
       else if (now > end) newStatus = inactiveID;
 
       if (newStatus && newStatus !== c.camstatusid) {
@@ -53,17 +59,15 @@ export async function autoCheckCampaignStatuses() {
       }
     }
 
-    console.log("✅ [AutoCheck] Campaign statuses updated successfully.");
+    console.log("✅ [AutoCheck] Only On Hold campaigns checked successfully.");
   } catch (err) {
-    console.error("❌ [AutoCheck] Error checking campaign statuses:", err.message);
+    console.error("❌ [AutoCheck] Error:", err.message);
   }
-  console.log(`[${new Date().toLocaleTimeString()}] Auto check completed.`);
 }
 
-/**
- * 🟢 GET All Campaigns with their Schedule (if any)
- * GET /api/schedule
- */
+/* ----------------------------------------------
+   🟢 GET all campaign schedules
+---------------------------------------------- */
 router.get("/schedules", async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -72,7 +76,7 @@ router.get("/schedules", async (req, res) => {
         campaignid,
         campaignname,
         objective,
-        campaignstatus:camstatusid ( currentstatus  ),
+        campaignstatus:camstatusid ( currentstatus ),
         campaignschedule:campaignscheduleid (
           campaignscheduleid,
           startdate,
@@ -89,7 +93,7 @@ router.get("/schedules", async (req, res) => {
       campaignid: c.campaignid,
       campaignname: c.campaignname,
       objective: c.objective,
-      status: c.campaignstatus?.currentstatus  || "Unknown",
+      status: c.campaignstatus?.currentstatus || "Unknown",
       schedule: c.campaignschedule
         ? {
             id: c.campaignschedule.campaignscheduleid,
@@ -109,19 +113,16 @@ router.get("/schedules", async (req, res) => {
   }
 });
 
-/**
- * 🟢 POST Add a New Schedule
- * POST /api/schedule/add
- */
+/* ----------------------------------------------
+   🟢 ADD a new campaign schedule
+---------------------------------------------- */
 router.post("/add", async (req, res) => {
   try {
     const { campaignID, startDate, startTime, endDate, endTime, timeMessage } = req.body;
 
-    if (!campaignID || !startDate || !endDate) {
+    if (!campaignID || !startDate || !endDate)
       return res.status(400).json({ error: "Missing required fields" });
-    }
 
-    // Insert into CampaignSchedule
     const { data: scheduleData, error: scheduleError } = await supabase
       .from("campaignschedule")
       .insert([
@@ -138,23 +139,19 @@ router.post("/add", async (req, res) => {
 
     if (scheduleError) throw scheduleError;
 
-    // Find On Hold status ID
     const { data: onHoldStatus } = await supabase
       .from("campaignstatus")
       .select("camstatusid")
       .eq("currentstatus", "On Hold")
       .single();
 
-    // Update Campaign with the schedule + set status On Hold
-    const { error: updateError } = await supabase
+    await supabase
       .from("campaign")
       .update({
         campaignscheduleid: scheduleData.campaignscheduleid,
         camstatusid: onHoldStatus?.camstatusid || null,
       })
       .eq("campaignid", campaignID);
-
-    if (updateError) throw updateError;
 
     res.status(201).json({
       message: "✅ Schedule added successfully and campaign set to On Hold!",
@@ -166,12 +163,10 @@ router.post("/add", async (req, res) => {
   }
 });
 
-
-/**
- * 🟢 PUT Update Existing Schedule
- * PUT /api/schedule/update/:id
- */
-router.put('/update/:id', async (req, res) => {
+/* ----------------------------------------------
+   🟡 UPDATE campaign schedule — also recheck status
+---------------------------------------------- */
+router.put("/update/:id", async (req, res) => {
   try {
     const scheduleID = parseInt(req.params.id);
     const { startDate, startTime, endDate, endTime, timeMessage } = req.body;
@@ -185,70 +180,76 @@ router.put('/update/:id', async (req, res) => {
     };
 
     const { error } = await supabase
-      .from('campaignschedule')
+      .from("campaignschedule")
       .update(updateData)
-      .eq('campaignscheduleid', scheduleID);
-
+      .eq("campaignscheduleid", scheduleID);
     if (error) throw error;
 
-    res.status(200).json({ message: '✅ Schedule updated successfully!' });
+    // 🔹 Get campaign linked to this schedule
+    const { data: campaign } = await supabase
+      .from("campaign")
+      .select("campaignid, camstatusid")
+      .eq("campaignscheduleid", scheduleID)
+      .single();
+
+    if (campaign) {
+      // Check what status should be now
+      const now = new Date();
+      const start = new Date(`${startDate}T${startTime || "00:00"}+08:00`);
+      const end = new Date(`${endDate}T${endTime || "23:59"}+08:00`);
+
+      const { data: statuses } = await supabase
+        .from("campaignstatus")
+        .select("camstatusid, currentstatus");
+
+      const getStatusId = (name) =>
+        statuses.find((s) => s.currentstatus.toLowerCase() === name.toLowerCase())?.camstatusid;
+
+      const activeID = getStatusId("Active");
+      const onHoldID = getStatusId("On Hold");
+      const inactiveID = getStatusId("Inactive");
+
+      let newStatus = null;
+      if (now < start) newStatus = onHoldID;
+      else if (now >= start && now <= end) newStatus = activeID;
+      else newStatus = inactiveID;
+
+      if (newStatus && newStatus !== campaign.camstatusid) {
+        await supabase
+          .from("campaign")
+          .update({ camstatusid: newStatus })
+          .eq("campaignid", campaign.campaignid);
+      }
+    }
+
+    res.status(200).json({ message: "✅ Schedule updated & status checked!" });
   } catch (err) {
-    console.error('Update schedule error:', err);
+    console.error("Update schedule error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-router.put("/check-status", async (req, res) => {
+/* ----------------------------------------------
+   🟠 PAUSE campaign manually
+---------------------------------------------- */
+router.put("/pause/:id", async (req, res) => {
   try {
-    const now = new Date();
+    const campaignID = parseInt(req.params.id);
 
-    // Fetch all campaigns with schedules
-    const { data: campaigns, error } = await supabase
+    const { data: pausedStatus } = await supabase
+      .from("campaignstatus")
+      .select("camstatusid")
+      .eq("currentstatus", "Paused")
+      .single();
+
+    await supabase
       .from("campaign")
-      .select(`
-        campaignid,
-        campaignschedule:campaignscheduleid (
-          startdate,
-          starttime,
-          enddate,
-          endtime
-        ),
-        camstatusid
-      `);
+      .update({ camstatusid: pausedStatus.camstatusid })
+      .eq("campaignid", campaignID);
 
-    if (error) throw error;
-
-    // Get status IDs
-    const { data: statuses } = await supabase.from("campaignstatus").select("camstatusid, currentstatus");
-    const getStatusId = (name) => statuses.find((s) => s.currentstatus.toLowerCase() === name.toLowerCase())?.camstatusid;
-
-    const activeID = getStatusId("Active");
-    const inactiveID = getStatusId("Inactive");
-    const onHoldID = getStatusId("On Hold");
-
-    for (const c of campaigns) {
-      if (!c.campaignschedule) continue;
-
-     const start = new Date(`${c.campaignschedule.startdate}T${c.campaignschedule.starttime || "00:00"}+08:00`);
-const end = new Date(`${c.campaignschedule.enddate}T${c.campaignschedule.endtime || "23:59"}+08:00`);
-
-      let newStatus = null;
-
-      if (now < start) newStatus = onHoldID;
-      else if (now >= start && now <= end) newStatus = activeID;
-      else if (now > end) newStatus = inactiveID;
-
-      if (newStatus && newStatus !== c.camstatusid) {
-        await supabase
-          .from("campaign")
-          .update({ camstatusid: newStatus })
-          .eq("campaignid", c.campaignid);
-      }
-    }
-
-    res.json({ message: "✅ Campaign statuses updated based on current time." });
+    res.json({ message: "✅ Campaign paused successfully." });
   } catch (err) {
-    console.error("Check status error:", err);
+    console.error("Pause campaign error:", err);
     res.status(500).json({ error: err.message });
   }
 });

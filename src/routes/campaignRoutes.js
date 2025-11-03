@@ -54,7 +54,8 @@ router.get('/list', async (req, res) => {
         userflow:userflowid (userflowname),
         campaignstatus:camstatusid (currentstatus),
         camstatusid
-      `);
+      `)
+      .neq('camstatusid', 3); // ✅ Exclude Archived campaigns
 
     if (error) throw error;
 
@@ -65,7 +66,7 @@ router.get('/list', async (req, res) => {
       regionname: c.targetregion?.regionname || 'N/A',
       userflowname: c.userflow?.userflowname || 'N/A',
       currentstatus: c.campaignstatus?.currentstatus || 'N/A',
-      camstatusid: c.camstatusid
+      camstatusid: c.camstatusid,
     }));
 
     res.status(200).json(formatted);
@@ -74,6 +75,7 @@ router.get('/list', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 router.get('/archive', async (req, res) => {
   try {
