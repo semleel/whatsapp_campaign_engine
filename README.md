@@ -1,69 +1,192 @@
 # Interactive Campaign Engine on WhatsApp
 
-This project handles the WhatsApp API integration for the Interactive Campaign Engine.
+This backend module integrates **Meta’s WhatsApp Business API** with a Supabase-powered backend to support an **Interactive Campaign Engine**.
+It allows automated WhatsApp interactions, campaign participation via keywords, and real-time message routing for campaign workflows.
 
-## Setup
+---
 
-1. Clone the repo
+## 🚀 Features
 
-2. Run `npm install`
+* Real-time WhatsApp message handling
+* Supabase integration for campaign data and message logging
+* Keyword-based campaign recognition and routing
+* Auto-reply system with fallback and guided responses
+* Live API communication for campaign management
+* Delivery status tracking (sent, delivered, read) via webhook
 
-3. npm install lucide-react /components
+---
 
-4. npm install react-datepicker /date format
+## 🧱 Prerequisites
 
-5. npm install date-fns /date format
+Before starting, ensure the following are installed:
 
-6. npm install node-cron /this is autocheck
+| Tool        | Description                             | Download                                                                 |
+| ----------- | --------------------------------------- | ------------------------------------------------------------------------ |
+| **Node.js** | Runtime for backend server              | [https://nodejs.org/](https://nodejs.org/)                               |
+| **Git**     | Version control                         | [https://git-scm.com/downloads](https://git-scm.com/downloads)           |
+| **ngrok**   | Expose local server for webhook testing | [https://ngrok.com/download](https://ngrok.com/download)                 |
+| **Postman** | API testing tool                        | [https://www.postman.com/downloads/](https://www.postman.com/downloads/) |
 
+---
 
+## ⚙️ Environment Setup
 
-6. Create a `.env` file:
-WHATSAPP_TOKEN=your_token_here
-PHONE_NUMBER_ID=your_phone_number_id
-SUPABASE_URL=your_url
-SUPABASE_KEY=your_key
+### 1️⃣ Clone this repository
+
+```bash
+git clone https://github.com/<your-username>/<your-repo-name>.git
+cd whatsapp-backend
+```
+
+### 2️⃣ Install dependencies
+
+```bash
+npm install
+```
+
+### 3️⃣ Configure your own ngrok account
+
+Each developer should use their **own ngrok authtoken** to avoid conflicts.
+
+```bash
+ngrok config add-authtoken <your-own-ngrok-token>
+ngrok http 3000
+```
+
+Copy the forwarding URL (e.g., `https://abc123.ngrok-free.app`) and set it as the webhook in your
+👉 [Meta Developer Dashboard](https://developers.facebook.com/) → *App → WhatsApp → Configuration.*
+
+> 🧩 This setup ensures everyone can test independently without interfering with teammates’ tunnels.
+
+---
+
+### 4️⃣ Create your `.env` file
+
+Duplicate `.env.example` and rename it to `.env`, then fill in your own values:
+
+```bash
+WEBHOOK_VERIFY_TOKEN=your_verify_token
+WHATSAPP_TOKEN=your_meta_access_token
+SUPABASE_URL=https://xyzcompany.supabase.co
+SUPABASE_KEY=your_supabase_service_key
 PORT=3000
+```
 
-7. Run `node server.js`
+---
 
+## 🧩 Running the Server
 
---------------------------------------------------------------------------------------------
-
-
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
-## Getting Started
-
-First, run the development server:
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+You should see:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+✅ Server running on port 3000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To expose it for Meta’s webhook testing:
 
-## Learn More
+```bash
+ngrok http 3000
+```
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 💬 WhatsApp Message API Testing (Postman)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Use Postman to send messages through the WhatsApp API:
 
-## Deploy on Vercel
+**Example payload**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```json
+{
+  "messaging_product": "whatsapp",
+  "to": "6017XXXXXXX",
+  "type": "text",
+  "text": { "body": "Hello from Interactive Campaign Engine!" }
+}
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+**Example workspace**
+👉 [Postman Workspace](https://khang-hao-968430.postman.co/workspace/KH's-Workspace~df513b93-8585-4e48-85ba-568be5276a75/collection/49601989-eceb0360-9fb7-4d39-a7b6-1a8d9ef07225?action=share&creator=49601989)
+
+---
+
+## 🧑‍💻 Git Workflow Convention
+
+> ⚠️ Do not commit directly to the `main` branch.
+
+1. **Create your branch**
+
+   ```bash
+   git checkout -b <name>-<feature>
+   # Example: yisem-backendIntegration
+   ```
+
+2. **Pull before committing**
+
+   ```bash
+   git pull origin main
+   ```
+
+3. **Push your branch**
+
+   ```bash
+   git push origin <branch-name>
+   ```
+
+4. **Create a pull request (PR)** for review before merging into `main`.
+
+---
+
+## 🧠 Notes
+
+* Each team module (WhatsApp Gateway, Content Engine, Campaign Engine, Backend Integration) connects through **Supabase**.
+* Never commit `.env` files — they are sensitive. Ensure `.env` is in `.gitignore`.
+* If your **WhatsApp access token** expires, regenerate it via **Meta Developer Portal → WhatsApp → API Setup**.
+* Your code already supports **provider_msg_id** tracking, so status updates (`sent`, `delivered`, `read`) are automatically reflected in Supabase.
+
+---
+
+## 🏗 Folder Structure
+
+```bash
+whatsapp-backend/
+├── index.js
+├── package.json
+├── .env
+├── /controllers
+│   └── webhookController.js
+├── /services
+│   ├── supabaseService.js
+│   └── whatsappService.js
+├── /validators
+│   └── webhookValidator.js
+├── /utils
+│   └── logger.js
+└── /routes
+    └── webhookRoutes.js
+```
+
+---
+
+## 🌐 Future Setup (Option C – Shared Demo URL)
+
+When your team is ready for a shared testing environment:
+
+* Deploy the backend to **Render / Railway / Fly.io**, or use **ngrok reserved domains**.
+* Use one stable webhook URL in Meta for end-to-end campaign testing.
+* Keep individual tunnels (Option B) for ongoing module development.
+
+---
+
+## 📚 References
+
+* [Meta for Developers – WhatsApp Business API](https://developers.facebook.com/docs/whatsapp)
+* [Supabase Documentation](https://supabase.com/docs)
+* [ngrok Documentation](https://ngrok.com/docs)
+* [Node.js API Docs](https://nodejs.org/docs/latest/api/)
