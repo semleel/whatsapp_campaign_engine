@@ -13,6 +13,7 @@ interface Campaign {
 export default function ArchivedCampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
     const fetchArchivedCampaigns = async () => {
@@ -31,13 +32,33 @@ export default function ArchivedCampaignsPage() {
     fetchArchivedCampaigns();
   }, []);
 
+  const handleRestore = async (id: number) => {
+    if (!confirm('Did you want Restore this campaign?')) return;
+    try {
+      const res = await fetch(`http://localhost:3000/api/campaign/restore/${id}`, {
+        method: 'PUT',
+      });
+      if (res.ok) {
+        setMessage('Campaign restored successfully!');
+        setCampaigns(campaigns.filter((c) => c.campaignid !== id)); // remove from list
+      } else {
+        setMessage(' Failed to restore campaign.');
+      }
+    } catch (err) {
+      console.error(err);
+      setMessage('Network error.');
+    }
+  };
+
   if (loading) {
     return <p className="text-center mt-10">Loading archived campaigns...</p>;
   }
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-4">Archived Campaigns</h1>
+      <h1 className="text-2xl font-bold mb-4">📦 Archived Campaigns</h1>
+
+      {message && <p className="mb-4 text-center text-blue-600">{message}</p>}
 
       {campaigns.length === 0 ? (
         <p>No archived campaigns found.</p>
@@ -49,6 +70,7 @@ export default function ArchivedCampaignsPage() {
               <th className="border border-gray-300 px-4 py-2">Name</th>
               <th className="border border-gray-300 px-4 py-2">Objective</th>
               <th className="border border-gray-300 px-4 py-2">Status</th>
+              <th className="border border-gray-300 px-4 py-2 text-center">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -59,6 +81,14 @@ export default function ArchivedCampaignsPage() {
                 <td className="border border-gray-300 px-4 py-2">{c.objective}</td>
                 <td className="border border-gray-300 px-4 py-2 text-red-500 font-semibold">
                   {c.campaignstatus?.currentstatus || 'Archived'}
+                </td>
+                <td className="border border-gray-300 px-4 py-2 text-center">
+                  <button
+                    onClick={() => handleRestore(c.campaignid)}
+                    className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+                  >
+                    Restore
+                  </button>
                 </td>
               </tr>
             ))}

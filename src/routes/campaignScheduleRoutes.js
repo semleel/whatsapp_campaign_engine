@@ -59,9 +59,9 @@ export async function autoCheckCampaignStatuses() {
       }
     }
 
-    console.log("✅ [AutoCheck] Only On Hold campaigns checked successfully.");
+    console.log("[AutoCheck] Only On Hold campaigns checked successfully.");
   } catch (err) {
-    console.error("❌ [AutoCheck] Error:", err.message);
+    console.error("[AutoCheck] Error:", err.message);
   }
 }
 
@@ -154,7 +154,7 @@ router.post("/add", async (req, res) => {
       .eq("campaignid", campaignID);
 
     res.status(201).json({
-      message: "✅ Schedule added successfully and campaign set to On Hold!",
+      message: "Schedule added successfully and campaign set to On Hold!",
       scheduleId: scheduleData.campaignscheduleid,
     });
   } catch (err) {
@@ -222,7 +222,7 @@ router.put("/update/:id", async (req, res) => {
       }
     }
 
-    res.status(200).json({ message: "✅ Schedule updated & status checked!" });
+    res.status(200).json({ message: "Schedule updated & status checked!" });
   } catch (err) {
     console.error("Update schedule error:", err);
     res.status(500).json({ error: err.message });
@@ -247,7 +247,7 @@ router.put("/pause/:id", async (req, res) => {
       .update({ camstatusid: pausedStatus.camstatusid })
       .eq("campaignid", campaignID);
 
-    res.json({ message: "✅ Campaign paused successfully." });
+    res.json({ message: "Campaign paused successfully." });
   } catch (err) {
     console.error("Pause campaign error:", err);
     res.status(500).json({ error: err.message });

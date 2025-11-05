@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation'; // ✅ import router
+import { useRouter } from 'next/navigation'; 
 
 interface Campaign {
   campaignid: number;
@@ -38,14 +38,14 @@ export default function CampaignListPage() {
         method: 'PUT',
       });
       if (res.ok) {
-        setMessage('✅ Campaign archived successfully');
+        setMessage('Campaign archived successfully');
         setCampaigns(campaigns.filter((c) => c.campaignid !== id));
       } else {
-        setMessage('❌ Failed to archive campaign');
+        setMessage('Failed to archive campaign');
       }
     } catch (err) {
       console.error(err);
-      setMessage('❌ Network error.');
+      setMessage('Network error.');
     }
   };
 
@@ -53,7 +53,7 @@ export default function CampaignListPage() {
 
   return (
     <div className="max-w-4xl mx-auto mt-10 p-6 bg-white rounded-2xl shadow-lg">
-      <h1 className="text-2xl font-bold mb-4">📋 Campaign List</h1>
+      <h1 className="text-2xl font-bold mb-4">Campaign List</h1>
 
       <table className="w-full border-collapse border border-gray-300 text-sm">
         <thead>
@@ -86,7 +86,7 @@ export default function CampaignListPage() {
               </td>
               <td className="border p-2 text-center space-x-2">
                 <button
-                  onClick={() => handleEdit(c.campaignid)} // ✅ uses router.push
+                  onClick={() => handleEdit(c.campaignid)} 
                   className="text-blue-600 hover:text-blue-800"
                 >
                   ✏️

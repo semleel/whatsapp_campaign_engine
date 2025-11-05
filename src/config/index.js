@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-export default {
+const config = {
   server: {
     port: process.env.PORT || 3000,
     webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN,
@@ -15,3 +15,5 @@ export default {
     key: process.env.SUPABASE_KEY,
   },
 };
+
+export default config;

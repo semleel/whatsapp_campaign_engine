@@ -44,7 +44,7 @@ router.get('/userflows', async (req, res) => {
 router.get('/campaignstatus', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('campaignstatus') // ✅ your table name
+      .from('campaignstatus') 
       .select('camstatusid, currentstatus');
 
     if (error) throw error;

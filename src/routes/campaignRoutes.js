@@ -28,7 +28,7 @@ router.post('/create', async (req, res) => {
     if (error) throw error;
 
     res.status(201).json({
-      message: '✅ Campaign created successfully!',
+      message: 'Campaign created successfully!',
       data,
     });
   } catch (err) {
@@ -166,7 +166,7 @@ router.put('/update/:id', async (req, res) => {
 
     if (error) throw error;
 
-    res.status(200).json({ message: '✅ Campaign updated successfully!' });
+    res.status(200).json({ message: 'Campaign updated successfully!' });
   } catch (err) {
     console.error('Update error:', err);
     res.status(500).json({ error: err.message });
@@ -185,7 +185,7 @@ router.put('/update/:id', async (req, res) => {
 router.put('/archive/:id', async (req, res) => {
   try {
     const campaignID = parseInt(req.params.id);
-    console.log('🟢 Archiving campaign ID:', campaignID);
+    console.log('Archiving campaign ID:', campaignID);
 
     const { error } = await supabase
       .from('campaign')
@@ -193,17 +193,51 @@ router.put('/archive/:id', async (req, res) => {
       .eq('campaignid', campaignID);
 
     if (error) {
-      console.error('❌ Supabase update error:', error);
+      console.error('Supabase update error:', error);
       throw error;
     }
 
-    console.log('✅ Campaign updated in DB.');
-    res.status(200).json({ message: '📦 Campaign archived successfully!' });
+    console.log('Campaign updated in DB.');
+    res.status(200).json({ message: 'Campaign archived successfully!' });
   } catch (err) {
     console.error('Archive error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
+/**
+ * RESTORE Archived Campaign
+ * PUT /api/campaign/restore/:id
+ */
+router.put('/restore/:id', async (req, res) => {
+  try {
+    const campaignID = parseInt(req.params.id);
+    console.log('Restoring campaign ID:', campaignID);
+
+    // Get the Inactive status ID
+    const { data: inactiveStatus, error: statusError } = await supabase
+      .from('campaignstatus')
+      .select('camstatusid')
+      .eq('currentstatus', 'Inactive')
+      .single();
+
+    if (statusError) throw statusError;
+
+    // Update campaign to Inactive
+    const { error } = await supabase
+      .from('campaign')
+      .update({ camstatusid: inactiveStatus.camstatusid })
+      .eq('campaignid', campaignID);
+
+    if (error) throw error;
+
+    res.status(200).json({ message: '♻️ Campaign restored to Inactive!' });
+  } catch (err) {
+    console.error('Restore error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 
 export default router;
