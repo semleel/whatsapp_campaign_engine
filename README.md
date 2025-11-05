@@ -1,4 +1,4 @@
-# Interactive Campaign Engine on WhatsApp
+# Interactive Campaign Engine on WhatsApp  
 
 This backend module integrates **Meta’s WhatsApp Business API** with a Supabase-powered backend to support an **Interactive Campaign Engine**.
 It allows automated WhatsApp interactions, campaign participation via keywords, and real-time message routing for campaign workflows.
