@@ -1,69 +1,132 @@
-# Interactive Campaign Engine on WhatsApp
+# Interactive Campaign Engine on WhatsApp  
 
-This project handles the WhatsApp API integration for the Interactive Campaign Engine.
+This project handles **WhatsApp API integration**, message routing, and backend communication for the Interactive Campaign Engine.  
+It connects WhatsApp users to campaign data through Supabase and allows automated responses via Meta’s WhatsApp Business API.
 
-## Setup
+---
 
-1. Clone the repo
+## 🚀 Features  
+- Real-time WhatsApp message handling  
+- Supabase integration for campaign data and message logging  
+- Keyword-based campaign recognition  
+- Auto-reply system with fallback messages  
+- Live API communication for campaign management  
 
-2. Run `npm install`
+---
 
-3. npm install lucide-react /components
+## 🧱 Prerequisites  
+Before you start, make sure you have the following installed:
 
-4. npm install react-datepicker /date format
+- **Node.js** → [https://nodejs.org/](https://nodejs.org/)  
+- **Git** → [https://git-scm.com/downloads](https://git-scm.com/downloads)  
+- **ngrok** (for webhook testing) → Install from Microsoft Store or [https://ngrok.com/download](https://ngrok.com/download)  
+- **Postman** (for WhatsApp API testing) → [https://www.postman.com/downloads/](https://www.postman.com/downloads/)  
 
-5. npm install date-fns /date format
+---
 
-6. npm install node-cron /this is autocheck
+## ⚙️ Environment Setup  
 
-
-
-6. Create a `.env` file:
-WHATSAPP_TOKEN=your_token_here
-PHONE_NUMBER_ID=your_phone_number_id
-SUPABASE_URL=your_url
-SUPABASE_KEY=your_key
-PORT=3000
-
-7. Run `node server.js`
-
-
---------------------------------------------------------------------------------------------
-
-
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
-
-## Getting Started
-
-First, run the development server:
-
+### 1️⃣ Clone this repository  
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/<your-username>/<your-repo-name>.git
+cd whatsapp-backend
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2️⃣ Install dependencies
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3️⃣ Configure ngrok
+Run the following command to connect your account:
+```bash
+ngrok config add-authtoken 34SlHR7rkiMckXvOTHb8pQBsNEk_2DaCcBPpWbnpWAun8Av1t
+```
+Then, start ngrok to expose your webhook:
+```bash
+ngrok http 3000
+```
+Copy the Forwarding URL (e.g., `https://abc123.ngrok.io`) and paste it into your Webhook URL in the [Meta Developer Dashboard](https://developers.facebook.com/).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4️⃣ Create a `.env` file
+Create a `.env` file and copy everything inside the .env.example.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 🧩 Running the Server
+To start the backend server:
+```bash
+npm run dev
+```
+You should see:
+```nginx
+Webhook running on port 3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 💬 WhatsApp Message API Testing
+You can test the API using Postman:
+👉 [View Example Postman Workspace](https://khang-hao-968430.postman.co/workspace/KH's-Workspace~df513b93-8585-4e48-85ba-568be5276a75/collection/49601989-eceb0360-9fb7-4d39-a7b6-1a8d9ef07225?action=share&creator=49601989)
+### Sample test payload:
+```json
+{
+  "messaging_product": "whatsapp",
+  "to": "6017XXXXXXX",
+  "type": "text",
+  "text": { "body": "Hello from Interactive Campaign Engine!" }
+}
+```
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 🧑‍💻 Git Workflow Convention
+### ⚠️ Do not make changes directly in the `main` branch.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Create your own branch (use `<name>-<feature>` naming):
+```bash
+git checkout -b yisem-backendIntegration
+```
+2. Pull the latest updates before committing:
+```bash
+git pull origin main
+```
+3. Push your branch:
+```bash
+git push origin yisem-backendIntegration
+```
+4. Create a pull request for review before merging into `main`.
+
+---
+
+## 🧠 Notes
+* Each campaign module (Content Engine, Campaign Engine, Integration Module) will connect through Supabase APIs.
+* Avoid committing sensitive `.env` files — add them to `.gitignore`.
+* If WhatsApp token expires, regenerate it under your *Meta App* → *WhatsApp* → *API Setup* section.
+
+---
+
+## 📁 Folder Structure (example)
+```bash
+whatsapp-backend/
+├── index.js
+├── package.json
+├── .env <-- .env file here
+├── /services
+│   └── supabaseClient.js
+├── /controllers
+│   └── messageController.js
+├── /routes
+│   └── webhookRoutes.js
+└── /utils
+    └── formatters.js
+```
+
+---
+
+## 📚 References
+
+* [Meta for Developers – WhatsApp Business API](https://developers.facebook.com/docs/whatsapp?utm_source=chatgpt.com)
+* [Supabase Documentation](https://supabase.com/docs)
+* [ngrok Documentation](https://ngrok.com/docs/what-is-ngrok)
+* [Node.js Documentation](https://nodejs.org/docs/latest/api/)
