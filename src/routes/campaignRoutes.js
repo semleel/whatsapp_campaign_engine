@@ -1,5 +1,5 @@
 import express from 'express';
-import { supabase } from '../services/supabaseClient.js';
+import { supabase } from '../../services/supabaseClient.js';
 
 const router = express.Router();
 
@@ -9,25 +9,15 @@ const router = express.Router();
  */
 router.post('/create', async (req, res) => {
   try {
-    const {
-      campaignName,
-      objective,
-      targetRegionID,
-      userFlowID,
-      camStatusID,
-      campaignScheduleID
-    } = req.body;
+    const { campaignName, objective, targetRegionID, userFlowID, campaignScheduleID } = req.body;
 
-    // Convert numeric IDs (important to fix "invalid input syntax for type integer")
     const insertData = {
       campaignname: campaignName,
       objective,
       targetregionid: targetRegionID ? parseInt(targetRegionID) : null,
       userflowid: userFlowID ? parseInt(userFlowID) : null,
-      camstatusid: camStatusID ? parseInt(camStatusID) : null,
-      campaignscheduleid: campaignScheduleID
-        ? parseInt(campaignScheduleID)
-        : null
+      // camstatusid is now handled by Supabase default (NEW)
+      campaignscheduleid: campaignScheduleID ? parseInt(campaignScheduleID) : null,
     };
 
     const { data, error } = await supabase
@@ -39,7 +29,7 @@ router.post('/create', async (req, res) => {
 
     res.status(201).json({
       message: '✅ Campaign created successfully!',
-      data
+      data,
     });
   } catch (err) {
     console.error('Create error:', err);
@@ -47,8 +37,9 @@ router.post('/create', async (req, res) => {
   }
 });
 
+
 /**
- * READ All Campaigns (with JOIN)
+ * READ All Campaigns
  * GET /api/campaign/list
  */
 router.get('/list', async (req, res) => {
@@ -61,19 +52,21 @@ router.get('/list', async (req, res) => {
         objective,
         targetregion:targetregionid (regionname),
         userflow:userflowid (userflowname),
-        campaignstatus:camstatusid (currentstatus)
-      `);
+        campaignstatus:camstatusid (currentstatus),
+        camstatusid
+      `)
+      .neq('camstatusid', 3); // ✅ Exclude Archived campaigns
 
     if (error) throw error;
 
-    // Flatten nested objects for UI
     const formatted = data.map((c) => ({
       campaignid: c.campaignid,
       campaignname: c.campaignname,
       objective: c.objective,
       regionname: c.targetregion?.regionname || 'N/A',
       userflowname: c.userflow?.userflowname || 'N/A',
-      currentstatus: c.campaignstatus?.currentstatus || 'N/A'
+      currentstatus: c.campaignstatus?.currentstatus || 'N/A',
+      camstatusid: c.camstatusid,
     }));
 
     res.status(200).json(formatted);
@@ -83,6 +76,108 @@ router.get('/list', async (req, res) => {
   }
 });
 
+
+router.get('/archive', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('campaign')
+      .select(`
+        campaignid,
+        campaignname,
+        objective,
+        targetregion:targetregionid (regionname),
+        userflow:userflowid (userflowname),
+        campaignstatus:camstatusid (currentstatus)
+      `)
+      .eq('camstatusid', 3);
+
+    if (error) throw error;
+
+    const formatted = data.map((c) => ({
+      campaignid: c.campaignid,
+      campaignname: c.campaignname,
+      objective: c.objective,
+      regionname: c.targetregion?.regionname || 'N/A',
+      userflowname: c.userflow?.userflowname || 'N/A',
+      currentstatus: c.campaignstatus?.currentstatus || 'Archived'
+    }));
+
+    res.status(200).json(formatted);
+  } catch (err) {
+    console.error('Fetch archived campaigns error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * READ Single Campaign
+ * GET /api/campaign/:id
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const campaignID = parseInt(req.params.id);
+
+    const { data, error } = await supabase
+      .from('campaign')
+      .select('*')
+      .eq('campaignid', campaignID)
+      .single();
+
+    if (error) throw error;
+
+    res.status(200).json(data);
+  } catch (err) {
+    console.error('Fetch single error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * UPDATE Campaign
+ * PUT /api/campaign/update/:id
+ */
+router.put('/update/:id', async (req, res) => {
+  try {
+    const campaignID = parseInt(req.params.id);
+    const {
+      campaignName,
+      objective,
+      targetRegionID,
+      userFlowID,
+      camStatusID,
+      campaignScheduleID
+    } = req.body;
+
+    const updateData = {
+      campaignname: campaignName,
+      objective,
+      targetregionid: targetRegionID ? parseInt(targetRegionID) : null,
+      userflowid: userFlowID ? parseInt(userFlowID) : null,
+      camstatusid: camStatusID ? parseInt(camStatusID) : null,
+      campaignscheduleid: campaignScheduleID
+        ? parseInt(campaignScheduleID)
+        : null
+    };
+
+    const { error } = await supabase
+      .from('campaign')
+      .update(updateData)
+      .eq('campaignid', campaignID);
+
+    if (error) throw error;
+
+    res.status(200).json({ message: '✅ Campaign updated successfully!' });
+  } catch (err) {
+    console.error('Update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * READ Archived Campaigns
+ * GET /api/campaign/archive
+ */
+
 /**
  * ARCHIVE Campaign
  * PUT /api/campaign/archive/:id
@@ -90,19 +185,25 @@ router.get('/list', async (req, res) => {
 router.put('/archive/:id', async (req, res) => {
   try {
     const campaignID = parseInt(req.params.id);
+    console.log('🟢 Archiving campaign ID:', campaignID);
 
     const { error } = await supabase
       .from('campaign')
-      .update({ camstatusid: 4 }) // assuming 4 = "Archived" in your campaignstatus table
+      .update({ camstatusid: 3 })
       .eq('campaignid', campaignID);
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Supabase update error:', error);
+      throw error;
+    }
 
+    console.log('✅ Campaign updated in DB.');
     res.status(200).json({ message: '📦 Campaign archived successfully!' });
   } catch (err) {
     console.error('Archive error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 export default router;
