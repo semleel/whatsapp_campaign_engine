@@ -26,21 +26,21 @@ export async function webhookHandler(req, res) {
   const validData = parseResult.data;
 
   try {
-    const entry   = validData.entry?.[0];
+    const entry = validData.entry?.[0];
     const changes = entry?.changes?.[0];
-    const value   = changes?.value;
+    const value = changes?.value;
 
-    const waDisplayPhone  = value?.metadata?.display_phone_number || null; // your WA number (string)
-    const waPhoneNumberId = value?.metadata?.phone_number_id || null;      // your WA number ID (string)
+    const waDisplayPhone = value?.metadata?.display_phone_number || null; // WA number (string)
+    const waPhoneNumberId = value?.metadata?.phone_number_id || null;      // WA number ID (string)
 
     // --- Handle delivery/read status receipts (concise logs only)
     const statuses = value?.statuses || [];
     if (statuses.length) {
       for (const st of statuses) {
         const s = (st?.status || "").toLowerCase();
-        if (s === "sent")       log("Status: Sent");
+        if (s === "sent") log("Status: Sent");
         else if (s === "delivered") log("Status: Delivered");
-        else if (s === "read")  log("Status: Read"); // keep if you want
+        else if (s === "read") log("Status: Read");
         // Update DB status if you store provider_msg_id on send:
         const tsIso = st?.timestamp ? new Date(parseInt(st.timestamp, 10) * 1000).toISOString() : null;
         await supabase.from("message")
