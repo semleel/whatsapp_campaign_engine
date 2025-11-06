@@ -1,9 +1,13 @@
-export type SubItem = { label: string; href: string };
+export type MenuItem = {
+  label: string;
+  href: string;
+  exact?: boolean;
+};
 export type MenuSection = {
   id: string;
   label: string;
   icon?: React.ReactNode;
-  items: SubItem[];
+  items: MenuItem[];
 };
 
 export const MENU: MenuSection[] = [
@@ -41,10 +45,11 @@ export const MENU: MenuSection[] = [
     id: "integration",
     label: "Backend Integration & Live API",
     items: [
-      { label: "API Connector", href: "/integration/connector" },
-      { label: "Response Formatter", href: "/integration/formatter" },
-      { label: "API Mapping Layer", href: "/integration/mapping" },
-      { label: "Error & Fallback", href: "/integration/errors" },
+      { label: "Overview", href: "/integration", exact: true },
+      { label: "Endpoints", href: "/integration/endpoints" },
+      { label: "Mappings", href: "/integration/mappings" },
+      { label: "Templates", href: "/integration/templates" },
+      { label: "Logs", href: "/integration/logs" },
     ],
   },
 ];
