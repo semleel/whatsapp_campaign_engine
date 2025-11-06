@@ -11,6 +11,7 @@ import referenceRoutes from "./routes/referenceRoutes.js";
 import campaignScheduleRoutes, { autoCheckCampaignStatuses } from "./routes/campaignScheduleRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import whatsappRoutes from "./routes/whatsappRoutes.js";
+import templateRoutes from "./routes/templateRoutes.js";
 
 // --- Middleware ---
 import errorHandler from "./middleware/errorHandler.js";
@@ -47,6 +48,7 @@ app.use("/api/campaign", campaignRoutes);
 app.use("/api/campaignschedule", campaignScheduleRoutes);
 app.use("/api/reference", referenceRoutes);
 app.use("/api/wa", whatsappRoutes);
+app.use("/api/template", templateRoutes);
 
 // --- WhatsApp Webhook Verification & Handling ---
 app.use("/webhook", webhookRoutes);
