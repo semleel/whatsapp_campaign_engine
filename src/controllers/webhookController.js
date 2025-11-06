@@ -108,25 +108,28 @@ export async function webhookHandler(req, res) {
       const { error: recErr } = await supabase.from("message").insert([{
         message_content: rawText,
         senderid: from,
-        receiverid: waDisplayPhone,               // your displayed business number
+        receiverid: waDisplayPhone,               // business number
         provider_msg_id: message.id ?? null,      // provider id of inbound msg
         timestamp: new Date().toISOString(),
         message_status: "received"
       }]);
       if (recErr) error("Supabase insert (received) error:", recErr);
 
-      // ROUTING (simplified keyword demo)
-      const text = rawText.toLowerCase();
-      let replyText = "Sorry, I did not recognize that keyword. Please try another campaign keyword.";
+      // ROUTING (simple demo)
+      const isText = message.type === "text";
+      const text = (isText ? (message.text?.body || "") : "").trim().toLowerCase();
 
-      if (text === "join") {
+      let replyText;
+      if (isText && text === "join") {
         replyText = "You have successfully joined the campaign. Please wait for further updates.";
-      } else {
-        const { data: keywordMatch } = await supabase
+      } else if (isText) {
+        // keyword lookup only for text
+        const { data: keywordMatch, error: kmErr } = await supabase
           .from("keyword")
           .select("campaignid, value")
           .eq("value", text)
           .maybeSingle();
+        if (kmErr) error("Keyword lookup error:", kmErr);
 
         if (keywordMatch) {
           const { data: campaignData, error: campaignError } = await supabase
@@ -139,23 +142,42 @@ export async function webhookHandler(req, res) {
           replyText = campaignData
             ? `Campaign: ${campaignData.campaignname}\n\nObjective: ${campaignData.objective}\n\nType 'JOIN' to participate or 'MENU' for other campaigns.`
             : `Campaign (ID: ${keywordMatch.campaignid}) found, but no detailed record available.`;
+        } else {
+          replyText = "Sorry, I didn’t recognize that keyword. Try another campaign keyword or type 'MENU'.";
         }
+      } else if (message.type === "image") {
+        replyText = "Nice image! For campaigns, please send a keyword (e.g. CNY) or type 'MENU'.";
+      } else if (message.type === "interactive") {
+        replyText = "Thanks for your selection! You can also type a campaign keyword or 'MENU'.";
+      } else if (message.type === "sticker") {
+        replyText = "Cute sticker! To join a campaign, send a keyword or type 'MENU'.";
+      } else {
+        replyText = "I received your message. Please send a campaign keyword or type 'MENU'.";
       }
 
-      // Send to user (ONCE) and capture provider msg id
-      const sendRes = await sendWhatsAppMessage(from, replyText);
-      const providerId = sendRes?.messages?.[0]?.id ?? null;
+      // SEND a proper WhatsApp message object (not a string)
+      const replyMessageObj = { type: "text", text: { body: replyText } };
 
-      // OUTBOUND: sender = your business number, receiver = user
-      const { error: sendErr } = await supabase.from("message").insert([{
+      let providerId = null;
+      try {
+        const sendRes = await sendWhatsAppMessage(from, replyMessageObj);
+        providerId = sendRes?.messages?.[0]?.id ?? null;
+        log(`Reply sent to: ${from}`);
+      } catch (sendErr) {
+        // Don't 500 to Meta; just log and continue
+        error("❌ WhatsApp send error (webhook reply):", sendErr?.response?.data || sendErr?.message || sendErr);
+      }
+
+      // OUTBOUND log
+      const { error: sendErr2 } = await supabase.from("message").insert([{
         message_content: replyText,
-        senderid: waDisplayPhone,     // your number
-        receiverid: from,             // end-user
-        provider_msg_id: providerId,  // provider id of outbound msg
+        senderid: waDisplayPhone,
+        receiverid: from,
+        provider_msg_id: providerId,
         timestamp: new Date().toISOString(),
-        message_status: "sent"
+        message_status: providerId ? "sent" : "error"
       }]);
-      if (sendErr) error("Supabase insert (sent) error:", sendErr);
+      if (sendErr2) error("Supabase insert (sent) error:", sendErr2);
 
       // Exact log line you requested
       log(`Reply sent to: ${from}`);

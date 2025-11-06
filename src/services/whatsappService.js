@@ -4,14 +4,22 @@ import { log, error } from "../utils/logger.js";
 
 export async function sendWhatsAppMessage(to, messageObj) {
   try {
-    if (!to || !messageObj?.type) {
+    if (!to || !messageObj) throw new Error("Invalid message payload");
+
+    // Allow plain string for convenience
+    let normalized;
+    if (typeof messageObj === "string") {
+      normalized = { type: "text", text: { body: messageObj } };
+    } else if (typeof messageObj === "object" && messageObj.type) {
+      normalized = messageObj;
+    } else {
       throw new Error("Invalid message payload");
     }
 
     const payload = {
       messaging_product: "whatsapp",
       to,
-      ...messageObj
+      ...normalized
     };
 
     const res = await axios.post(
@@ -25,7 +33,7 @@ export async function sendWhatsAppMessage(to, messageObj) {
       }
     );
 
-    log(`✅ Message sent to ${to} (${messageObj.type})`);
+    log(`✅ Message sent to ${to} (${normalized.type})`);
     return res.data;
   } catch (err) {
     error("❌ WhatsApp send error:", err.response?.data || err.message);
