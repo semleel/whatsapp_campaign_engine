@@ -11,6 +11,8 @@ type TemplateForm = {
   defaultLang: string;
   description: string;
   mediaUrl: string;
+  tags: string; // comma/space separated
+  expiresAt: string; // datetime-local
 };
 
 export default function ContentCreatePage() {
@@ -22,6 +24,8 @@ export default function ContentCreatePage() {
     defaultLang: "en",
     description: "",
     mediaUrl: "",
+    tags: "",
+    expiresAt: "",
   });
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -54,6 +58,32 @@ export default function ContentCreatePage() {
       const isJson = ct.includes("application/json");
       const data = isJson ? await res.json() : await res.text();
       if (res.ok && isJson) {
+        const created = (data as any)?.data;
+        const contentId: number | undefined = created?.contentid;
+
+        // Optionally set tags
+        const tags = form.tags
+          .split(/[\s,]+/)
+          .map((t) => t.trim())
+          .filter(Boolean);
+        if (contentId && tags.length) {
+          await fetch(`http://localhost:3000/api/template/${contentId}/tags`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tags }),
+          });
+        }
+
+        // Optionally schedule expiry
+        if (contentId && form.expiresAt) {
+          const iso = new Date(form.expiresAt).toISOString();
+          await fetch(`http://localhost:3000/api/template/${contentId}/expire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ expiresAt: iso }),
+          });
+        }
+
         setMessage("Template created successfully.");
         setForm({
           title: "",
@@ -63,6 +93,8 @@ export default function ContentCreatePage() {
           defaultLang: "en",
           description: "",
           mediaUrl: "",
+          tags: "",
+          expiresAt: "",
         });
       } else {
         const msg = typeof data === "string" ? data : data?.error || "Unknown error";
@@ -155,6 +187,32 @@ export default function ContentCreatePage() {
               onChange={handleChange}
               className="w-full rounded-md border px-3 py-2"
             />
+          </label>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Tags</span>
+            <input
+              type="text"
+              name="tags"
+              placeholder="e.g. RAYA2025 EN approved"
+              value={form.tags}
+              onChange={handleChange}
+              className="w-full rounded-md border px-3 py-2"
+            />
+            <span className="text-xs text-muted-foreground">Separate with comma or space</span>
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Expiry</span>
+            <input
+              type="datetime-local"
+              name="expiresAt"
+              value={form.expiresAt}
+              onChange={handleChange}
+              className="w-full rounded-md border px-3 py-2"
+            />
+            <span className="text-xs text-muted-foreground">Optional. Auto-hides after this time.</span>
           </label>
         </div>
 

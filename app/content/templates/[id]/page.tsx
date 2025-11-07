@@ -11,10 +11,12 @@ type Content = {
   status: string;
   defaultlang: string;
   currentversion: number | null;
+  expiresat?: string | null;
 };
 
 type Version = { templateversionid: number; contentid: number; versionno: number; changenote?: string; createdby?: string; createdat?: string };
 type Variant = { variantid: number; contentid: number; versionno: number; lang: string; body: string; placeholders: any };
+type Tag = { tagid: number; name: string };
 
 export default function TemplateDetailPage() {
   const params = useParams();
@@ -33,6 +35,9 @@ export default function TemplateDetailPage() {
   const [newVariant, setNewVariant] = useState({ lang: "en", body: "", placeholders: "[]" });
   const [previewLang, setPreviewLang] = useState<string>("en");
   const [preview, setPreview] = useState<{ body?: string; placeholders?: any } | null>(null);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [tagInput, setTagInput] = useState<string>("");
+  const [expiresAt, setExpiresAt] = useState<string>("");
 
   useEffect(() => {
     if (!id || Number.isNaN(id)) return;
@@ -77,6 +82,55 @@ export default function TemplateDetailPage() {
       }
     })();
   }, [id, selectedVersion]);
+
+  useEffect(() => {
+    if (!id) return;
+    (async () => {
+      try {
+        const res = await fetch(`http://localhost:3000/api/template/${id}/tags`);
+        const ct = res.headers.get("content-type") || "";
+        if (!res.ok) throw new Error(await res.text());
+        const data: Tag[] = ct.includes("application/json") ? await res.json() : JSON.parse(await res.text());
+        setTags(data);
+      } catch {
+        setTags([]);
+      }
+    })();
+  }, [id]);
+
+  const saveTags = async () => {
+    if (!id) return;
+    const list = tagInput
+      .split(/[\s,]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const res = await fetch(`http://localhost:3000/api/template/${id}/tags`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: list })
+    });
+    if (res.ok) {
+      setTagInput("");
+      const re = await fetch(`http://localhost:3000/api/template/${id}/tags`);
+      setTags(await re.json());
+    }
+  };
+
+  const scheduleExpiry = async () => {
+    if (!id || !expiresAt) return;
+    const iso = new Date(expiresAt).toISOString();
+    const res = await fetch(`http://localhost:3000/api/template/${id}/expire`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt: iso })
+    });
+    if (res.ok) {
+      alert('Expiry saved');
+    }
+  };
+
+  const softDelete = async () => {
+    if (!id) return;
+    if (!confirm('This will hide the template. Continue?')) return;
+    const res = await fetch(`http://localhost:3000/api/template/${id}/delete`, { method: 'POST' });
+    if (res.ok) router.push('/content/templates');
+  };
 
   const createVersion = async () => {
     if (!id) return;
@@ -205,6 +259,38 @@ export default function TemplateDetailPage() {
             )}
           </div>
         )}
+      </div>
+
+      <div className="p-4 border rounded">
+        <h2 className="font-semibold mb-2">Tags</h2>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {tags.map(t => (
+            <span key={t.tagid} className="px-2 py-1 text-xs rounded-full bg-gray-100 border">{t.name}</span>
+          ))}
+          {!tags.length && <span className="text-sm text-gray-500">No tags yet.</span>}
+        </div>
+        <div className="flex gap-2">
+          <input className="p-2 border rounded flex-1" placeholder="Add tags e.g. RAYA2025 EN approved" value={tagInput} onChange={e => setTagInput(e.target.value)} />
+          <button className="px-3 py-2 bg-gray-800 text-white rounded" onClick={saveTags}>Save Tags</button>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">Separate with comma or space. Replaces the tag set.</p>
+      </div>
+
+      <div className="p-4 border rounded">
+        <h2 className="font-semibold mb-2">Lifecycle</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-medium mb-1">Expiry</label>
+            <input className="p-2 border rounded w-full" type="datetime-local" value={expiresAt} onChange={e => setExpiresAt(e.target.value)} />
+            <div className="mt-2 flex items-center gap-2">
+              <button className="px-3 py-2 bg-amber-600 text-white rounded" onClick={scheduleExpiry}>Schedule Expiry</button>
+              <span className="text-xs text-gray-500">Current: {content.expiresat ? new Date(content.expiresat).toLocaleString() : 'none'}</span>
+            </div>
+          </div>
+          <div className="flex items-end justify-end">
+            <button className="px-3 py-2 bg-red-600 text-white rounded" onClick={softDelete}>Soft Delete</button>
+          </div>
+        </div>
       </div>
     </div>
   );
