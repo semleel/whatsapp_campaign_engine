@@ -1,29 +1,8 @@
-import Link from "next/link";
-
-export default function CampaignLayout({ children }: { children: React.ReactNode }) {
+﻿export default function CampaignLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Campaign Engine</h2>
-          <p className="text-sm text-muted-foreground">
-            Plan, launch, and monitor promotional journeys across every WhatsApp audience.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/campaign/campaigns/create"
-            className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90"
-          >
-            New Campaign
-          </Link>
-          <Link
-            href="/campaign/schedule"
-            className="inline-flex items-center rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-          >
-            Scheduling Queue
-          </Link>
-        </div>
+      <div className="space-y-2">
+        <h2 className="text-xl font-semibold">Campaign Engine</h2>
       </div>
       {children}
     </div>

@@ -30,12 +30,13 @@ export default function ResponseFormattersPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-lg font-semibold">Response Formatters</h3>
-        <p className="text-sm text-muted-foreground">
-          Convert raw API payloads into user-facing WhatsApp copy. Each formatter owns its own wording, locale, and list of
-          placeholders so mapping rules can reuse them across campaigns.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold">Response Formatter Library</h3>
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Convert raw API payloads into WhatsApp-ready copy with locale-aware templates and reusable placeholder definitions.
+          </p>
+        </div>
       </div>
 
       <div className="rounded-xl border p-4 space-y-3">
@@ -141,3 +142,5 @@ export default function ResponseFormattersPage() {
     </div>
   );
 }
+
+

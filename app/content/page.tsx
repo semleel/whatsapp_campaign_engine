@@ -1,132 +1,148 @@
-import Link from "next/link";
+﻿const introduction =
+  "Centralize WhatsApp-approved templates, multilingual assets, and input logic so content managers can iterate quickly while developers pull stable content keys.";
 
-type ModuleCard = {
-  title: string;
-  description: string;
-  bullets: string[];
-  example: string;
-  href: string;
-};
-
-const modules: ModuleCard[] = [
-  {
-    title: "Message Template Manager",
-    description:
-      "Central library for Meta-approved WhatsApp templates, multimedia content, and journey metadata such as campaign tags, categories, and approval state.",
-    bullets: [
-      "Add or version templates with tracked metadata and review status.",
-      "Schedule expiry dates so time-bound vouchers retire automatically.",
-      "Attach tags like campaign code, language, and status for discovery.",
-    ],
-    example: 'Example: "[Hi {user_name}, welcome to {campaign_name}!]" tagged with campaign=RAYA2025, language=EN, status=approved.',
-    href: "/content/templates",
-  },
-  {
-    title: "Input Validator & Responder",
-    description:
-      "Validates customer replies against predefined options (Yes/No, lists, buttons) and returns calibrated responses without needing backend calls.",
-    bullets: [
-      "Map valid replies per prompt and auto-send the matching text.",
-      "Provide helpful fallback copy when the reply is invalid.",
-      "Keeps the flow aligned with UX copy and campaign logic.",
-    ],
-    example:
-      'Example: Prompt "Claim voucher?" -> YES = "Great! SAVE10"; NO = "No worries! More deals ahead."; invalid reply re-prompts.',
-    href: "/content/validator",
-  },
-  {
-    title: "Branching Logic Processor",
-    description:
-      "Configures lightweight conditional routing (Yes/No or quick button) without writing code. Each path hands the correct content key back to the Campaign Engine.",
-    bullets: [
-      "Static branching table links replies to subsequent content keys.",
-      "Perfect for differentiating daily opt-ins vs. opt-outs.",
-      "Keeps campaign flow human-readable for ops teams.",
-    ],
-    example:
-      'Example: "Receive daily tips?" YES -> key: daily_tips_yes, NO -> key: daily_tips_no (fed to Campaign Engine).',
-    href: "/content/branching",
-  },
-  {
-    title: "Multilingual & Fallback Handler",
-    description:
-      "Guarantees the user receives the correct language variant and ensures English fallback if a localized asset is missing or expired.",
-    bullets: [
-      "Link template variants to locale tags (EN, MY, CN, etc.).",
-      "Serve preferred language when available; fallback gracefully otherwise.",
-      "Prevents silent failures when translations lag behind.",
-    ],
-    example:
-      "Example: user language = MY -> deliver voucher_reminder(MY); if missing, fallback to EN version automatically.",
-    href: "/content/i18n",
-  },
+const objectives = [
+  "Store templates, media, and responses in a single governed library.",
+  "Let flows retrieve content dynamically via reusable content keys.",
+  "Support Yes/No validators and branching without backend code.",
+  "Personalize copy using placeholders such as {user_name} or {campaign_name}.",
+  "Track approvals, expiries, and keep marketing self-serve.",
 ];
 
 const stats = [
   { label: "Approved templates", value: "38" },
-  { label: "Awaiting re-approval", value: "5" },
-  { label: "Locales covered", value: "11" },
-  { label: "Expiring soon", value: "3" },
+  { label: "Drafts awaiting approval", value: "5" },
+  { label: "Locales supported", value: "11" },
+];
+
+const featureCards = [
+  {
+    title: "Message Template Manager",
+    bullets: [
+      "Add or update WhatsApp-approved copy with variables.",
+      "Attach metadata (campaign, category, status) and track approvals.",
+      "Schedule expiries so time-bound content hides automatically.",
+    ],
+    example: "Example: Upload \"Hi {user_name}, welcome to {campaign_name}!\" tagged with campaign=RAYA2025, EN, status=Approved.",
+    href: "/content/templates",
+  },
+  {
+    title: "Input Validator & Responder",
+    bullets: [
+      "Validate Yes/No responses and return mapped copy instantly.",
+      "Handle invalid inputs with helpful fallback prompts.",
+      "Keep branching logic editable by non-technical teams.",
+    ],
+    example: "Example: Prompt \"Claim voucher?\" → YES = \"Great! SAVE10\" · NO = \"No worries! Check other deals.\"",
+    href: "/content/validator",
+  },
+  {
+    title: "Branching Logic Processor",
+    bullets: [
+      "Link static Yes/No answers to downstream content keys.",
+      "Direct users through promo vs. opt-out paths without code.",
+      "Emit content references for the Campaign Engine to consume.",
+    ],
+    example: "Example: \"Receive daily tips?\" → YES = daily_tips_yes copy, NO = daily_tips_no copy.",
+    href: "/content/branching",
+  },
+  {
+    title: "Multilingual & Fallback Handler",
+    bullets: [
+      "Store per-locale variants (EN, MY, CN, etc.).",
+      "Auto-fallback to English when a locale is missing.",
+      "Ensure no blank response when translations lag behind.",
+    ],
+    example: "Example: User language=MY → serve voucher_reminder(MY); if missing, fallback to EN string.",
+    href: "/content/i18n",
+  },
+];
+
+const recentTemplates = [
+  { title: "order_update_v6", status: "Approved", locale: "EN", updated: "2 hours ago" },
+  { title: "voucher_reminder", status: "Awaiting Meta", locale: "MY", updated: "Yesterday" },
+  { title: "loyalty_tip_daily", status: "Draft", locale: "EN", updated: "Oct 21, 2025" },
 ];
 
 export default function ContentOverviewPage() {
   return (
     <div className="space-y-6">
-      <section className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 rounded-xl border bg-card p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h3 className="text-base font-semibold">Content Engine Overview</h3>
-              <p className="text-sm text-muted-foreground">
-                Manage reusable and dynamic WhatsApp copy for every campaign. Start in the library to add assets or jump
-                into validators and branching logic to control runtime behavior.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Link href="/content/templates" className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted">
-                Library
-              </Link>
-              <Link
-                href="/content/templates/create"
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-              >
-                Add Template
-              </Link>
-            </div>
-          </div>
+      <section className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="space-y-2">
+          <h3 className="text-base font-semibold">What this module does</h3>
+          <p className="text-sm text-muted-foreground">{introduction}</p>
         </div>
-        <div className="rounded-xl border p-6 space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {objectives.map((objective) => (
+            <div key={objective} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+              {objective}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-xl border p-5 space-y-3">
+        <h4 className="text-base font-semibold">Module stats</h4>
+        <div className="grid gap-3 sm:grid-cols-3">
           {stats.map((stat) => (
-            <div key={stat.label} className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">{stat.label}</span>
-              <span className="text-lg font-semibold">{stat.value}</span>
+            <div key={stat.label} className="rounded-lg border border-dashed px-3 py-2">
+              <div className="text-sm text-muted-foreground">{stat.label}</div>
+              <div className="text-lg font-semibold">{stat.value}</div>
             </div>
           ))}
         </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        {modules.map((module) => (
-          <article key={module.title} className="rounded-xl border p-5 space-y-3">
+        {featureCards.map((card) => (
+          <article key={card.title} className="rounded-xl border p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div>
-                <h4 className="text-base font-semibold">{module.title}</h4>
-                <p className="text-sm text-muted-foreground">{module.description}</p>
-              </div>
-              <Link href={module.href} className="text-sm font-medium text-primary hover:underline">
+              <h4 className="text-base font-semibold">{card.title}</h4>
+              <a href={card.href} className="text-sm font-medium text-primary hover:underline">
                 Open
-              </Link>
+              </a>
             </div>
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              {module.bullets.map((point) => (
-                <li key={point}>{point}</li>
+              {card.bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
               ))}
             </ul>
-            <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{module.example}</p>
+            <div className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{card.example}</div>
           </article>
         ))}
+      </section>
+
+      <section className="rounded-xl border p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-base font-semibold">Recent templates</h4>
+          <a href="/content/templates" className="text-sm font-medium text-primary hover:underline">
+            Open library
+          </a>
+        </div>
+        <div className="divide-y text-sm">
+          {recentTemplates.map((tpl) => (
+            <div key={tpl.title} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div>
+                <div className="font-medium">{tpl.title}</div>
+                <div className="text-xs text-muted-foreground">Locale · {tpl.locale}</div>
+              </div>
+              <div className="text-sm text-muted-foreground">{tpl.updated}</div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  tpl.status === "Approved"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : tpl.status === "Draft"
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-sky-100 text-sky-700"
+                }`}
+              >
+                {tpl.status}
+              </span>
+            </div>
+          ))}
+          {!recentTemplates.length && <div className="text-muted-foreground text-sm">No templates yet.</div>}
+        </div>
       </section>
     </div>
   );
 }
-

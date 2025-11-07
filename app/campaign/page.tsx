@@ -1,32 +1,61 @@
-﻿import Link from "next/link";
+﻿const introduction =
+  "Orchestrate structured WhatsApp campaigns with clear objectives (what), targeting (where), and precise timing (when) while remembering every user\'s progress across concurrent journeys.";
 
-const quickActions = [
-  {
-    label: "Create Campaign",
-    href: "/campaign/campaigns/create",
-    description: "Spin up a new WhatsApp journey with targeting & creative.",
-  },
-  {
-    label: "Campaign List",
-    href: "/campaign/campaigns",
-    description: "Review live & completed sends with their current status.",
-  },
-  {
-    label: "Archived Campaigns",
-    href: "/campaign/archive",
-    description: "Restore or audit historical runs for compliance.",
-  },
-  {
-    label: "Scheduling Board",
-    href: "/campaign/schedule",
-    description: "Queue future sends and preview delivery windows.",
-  },
+const objectives = [
+  "Link every user session to the correct campaign ID for persistent context.",
+  "Enforce scheduling rules so campaigns only run inside approved windows.",
+  "Support multiple live campaigns per user without message mix-ups.",
+  "Give operators live controls to pause, extend, or resume campaigns on demand.",
+  "Improve user experience with structured, personalized messaging and analytics.",
 ];
 
-const liveMetrics = [
-  { label: "Active Journeys", value: "12", trend: "+2 vs last week" },
-  { label: "Queued Sends", value: "4", trend: "Next 48 hours" },
-  { label: "Paused", value: "1", trend: "Needs creative approval" },
+const stats = [
+  { label: "Live campaigns", value: "12" },
+  { label: "Scheduled launches", value: "4" },
+  { label: "Paused for review", value: "1" },
+];
+
+const featureCards = [
+  {
+    title: "Campaign Management",
+    bullets: [
+      "Create campaigns by defining objectives, targeting, and duration.",
+      "Edit live campaigns or archive them without losing analytics.",
+      "Pause/resume journeys to react to compliance or performance signals.",
+    ],
+    example: "Example: Set up \"RAYA 2025\" with objective=Retention, region=MY, flow=Promo and archive it post-Raya.",
+    href: "/campaign/campaigns",
+  },
+  {
+    title: "Scheduler Module",
+    bullets: [
+      "Set start/end times, extend windows, and queue reminder jobs.",
+      "Ensure messages only send during approved delivery slots.",
+      "Centralize time-based controls for every region and segment.",
+    ],
+    example: "Example: Start 1 Apr 08:00, end 30 Apr 23:59, queue reminder on 12 Apr at noon.",
+    href: "/campaign/schedule",
+  },
+  {
+    title: "Session Management",
+    bullets: [
+      "Bind every conversation to a campaign ID with checkpoints.",
+      "Resume where users left off even days later.",
+      "Handle multi-campaign participants with clean separation.",
+    ],
+    example: "Example: User joins Promo + Quiz → system stores two session IDs and resumes each independently.",
+    href: "/campaign/sessions",
+  },
+  {
+    title: "Keyword & Entry Point Handler",
+    bullets: [
+      "Recognize promo/quiz/menu keywords and route instantly.",
+      "Present helpful fallback copy when input is unknown.",
+      "Keep entry-point logic centralized for operations teams.",
+    ],
+    example: "Example: Keyword \"promo\" → promo campaign; unknown keyword → \"Type MENU to see options.\"",
+    href: "/campaign/keywords",
+  },
 ];
 
 const recentCampaigns = [
@@ -50,110 +79,85 @@ const recentCampaigns = [
   },
 ];
 
-const runbook = [
-  { step: "Validate template approvals", status: "complete" },
-  { step: "Sync targeting audience", status: "complete" },
-  { step: "QA journey flow", status: "pending" },
-  { step: "Schedule blast window", status: "pending" },
-];
-
 export default function CampaignOverviewPage() {
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <div className="lg:col-span-2 space-y-6">
-        <section className="rounded-xl border bg-card p-5">
-          <div className="mb-2 font-medium">What this module does</div>
-          <p className="text-sm text-muted-foreground">
-            Coordinate WhatsApp outreach across regions, manage review cycles, and keep delivery windows aligned with
-            backend readiness. Jump into the views below to create new journeys, monitor delivery health, or audit past
-            launches.
-          </p>
-        </section>
-
-        <section className="rounded-xl border p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-base font-semibold">Quick actions</h3>
-              <p className="text-sm text-muted-foreground">Most-used campaign flows pinned for the squad.</p>
-            </div>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            {quickActions.map((action) => (
-              <Link
-                key={action.href}
-                href={action.href}
-                className="rounded-xl border p-4 transition hover:border-primary hover:shadow-sm"
-              >
-                <div className="text-sm font-medium">{action.label}</div>
-                <p className="text-sm text-muted-foreground mt-1">{action.description}</p>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-xl border p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold">Recently touched campaigns</h3>
-            <Link href="/campaign/campaigns" className="text-sm font-medium text-primary hover:underline">
-              View all
-            </Link>
-          </div>
-          <div className="divide-y">
-            {recentCampaigns.map((campaign) => (
-              <div key={campaign.name} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div>
-                  <div className="font-medium">{campaign.name}</div>
-                  <div className="text-xs text-muted-foreground">Owner · {campaign.owner}</div>
-                </div>
-                <div className="text-sm text-muted-foreground">{campaign.updated}</div>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-medium ${
-                    campaign.status === "In flight"
-                      ? "bg-emerald-100 text-emerald-700"
-                      : campaign.status === "Scheduled"
-                      ? "bg-amber-100 text-amber-700"
-                      : "bg-slate-100 text-slate-700"
-                  }`}
-                >
-                  {campaign.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="space-y-4">
-        <section className="rounded-xl border p-5 space-y-4">
-          {liveMetrics.map((item) => (
-            <div key={item.label} className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium">{item.label}</div>
-                <div className="text-xs text-muted-foreground">{item.trend}</div>
-              </div>
-              <div className="text-2xl font-semibold">{item.value}</div>
+    <div className="space-y-6">
+      <section className="rounded-xl border bg-card p-6 space-y-4">
+        <div className="space-y-2">
+          <h3 className="text-base font-semibold">What this module does</h3>
+          <p className="text-sm text-muted-foreground">{introduction}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {objectives.map((objective) => (
+            <div key={objective} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+              {objective}
             </div>
           ))}
-        </section>
+        </div>
+      </section>
 
-        <section className="rounded-xl border p-5">
-          <h3 className="mb-3 text-base font-semibold">Deployment runbook</h3>
-          <ul className="space-y-2">
-            {runbook.map((item) => (
-              <li key={item.step} className="flex items-start gap-2 text-sm">
-                <span
-                  className={`mt-1 h-2.5 w-2.5 rounded-full ${
-                    item.status === "complete" ? "bg-emerald-500" : "bg-zinc-300"
-                  }`}
-                />
-                <span className={item.status === "complete" ? "text-muted-foreground line-through" : ""}>
-                  {item.step}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
+      <section className="rounded-xl border p-5 space-y-3">
+        <h4 className="text-base font-semibold">Module stats</h4>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {stats.map((stat) => (
+            <div key={stat.label} className="rounded-lg border border-dashed px-3 py-2">
+              <div className="text-sm text-muted-foreground">{stat.label}</div>
+              <div className="text-lg font-semibold">{stat.value}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        {featureCards.map((card) => (
+          <article key={card.title} className="rounded-xl border p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-base font-semibold">{card.title}</h4>
+              <a href={card.href} className="text-sm font-medium text-primary hover:underline">
+                Open
+              </a>
+            </div>
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {card.bullets.map((bullet) => (
+                <li key={bullet}>{bullet}</li>
+              ))}
+            </ul>
+            <div className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{card.example}</div>
+          </article>
+        ))}
+      </section>
+
+      <section className="rounded-xl border p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-base font-semibold">Recent campaigns</h4>
+          <a href="/campaign/campaigns" className="text-sm font-medium text-primary hover:underline">
+            View workspace
+          </a>
+        </div>
+        <div className="divide-y text-sm">
+          {recentCampaigns.map((campaign) => (
+            <div key={campaign.name} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div>
+                <div className="font-medium">{campaign.name}</div>
+                <div className="text-xs text-muted-foreground">Owner · {campaign.owner}</div>
+              </div>
+              <div className="text-sm text-muted-foreground">{campaign.updated}</div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  campaign.status === "In flight"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : campaign.status === "Scheduled"
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-slate-100 text-slate-700"
+                }`}
+              >
+                {campaign.status}
+              </span>
+            </div>
+          ))}
+          {!recentCampaigns.length && <div className="text-muted-foreground text-sm">No campaigns yet.</div>}
+        </div>
+      </section>
     </div>
   );
 }

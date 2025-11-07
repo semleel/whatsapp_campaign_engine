@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="flex-1">
             {/* top bar (optional) */}
             <div className="h-14 border-b border-border flex items-center justify-between px-4 bg-[linear-gradient(90deg,rgba(0,0,0,0)_0%,color-mix(in_oklch,var(--primary)6%,transparent)_50%,rgba(0,0,0,0)_100%)]">
-              <h1 className="text-sm font-semibold">Team Dashboard</h1>
+              <h1 className="text-lg font-semibold">Team Dashboard</h1>
 
               <div className="flex items-center gap-2">
                 <div className="hidden md:flex items-center gap-2 rounded-lg border border-border bg-secondary px-2">
@@ -28,7 +28,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <input placeholder="Search…" className="bg-transparent text-sm py-1.5 outline-none placeholder:opacity-60" />
                 </div>
                 <button className="btn btn-ghost">Feedback</button>
-                <button className="btn btn-primary">New Campaign</button>
               </div>
             </div>
             <div className="p-6">{children}</div>

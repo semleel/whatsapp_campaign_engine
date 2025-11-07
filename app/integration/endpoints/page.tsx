@@ -23,11 +23,16 @@ export default function EndpointsPage() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">API Endpoints</h3>
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <h3 className="text-lg font-semibold">API Connector & Dispatcher</h3>
+                    <p className="text-sm text-muted-foreground max-w-2xl">
+                        Define secure endpoints, inject campaign/user parameters, and reuse them across WhatsApp flows without redeploying code.
+                    </p>
+                </div>
                 <Link
                     href="/integration/endpoints/create"
-                    className="px-3 py-2 rounded-md bg-primary text-primary-foreground">
+                    className="inline-flex items-center rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
                     New Endpoint
                 </Link>
             </div>
@@ -73,3 +78,4 @@ export default function EndpointsPage() {
         </div>
     );
 }
+

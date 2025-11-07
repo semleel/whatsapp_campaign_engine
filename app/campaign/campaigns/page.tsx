@@ -64,23 +64,21 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="text-lg font-semibold">Campaigns</h3>
+          <h3 className="text-lg font-semibold">Campaign Management</h3>
           <p className="text-sm text-muted-foreground">
             Manage live journeys, inspect targeting, and nudge campaigns through approvals without leaving this view.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
-            href="/campaign/campaigns/create"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-          >
-            New Campaign
+            href="/campaign/archive"
+            className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+            Archived Campaigns
           </Link>
           <Link
-            href="/campaign/schedule"
-            className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-          >
-            Scheduling Board
+            href="/campaign/campaigns/create"
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
+            New Campaign
           </Link>
         </div>
       </div>

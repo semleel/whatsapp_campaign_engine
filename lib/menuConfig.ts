@@ -38,8 +38,9 @@ export const MENU: MenuSection[] = [
     items: [
       { label: "Overview", href: "/campaign", exact: true },
       { label: "Campaigns", href: "/campaign/campaigns" },
-      { label: "Archived Campaigns", href: "/campaign/archive" },
-      { label: "Scheduling Board", href: "/campaign/schedule" },
+      { label: "Scheduler", href: "/campaign/schedule" },
+      { label: "Sessions", href: "/campaign/sessions" },
+      { label: "Keyword Handler", href: "/campaign/keywords" },
     ],
   },
   {
@@ -50,6 +51,7 @@ export const MENU: MenuSection[] = [
       { label: "Endpoints", href: "/integration/endpoints" },
       { label: "Mappings", href: "/integration/mappings" },
       { label: "Response Formatters", href: "/integration/formatters" },
+      { label: "Live Test Runner", href: "/integration/test-runner" },
       { label: "Logs", href: "/integration/logs" },
     ],
   },

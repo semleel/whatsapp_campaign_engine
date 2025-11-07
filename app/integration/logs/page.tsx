@@ -7,8 +7,15 @@ export default async function LogsPage() {
 
     return (
         <div className="space-y-6">
-            <h3 className="text-lg font-semibold">Integration Logs</h3>
-            <div className="rounded-xl border overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <h3 className="text-lg font-semibold">Integration Logs</h3>
+                    <p className="text-sm text-muted-foreground max-w-2xl">
+                        Inspect live API activity, error categories, and payload metadata for every backend call triggered by WhatsApp flows.
+                    </p>
+                </div>
+            </div>
+            <section className="rounded-xl border overflow-hidden">
                 <table className="w-full text-sm">
                     <thead className="bg-zinc-50 dark:bg-zinc-900">
                         <tr>
@@ -42,7 +49,7 @@ export default async function LogsPage() {
                         )}
                     </tbody>
                 </table>
-            </div>
+            </section>
         </div>
     );
 }
