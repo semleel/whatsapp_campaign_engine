@@ -27,7 +27,7 @@ export type MappingRule = {
     retry?: { enabled: boolean; count: number };
 };
 
-export interface TemplateDef {
+export interface ResponseTemplate {
     id?: string | number;
     name: string;
     body: string;           // e.g. "Hi {{name}}, you have {{points}}"

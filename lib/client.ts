@@ -19,7 +19,7 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
 import type {
   EndpointConfig,
   MappingRule,
-  TemplateDef,
+  ResponseTemplate,
   TestRunPayload,
   TestRunResult,
   LogEntry,
@@ -62,19 +62,19 @@ export const Api = {
       method: "DELETE",
     }),
 
-  // templates
-  listTemplates: () => http<TemplateDef[]>("/api/integration/templates"),
-  createTemplate: (t: TemplateDef) =>
-    http<TemplateDef>("/api/integration/templates", {
+  // response templates
+  listResponseTemplates: () => http<ResponseTemplate[]>("/api/integration/templates"),
+  createResponseTemplate: (t: ResponseTemplate) =>
+    http<ResponseTemplate>("/api/integration/templates", {
       method: "POST",
       body: JSON.stringify(t),
     }),
-  updateTemplate: (id: string | number, t: TemplateDef) =>
-    http<TemplateDef>(`/api/integration/templates/${id}`, {
+  updateResponseTemplate: (id: string | number, t: ResponseTemplate) =>
+    http<ResponseTemplate>(`/api/integration/templates/${id}`, {
       method: "PUT",
       body: JSON.stringify(t),
     }),
-  deleteTemplate: (id: string | number) =>
+  deleteResponseTemplate: (id: string | number) =>
     http<{ success: true }>(`/api/integration/templates/${id}`, {
       method: "DELETE",
     }),

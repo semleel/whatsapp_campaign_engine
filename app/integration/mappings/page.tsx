@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Api } from "@/lib/client";
-import type { EndpointConfig, TemplateDef, MappingRule } from "@/lib/types";
+import type { EndpointConfig, ResponseTemplate, MappingRule } from "@/lib/types";
 
 export default function MappingsPage() {
     const [endpoints, setEndpoints] = useState<EndpointConfig[]>([]);
-    const [templates, setTemplates] = useState<TemplateDef[]>([]);
+    const [formatters, setFormatters] = useState<ResponseTemplate[]>([]);
     const [rules, setRules] = useState<MappingRule[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -25,11 +25,11 @@ export default function MappingsPage() {
         setLoading(true);
         try {
             const [e, t, m] = await Promise.all([
-                Api.listEndpoints(), Api.listTemplates(), Api.listMappings()
+                Api.listEndpoints(), Api.listResponseTemplates(), Api.listMappings()
             ]);
-            setEndpoints(e); setTemplates(t); setRules(m);
+            setEndpoints(e); setFormatters(t); setRules(m);
         } catch {
-            setEndpoints([]); setTemplates([]); setRules([]);
+            setEndpoints([]); setFormatters([]); setRules([]);
         } finally {
             setLoading(false);
         }
@@ -40,9 +40,9 @@ export default function MappingsPage() {
         () => Object.fromEntries(endpoints.map(e => [String(e.id), e])),
         [endpoints]
     );
-    const templateById = useMemo(
-        () => Object.fromEntries(templates.map(t => [String(t.id), t])),
-        [templates]
+    const formatterById = useMemo(
+        () => Object.fromEntries(formatters.map(t => [String(t.id), t])),
+        [formatters]
     );
 
     return (
@@ -92,8 +92,8 @@ export default function MappingsPage() {
                         value={String(draft.templateId || "")}
                         onChange={e => setDraft({ ...draft, templateId: Number(e.target.value) || 0 })}
                     >
-                        <option value="">No template</option>
-                        {templates.map(t => (
+                        <option value="">No formatter</option>
+                        {formatters.map(t => (
                             <option key={String(t.id)} value={String(t.id)}>
                                 {t.name} {t.locale ? `(${t.locale})` : ""}
                             </option>
@@ -164,7 +164,7 @@ export default function MappingsPage() {
                             <th className="text-left px-3 py-2">Campaign</th>
                             <th className="text-left px-3 py-2">Trigger</th>
                             <th className="text-left px-3 py-2">Endpoint</th>
-                            <th className="text-left px-3 py-2">Template</th>
+                            <th className="text-left px-3 py-2">Formatter</th>
                             <th className="text-right px-3 py-2">Actions</th>
                         </tr>
                     </thead>
@@ -182,7 +182,7 @@ export default function MappingsPage() {
                                 </td>
                                 <td className="px-3 py-2">
                                     {r.templateId
-                                        ? (templateById[String(r.templateId)]?.name ?? r.templateId)
+                                        ? (formatterById[String(r.templateId)]?.name ?? r.templateId)
                                         : <span className="text-zinc-500">—</span>}
                                 </td>
                                 <td className="px-3 py-2 text-right">
@@ -203,3 +203,4 @@ export default function MappingsPage() {
         </div>
     );
 }
+

@@ -26,9 +26,8 @@ export default function EndpointsPage() {
             <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">API Endpoints</h3>
                 <Link
-                    href="/integration/endpoints/new"
-                    className="px-3 py-2 rounded-md bg-primary text-primary-foreground"
-                >
+                    href="/integration/endpoints/create"
+                    className="px-3 py-2 rounded-md bg-primary text-primary-foreground">
                     New Endpoint
                 </Link>
             </div>

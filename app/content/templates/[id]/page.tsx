@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
 type Content = {
@@ -127,7 +128,7 @@ export default function TemplateDetailPage() {
           <h1 className="text-2xl font-bold">Template: {content.title}</h1>
           <p className="text-gray-600">Type: {content.type} • Status: {content.status} • Default Lang: {content.defaultlang}</p>
         </div>
-        <a className="px-3 py-2 bg-gray-100 rounded border" href="/template/list">Back</a>
+                <Link className="px-3 py-2 bg-gray-100 rounded border" href="/content/templates">Back</Link>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
