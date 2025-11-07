@@ -379,6 +379,172 @@ router.post('/:contentId/version/current', async (req, res) => {
 });
 
 /**
+ * LIST Active Templates (non-deleted, not expired)
+ * GET /api/template/active
+ */
+router.get('/active', async (_req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('content')
+      .select('contentid, title, type, status, defaultlang, category, currentversion, updatedat, lastupdated, expiresat')
+      .eq('isdeleted', false)
+      .or(`expiresat.is.null,expiresat.gt.${nowIso}`)
+      .order('updatedat', { ascending: false });
+    if (error) throw error;
+    return res.status(200).json(data || []);
+  } catch (err) {
+    console.error('Active template list error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * EXPIRE a template (schedule expiry)
+ * POST /api/template/:contentId/expire { expiresAt }
+ * - Sets content.expiresat to a timestamp (ISO string).
+ * - If expiresAt is in the past, optionally mark status as 'Expired'.
+ */
+router.post('/:contentId/expire', async (req, res) => {
+  try {
+    const contentId = parseInt(req.params.contentId);
+    if (Number.isNaN(contentId)) return res.status(400).json({ error: 'Invalid content id' });
+
+    const raw = req.body?.expiresAt;
+    if (!raw) return res.status(400).json({ error: 'expiresAt is required (ISO timestamp)' });
+    const expiresAt = new Date(String(raw));
+    if (Number.isNaN(expiresAt.getTime())) return res.status(400).json({ error: 'expiresAt must be a valid date/time' });
+
+    const now = new Date();
+    const payload = { expiresat: expiresAt.toISOString(), updatedat: new Date().toISOString() };
+    if (expiresAt.getTime() <= now.getTime()) {
+      payload.status = 'Expired';
+    }
+
+    const { error } = await supabase
+      .from('content')
+      .update(payload)
+      .eq('contentid', contentId);
+    if (error) throw error;
+
+    return res.status(200).json({ message: 'Expiry scheduled', expiresAt: payload.expiresat });
+  } catch (err) {
+    console.error('Expire template error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * SOFT DELETE a template
+ * POST /api/template/:contentId/delete
+ * - Sets isdeleted=true and deletedat=now
+ */
+router.post('/:contentId/delete', async (req, res) => {
+  try {
+    const contentId = parseInt(req.params.contentId);
+    if (Number.isNaN(contentId)) return res.status(400).json({ error: 'Invalid content id' });
+
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from('content')
+      .update({ isdeleted: true, deletedat: now, updatedat: now })
+      .eq('contentid', contentId);
+    if (error) throw error;
+
+    return res.status(200).json({ message: 'Template soft-deleted' });
+  } catch (err) {
+    console.error('Soft delete error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * LIST Tags for a template
+ * GET /api/template/:contentId/tags
+ */
+router.get('/:contentId/tags', async (req, res) => {
+  try {
+    const contentId = parseInt(req.params.contentId);
+    if (Number.isNaN(contentId)) return res.status(400).json({ error: 'Invalid content id' });
+
+    // Join contenttag -> tag to get names
+    const { data, error } = await supabase
+      .from('contenttag')
+      .select('tagid, tag:tagid(name)')
+      .eq('contentid', contentId);
+    if (error) throw error;
+
+    const tags = (data || []).map(r => ({ tagid: r.tagid, name: r.tag?.name })).filter(t => t.name);
+    return res.status(200).json(tags);
+  } catch (err) {
+    console.error('List tags error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * SET/REPLACE Tags for a template
+ * POST /api/template/:contentId/tags { tags: string[] }
+ * - Ensures Tag rows exist, replaces ContentTag mappings for the content
+ */
+router.post('/:contentId/tags', async (req, res) => {
+  try {
+    const contentId = parseInt(req.params.contentId);
+    if (Number.isNaN(contentId)) return res.status(400).json({ error: 'Invalid content id' });
+    let tags = req.body?.tags;
+    if (!Array.isArray(tags)) return res.status(400).json({ error: 'tags must be an array of strings' });
+    tags = tags.map((t) => String(t).trim()).filter(Boolean);
+
+    // Load existing tag ids
+    let existing = [];
+    if (tags.length) {
+      const { data: ex, error: exErr } = await supabase
+        .from('tag')
+        .select('tagid, name')
+        .in('name', tags);
+      if (exErr) throw exErr;
+      existing = ex || [];
+    }
+
+    const existingNames = new Set(existing.map((r) => r.name));
+    const toCreate = tags.filter((n) => !existingNames.has(n));
+
+    let created = [];
+    if (toCreate.length) {
+      const { data: ins, error: insErr } = await supabase
+        .from('tag')
+        .insert(toCreate.map((name) => ({ name })))
+        .select('tagid, name');
+      if (insErr) throw insErr;
+      created = ins || [];
+    }
+
+    const allTags = [...existing, ...created];
+    const tagIds = allTags.map((r) => r.tagid);
+
+    // Replace contenttag mappings
+    // 1) delete all existing mappings for content
+    const { error: delErr } = await supabase
+      .from('contenttag')
+      .delete()
+      .eq('contentid', contentId);
+    if (delErr) throw delErr;
+
+    // 2) insert new mappings (if any)
+    if (tagIds.length) {
+      const rows = tagIds.map((tid) => ({ contentid: contentId, tagid: tid }));
+      const { error: mapErr } = await supabase.from('contenttag').insert(rows);
+      if (mapErr) throw mapErr;
+    }
+
+    return res.status(200).json({ message: 'Tags updated', tags: allTags });
+  } catch (err) {
+    console.error('Update tags error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * RENDER resolver (select variant by lang/version with fallback)
  * GET /api/template/:contentId/render?lang=en&versionNo=1
  */
