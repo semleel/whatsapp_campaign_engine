@@ -14,6 +14,7 @@ interface Campaign {
 
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
+  new: "bg-emerald-100 text-emerald-700",
   paused: "bg-amber-100 text-amber-700",
   scheduled: "bg-sky-100 text-sky-700",
   expired: "bg-rose-100 text-rose-700",
@@ -24,6 +25,7 @@ export default function CampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   useEffect(() => {
     (async () => {
@@ -60,6 +62,12 @@ export default function CampaignsPage() {
     [campaigns]
   );
 
+  const filteredCampaigns = useMemo(() => {
+    if (statusFilter === "all") return campaigns;
+    const wanted = statusFilter.toLowerCase();
+    return campaigns.filter((c) => (c.currentstatus || "").toLowerCase() === wanted);
+  }, [campaigns, statusFilter]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -69,7 +77,20 @@ export default function CampaignsPage() {
             Manage live journeys, inspect targeting, and nudge campaigns through approvals without leaving this view.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 items-center">
+          <label className="text-sm text-muted-foreground mr-2">Filter by status</label>
+          <select
+            className="rounded-md border px-2 py-1 text-sm mr-4"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All</option>
+            <option value="New">New</option>
+            <option value="Active">Active</option>
+            <option value="On Hold">On Hold</option>
+            <option value="Paused">Paused</option>
+            <option value="Inactive">Inactive</option>
+          </select>
           <Link
             href="/campaign/archive"
             className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
@@ -101,8 +122,8 @@ export default function CampaignsPage() {
                   Loading campaigns...
                 </td>
               </tr>
-            ) : campaigns.length ? (
-              campaigns.map((c) => {
+            ) : filteredCampaigns.length ? (
+              filteredCampaigns.map((c) => {
                 const badge = STATUS_STYLES[c.currentstatus?.toLowerCase()] || "bg-slate-100 text-slate-700";
                 return (
                   <tr key={c.campaignid} className="border-t">

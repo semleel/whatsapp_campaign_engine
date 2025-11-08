@@ -37,6 +37,16 @@ const featureCards = [
     href: "/campaign/schedule",
   },
   {
+    title: "Target / User Flow",
+    bullets: [
+      "Add and manage target regions used for campaign targeting.",
+      "Define reusable user flows (Promo, Quiz, Survey) for campaigns.",
+      "Centralize reference data used across the campaign engine.",
+    ],
+    example: "Example: Add region MY and a new flow 'Promo'.",
+    href: "/campaign/targets",
+  },
+  {
     title: "Session Management",
     bullets: [
       "Bind every conversation to a campaign ID with checkpoints.",

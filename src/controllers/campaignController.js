@@ -33,7 +33,8 @@ export async function listCampaigns(_req, res) {
         targetregion:targetregionid (regionname),
         userflow:userflowid (userflowname),
         campaignstatus:camstatusid (currentstatus),
-        camstatusid
+        camstatusid,
+        campaignscheduleid
       `)
       .neq("camstatusid", 3);
 
@@ -47,6 +48,7 @@ export async function listCampaigns(_req, res) {
       userflowname: c.userflow?.userflowname || "N/A",
       currentstatus: c.campaignstatus?.currentstatus || "N/A",
       camstatusid: c.camstatusid,
+      campaignscheduleid: c.campaignscheduleid ?? null,
     }));
 
     res.status(200).json(formatted);

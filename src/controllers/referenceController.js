@@ -32,3 +32,41 @@ export async function getCampaignStatuses(_req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
+export async function createRegion(req, res) {
+  try {
+    const { regionName } = req.body || {};
+    const name = (regionName || "").trim();
+    if (!name) return res.status(400).json({ error: "regionName is required" });
+
+    const { data, error } = await supabase
+      .from("targetregion")
+      .insert([{ regionname: name }])
+      .select("regionid, regionname")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ message: "Region created", region: data });
+  } catch (err) {
+    console.error("Create region error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export async function createUserFlow(req, res) {
+  try {
+    const { userFlowName } = req.body || {};
+    const name = (userFlowName || "").trim();
+    if (!name) return res.status(400).json({ error: "userFlowName is required" });
+
+    const { data, error } = await supabase
+      .from("userflow")
+      .insert([{ userflowname: name }])
+      .select("userflowid, userflowname")
+      .single();
+    if (error) throw error;
+    res.status(201).json({ message: "User flow created", userflow: data });
+  } catch (err) {
+    console.error("Create user flow error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}

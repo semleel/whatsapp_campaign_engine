@@ -26,7 +26,7 @@ export async function autoCheckCampaignStatuses() {
         camstatusid
       `,
       )
-      .eq("camstatusid", onHoldID);
+      .in("camstatusid", [activeID, onHoldID]);
 
     if (error) throw error;
 
@@ -37,15 +37,21 @@ export async function autoCheckCampaignStatuses() {
       const end = new Date(`${c.campaignschedule.enddate}T${c.campaignschedule.endtime || "23:59"}+08:00`);
 
       let newStatus = null;
-      if (now >= start && now <= end) newStatus = activeID;
-      else if (now > end) newStatus = inactiveID;
+      if (c.camstatusid === activeID) {
+        // Active: when end passed -> Inactive
+        if (now > end) newStatus = inactiveID;
+      } else if (c.camstatusid === onHoldID) {
+        // On Hold: when start reached -> Active; if already past end -> Inactive
+        if (now >= start && now <= end) newStatus = activeID;
+        else if (now > end) newStatus = inactiveID;
+      }
 
       if (newStatus && newStatus !== c.camstatusid) {
         await supabase.from("campaign").update({ camstatusid: newStatus }).eq("campaignid", c.campaignid);
       }
     }
 
-    console.log("[AutoCheck] Only On Hold campaigns checked successfully.");
+    console.log("[AutoCheck] Checked Active (to Inactive after end) and On Hold (to Active at start).");
   } catch (err) {
     console.error("[AutoCheck] Error:", err.message);
   }
@@ -74,7 +80,12 @@ export async function getSchedules(_req, res) {
 
     if (error) throw error;
 
-    const formatted = (data || []).map((c) => ({
+    // Hide archived campaigns from schedule view
+    const filtered = (data || []).filter(
+      (c) => (c.campaignstatus?.currentstatus || "").toLowerCase() !== "archived"
+    );
+
+    const formatted = filtered.map((c) => ({
       campaignid: c.campaignid,
       campaignname: c.campaignname,
       objective: c.objective,
@@ -104,6 +115,22 @@ export async function addSchedule(req, res) {
 
     if (!campaignID || !startDate || !endDate) {
       return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Guard: ensure campaign exists, is not archived, and has no schedule yet
+    const { data: campaign, error: campaignError } = await supabase
+      .from("campaign")
+      .select("campaignid, campaignscheduleid, campaignstatus:camstatusid(currentstatus)")
+      .eq("campaignid", campaignID)
+      .single();
+    if (campaignError) throw campaignError;
+
+    const statusName = (campaign?.campaignstatus?.currentstatus || "").toLowerCase();
+    if (statusName === "archived") {
+      return res.status(400).json({ error: "Archived campaigns cannot be scheduled." });
+    }
+    if (campaign?.campaignscheduleid) {
+      return res.status(400).json({ error: "Campaign already has a schedule." });
     }
 
     const { data: scheduleData, error: scheduleError } = await supabase
@@ -151,6 +178,22 @@ export async function updateSchedule(req, res) {
     const scheduleID = parseInt(req.params.id, 10);
     const { startDate, startTime, endDate, endTime, timeMessage } = req.body;
 
+    // Get the owning campaign and its current status
+    const { data: campaign, error: campaignError } = await supabase
+      .from("campaign")
+      .select("campaignid, camstatusid, campaignstatus:camstatusid(currentstatus)")
+      .eq("campaignscheduleid", scheduleID)
+      .single();
+    if (campaignError) throw campaignError;
+
+    const statusName = (campaign?.campaignstatus?.currentstatus || "").toLowerCase();
+    if (statusName === "active") {
+      return res.status(400).json({ error: "Pause the campaign before editing the schedule." });
+    }
+    if (statusName === "archived") {
+      return res.status(400).json({ error: "Archived campaigns cannot be edited." });
+    }
+
     const updateData = {
       startdate: startDate,
       starttime: startTime,
@@ -159,21 +202,21 @@ export async function updateSchedule(req, res) {
       timemessage: timeMessage,
     };
 
-    const { error } = await supabase.from("campaignschedule").update(updateData).eq("campaignscheduleid", scheduleID);
+    const { error } = await supabase
+      .from("campaignschedule")
+      .update(updateData)
+      .eq("campaignscheduleid", scheduleID);
     if (error) throw error;
 
-    const { data: campaign } = await supabase
-      .from("campaign")
-      .select("campaignid, camstatusid")
-      .eq("campaignscheduleid", scheduleID)
-      .single();
-
+    // Recalculate status based on new window, regardless of previous (incl. Paused)
     if (campaign) {
       const now = new Date();
       const start = new Date(`${startDate}T${startTime || "00:00"}+08:00`);
       const end = new Date(`${endDate}T${endTime || "23:59"}+08:00`);
 
-      const { data: statuses } = await supabase.from("campaignstatus").select("camstatusid, currentstatus");
+      const { data: statuses } = await supabase
+        .from("campaignstatus")
+        .select("camstatusid, currentstatus");
       const getStatusId = (name) =>
         statuses?.find((s) => s.currentstatus.toLowerCase() === name.toLowerCase())?.camstatusid;
 
@@ -187,7 +230,10 @@ export async function updateSchedule(req, res) {
       else newStatus = inactiveID;
 
       if (newStatus && newStatus !== campaign.camstatusid) {
-        await supabase.from("campaign").update({ camstatusid: newStatus }).eq("campaignid", campaign.campaignid);
+        await supabase
+          .from("campaign")
+          .update({ camstatusid: newStatus })
+          .eq("campaignid", campaign.campaignid);
       }
     }
 

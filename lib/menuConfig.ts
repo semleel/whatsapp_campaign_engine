@@ -39,6 +39,7 @@ export const MENU: MenuSection[] = [
       { label: "Overview", href: "/campaign", exact: true },
       { label: "Campaigns", href: "/campaign/campaigns" },
       { label: "Scheduler", href: "/campaign/schedule" },
+      { label: "Target / Flow ", href: "/campaign/targets" },
       { label: "Sessions", href: "/campaign/sessions" },
       { label: "Keyword Handler", href: "/campaign/keywords" },
     ],

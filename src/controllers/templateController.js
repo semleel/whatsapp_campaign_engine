@@ -302,7 +302,7 @@ export async function renderTemplate(req, res) {
       useVersion = last?.[0]?.versionno;
     }
 
-    const langs: string[] = [];
+const langs = [];
     if (reqLang) langs.push(reqLang);
     if (!langs.includes(content.defaultlang)) langs.push(content.defaultlang);
 
