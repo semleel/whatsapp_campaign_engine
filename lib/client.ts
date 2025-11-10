@@ -1,5 +1,18 @@
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ||
+  process.env.API_BASE ||
+  "http://localhost:3000";
+
+function withBase(path: string) {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = API_BASE.replace(/\/+$/, "");
+  const target = path.replace(/^\/+/, "");
+  return `${base}/${target}`;
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
+  const url = withBase(path);
+  const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",

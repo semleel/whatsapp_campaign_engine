@@ -1,10 +1,20 @@
 export type HttpMethod = "GET" | "POST";
 
+export type ApiParameter = {
+    id?: number;
+    key: string;
+    valueSource: "query" | "header" | "body" | "path" | "context";
+    value: string;
+    required?: boolean;
+};
+
 export type EndpointConfig = {
     id?: number;
+    contentId?: number | null;
     name: string;
     method: "GET" | "POST";
     url: string;
+    description?: string;
     headers?: Array<{ key: string; value: string }>;
     query?: Array<{ key: string; value: string }>;
     bodyTemplate?: string; // JSON with {{vars}}
@@ -12,6 +22,7 @@ export type EndpointConfig = {
     timeoutMs?: number;
     retries?: number;
     backoffMs?: number;
+    parameters?: ApiParameter[];
 };
 
 

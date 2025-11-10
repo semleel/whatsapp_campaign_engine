@@ -13,6 +13,7 @@ export default function NewEndpointPage() {
         name: "",
         method: "GET",
         url: "",
+        description: "",
         headers: [],
         query: [],
         bodyTemplate: "",
@@ -20,6 +21,7 @@ export default function NewEndpointPage() {
         timeoutMs: 8000,
         retries: 0,
         backoffMs: 300,
+        parameters: [],
     };
 
     return (
