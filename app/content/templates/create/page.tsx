@@ -3,6 +3,12 @@
 import Link from "next/link";
 import { useState } from "react";
 
+const SUPPORTED_LOCALES = [
+  { value: "en", label: "English" },
+  { value: "my", label: "Bahasa Melayu" },
+  { value: "cn", label: "Chinese" },
+];
+
 type TemplateForm = {
   title: string;
   type: string;
@@ -167,15 +173,19 @@ export default function ContentCreatePage() {
           </label>
           <label className="space-y-1 text-sm font-medium">
             <span>Default language</span>
-            <input
-              type="text"
+            <select
               name="defaultLang"
               value={form.defaultLang}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2 uppercase"
-              maxLength={2}
+              className="w-full rounded-md border px-3 py-2"
               required
-            />
+            >
+              {SUPPORTED_LOCALES.map((locale) => (
+                <option key={locale.value} value={locale.value}>
+                  {locale.label} ({locale.value.toUpperCase()})
+                </option>
+              ))}
+            </select>
           </label>
           <label className="space-y-1 text-sm font-medium">
             <span>Category</span>
@@ -216,28 +226,32 @@ export default function ContentCreatePage() {
           </label>
         </div>
 
-        <label className="space-y-1 text-sm font-medium">
-          <span>Media URL</span>
-          <input
-            type="text"
-            name="mediaUrl"
-            placeholder="https://… (optional)"
-            value={form.mediaUrl}
-            onChange={handleChange}
-            className="w-full rounded-md border px-3 py-2"
-          />
-        </label>
+        <div className="grid gap-4 md:grid-cols-1">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Media URL</span>
+            <input
+              type="text"
+              name="mediaUrl"
+              placeholder="https://… (optional)"
+              value={form.mediaUrl}
+              onChange={handleChange}
+              className="w-full rounded-md border px-3 py-2"
+            />
+          </label>
+        </div>
 
-        <label className="space-y-1 text-sm font-medium">
-          <span>Description</span>
-          <textarea
-            name="description"
-            placeholder="Message body and personalization notes"
-            value={form.description}
-            onChange={handleChange}
-            className="w-full rounded-md border px-3 py-2 min-h-32"
-          />
-        </label>
+        <div className="grid gap-4 md:grid-cols-1">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Description</span>
+            <textarea
+              name="description"
+              placeholder="Message body and personalization notes"
+              value={form.description}
+              onChange={handleChange}
+              className="w-full rounded-md border px-3 py-2 min-h-32"
+            />
+          </label>
+        </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3">
           <Link href="/content/templates" className="text-sm font-medium text-muted-foreground hover:text-foreground">

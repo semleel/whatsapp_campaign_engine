@@ -18,7 +18,7 @@ const seedTemplates: LocaleVariant[] = [
   },
 ];
 
-const supportedLocales = ["en", "my", "cn", "id"];
+const supportedLocales = ["en", "my", "cn"];
 
 export default function MultilingualPage() {
   const [templates, setTemplates] = useState(seedTemplates);

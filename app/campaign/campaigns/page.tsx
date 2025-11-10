@@ -92,7 +92,7 @@ export default function CampaignsPage() {
             <option value="Inactive">Inactive</option>
           </select>
           <Link
-            href="/campaign/archive"
+            href="/campaign/campaigns/archieved"
             className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
             Archived Campaigns
           </Link>
