@@ -1,238 +1,225 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Api } from "@/lib/client";
-import type { EndpointConfig, ResponseTemplate, MappingRule } from "@/lib/types";
 
-const DEFAULT_FALLBACK = "We're unable to retrieve your data at the moment. Please try again later.";
+import { useEffect, useState } from "react";
+import { Api } from "@/lib/client";
+import type { CampaignApiMapping, EndpointConfig } from "@/lib/types";
+
+type DraftMapping = {
+  campaignid: string;
+  contentkeyid: string;
+  apiid: string;
+  success_contentkeyid: string;
+  error_contentkeyid: string;
+  is_active: boolean;
+};
+
+const EMPTY_DRAFT: DraftMapping = {
+  campaignid: "",
+  contentkeyid: "",
+  apiid: "",
+  success_contentkeyid: "",
+  error_contentkeyid: "",
+  is_active: true,
+};
 
 export default function MappingsPage() {
+  const [draft, setDraft] = useState<DraftMapping>(EMPTY_DRAFT);
   const [endpoints, setEndpoints] = useState<EndpointConfig[]>([]);
-  const [formatters, setFormatters] = useState<ResponseTemplate[]>([]);
-  const [rules, setRules] = useState<MappingRule[]>([]);
+  const [mappings, setMappings] = useState<CampaignApiMapping[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
-  const [paramMapText, setParamMapText] = useState("{}");
-
-  const [draft, setDraft] = useState<MappingRule>({
-    id: "",
-    campaignCode: "",
-    trigger: { type: "keyword", value: "" },
-    endpointId: 0,
-    paramMap: {},
-    templateId: 0,
-    fallbackMessage: DEFAULT_FALLBACK,
-    retry: { enabled: false, count: 1 },
-  });
-
-  const resetDraft = () => {
-    setDraft({
-      id: "",
-      campaignCode: "",
-      trigger: { type: "keyword", value: "" },
-      endpointId: 0,
-      paramMap: {},
-      templateId: 0,
-      fallbackMessage: DEFAULT_FALLBACK,
-      retry: { enabled: false, count: 1 },
-    });
-    setParamMapText("{}");
-    setError("");
-  };
+  const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
     setLoading(true);
+    setError(null);
     try {
-      const [e, t, m] = await Promise.all([
-        Api.listEndpoints(),
-        Api.listResponseTemplates(),
-        Api.listMappings(),
-      ]);
-      setEndpoints(e);
-      setFormatters(t);
-      setRules(m);
-    } catch {
+      const [endpointData, mappingData] = await Promise.all([Api.listEndpoints(), Api.listMappings()]);
+      setEndpoints(endpointData);
+      setMappings(mappingData);
+    } catch (err: any) {
+      setError(err?.message || "Unable to load mappings");
       setEndpoints([]);
-      setFormatters([]);
-      setRules([]);
+      setMappings([]);
     } finally {
       setLoading(false);
     }
   }
+
   useEffect(() => {
     refresh();
   }, []);
 
-  const endpointById = useMemo(
-    () => Object.fromEntries(endpoints.map((e) => [String(e.id), e])),
-    [endpoints]
-  );
-  const formatterById = useMemo(
-    () => Object.fromEntries(formatters.map((t) => [String(t.id), t])),
-    [formatters]
-  );
-
-  const handleParamMapChange = (value: string) => {
-    setParamMapText(value);
-    try {
-      const parsed = value ? JSON.parse(value) : {};
-      setDraft((prev) => ({ ...prev, paramMap: parsed }));
-      setError("");
-    } catch {
-      setError("Param map must be valid JSON.");
-    }
-  };
-
   const handleCreate = async () => {
-    if (error) return;
-    try {
-      await Api.createMapping({
-        ...draft,
-        id: undefined as unknown as string,
-      });
-      resetDraft();
-      await refresh();
-    } catch (err: any) {
-      setError(err?.message || "Failed to create mapping");
+    if (!draft.campaignid || !draft.contentkeyid || !draft.apiid) {
+      setError("Campaign ID, content key, and API are required.");
+      return;
     }
+    setError(null);
+    await Api.createMapping({
+      campaignid: Number(draft.campaignid),
+      contentkeyid: draft.contentkeyid.trim(),
+      apiid: Number(draft.apiid),
+      success_contentkeyid: draft.success_contentkeyid.trim() || null,
+      error_contentkeyid: draft.error_contentkeyid.trim() || null,
+      is_active: draft.is_active,
+    });
+    setDraft(EMPTY_DRAFT);
+    refresh();
   };
 
-  const handleDelete = async (id: string | number) => {
-    await Api.deleteMapping(id);
-    await refresh();
+  const endpointLabel = (apiid?: number | null) => {
+    if (!apiid) return "—";
+    const match = endpoints.find((endpoint) => endpoint.apiid === apiid);
+    return match ? `${match.name} (${match.method})` : `API #${apiid}`;
   };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h3 className="text-lg font-semibold">Keyword & Entry Point Mapping</h3>
+          <h3 className="text-lg font-semibold">Campaign ⇄ API mapping</h3>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Route keywords, buttons, or lists to backend endpoints with formatter responses and friendly fallbacks.
+            Each row maps a {`<campaignid, contentkeyid>`} pair to a registered API and optional success/error follow-up nodes.
           </p>
         </div>
       </div>
 
+      {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
       <section className="rounded-xl border p-4 space-y-3">
-        <div className="grid gap-3 md:grid-cols-6">
-          <input
-            className="rounded-md border px-3 py-2 text-sm md:col-span-2"
-            placeholder="Campaign code (e.g. RAYA2025)"
-            value={draft.campaignCode}
-            onChange={(e) => setDraft({ ...draft, campaignCode: e.target.value })}
-          />
-
-          <select
-            className="rounded-md border px-3 py-2 text-sm"
-            value={draft.trigger.type}
-            onChange={(e) => setDraft({ ...draft, trigger: { ...draft.trigger, type: e.target.value as "keyword" | "button" | "list" } })}
-          >
-            <option value="keyword">Keyword</option>
-            <option value="button">Button</option>
-            <option value="list">List</option>
-          </select>
-
-          <input
-            className="rounded-md border px-3 py-2 text-sm"
-            placeholder="Trigger value (e.g. CHECK_POINTS)"
-            value={draft.trigger.value}
-            onChange={(e) => setDraft({ ...draft, trigger: { ...draft.trigger, value: e.target.value } })}
-          />
-
-          <select
-            className="rounded-md border px-3 py-2 text-sm"
-            value={String(draft.endpointId || "")}
-            onChange={(e) => setDraft({ ...draft, endpointId: Number(e.target.value) || 0 })}
-          >
-            <option value="">Select endpoint...</option>
-            {endpoints.map((e) => (
-              <option key={String(e.id)} value={String(e.id)}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-md border px-3 py-2 text-sm"
-            value={String(draft.templateId || "")}
-            onChange={(e) => setDraft({ ...draft, templateId: Number(e.target.value) || 0 })}
-          >
-            <option value="">No formatter</option>
-            {formatters.map((t) => (
-              <option key={String(t.id)} value={String(t.id)}>
-                {t.name} {t.locale ? `(${t.locale})` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2">
-          <input
-            className="rounded-md border px-3 py-2 text-sm"
-            placeholder='Param map JSON (e.g. {"userId":"{{msisdn}}"})'
-            value={paramMapText}
-            onChange={(e) => handleParamMapChange(e.target.value)}
-          />
-          <input
-            className="rounded-md border px-3 py-2 text-sm"
-            placeholder="Fallback message (optional)"
-            value={draft.fallbackMessage || ""}
-            onChange={(e) => setDraft({ ...draft, fallbackMessage: e.target.value })}
-          />
-        </div>
-
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm">
+        <div className="grid gap-3 md:grid-cols-3">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Campaign ID</span>
             <input
-              type="checkbox"
-              checked={!!draft.retry?.enabled}
-              onChange={(e) => setDraft({ ...draft, retry: { enabled: e.target.checked, count: draft.retry?.count ?? 1 } })}
+              className="w-full rounded-md border px-3 py-2"
+              value={draft.campaignid}
+              onChange={(e) => setDraft((prev) => ({ ...prev, campaignid: e.target.value }))}
+              placeholder="e.g. 12"
             />
-            Retry on failure
           </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Content key</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={draft.contentkeyid}
+              onChange={(e) => setDraft((prev) => ({ ...prev, contentkeyid: e.target.value }))}
+              placeholder="WELCOME_STEP"
+            />
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>API</span>
+            <select
+              className="w-full rounded-md border px-3 py-2"
+              value={draft.apiid}
+              onChange={(e) => setDraft((prev) => ({ ...prev, apiid: e.target.value }))}
+            >
+              <option value="">Select API</option>
+              {endpoints.map((endpoint) => (
+                <option key={endpoint.apiid ?? endpoint.name} value={endpoint.apiid}>
+                  {endpoint.name} ({endpoint.method})
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Success content key</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={draft.success_contentkeyid}
+              onChange={(e) => setDraft((prev) => ({ ...prev, success_contentkeyid: e.target.value }))}
+              placeholder="OPTIONAL"
+            />
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Error content key</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={draft.error_contentkeyid}
+              onChange={(e) => setDraft((prev) => ({ ...prev, error_contentkeyid: e.target.value }))}
+              placeholder="OPTIONAL"
+            />
+          </label>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={draft.is_active}
+            onChange={(e) => setDraft((prev) => ({ ...prev, is_active: e.target.checked }))}
+          />
+          Mapping is active
+        </label>
+        <div>
           <button
             type="button"
-            className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
             onClick={handleCreate}
+            disabled={loading}
           >
             Add mapping
           </button>
         </div>
-        {error && <p className="text-xs text-rose-600">{error}</p>}
       </section>
 
       <section className="rounded-xl border overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/40">
             <tr>
+              <th className="px-3 py-2 text-left font-medium">Mapping ID</th>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
-              <th className="px-3 py-2 text-left font-medium">Trigger</th>
-              <th className="px-3 py-2 text-left font-medium">Endpoint</th>
-              <th className="px-3 py-2 text-left font-medium">Formatter</th>
+              <th className="px-3 py-2 text-left font-medium">Content key</th>
+              <th className="px-3 py-2 text-left font-medium">API</th>
+              <th className="px-3 py-2 text-left font-medium">Success/Error</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-muted-foreground">
-                  Loading...
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                  Loading mappings...
                 </td>
               </tr>
-            ) : rules.length ? (
-              rules.map((r) => (
-                <tr key={String(r.id)} className="border-t">
-                  <td className="px-3 py-2">{r.campaignCode}</td>
-                  <td className="px-3 py-2">
-                    {r.trigger.type}: <span className="font-medium">{r.trigger.value}</span>
+            ) : mappings.length ? (
+              mappings.map((mapping) => (
+                <tr key={mapping.mappingid} className="border-t">
+                  <td className="px-3 py-2 font-mono text-xs">{mapping.mappingid}</td>
+                  <td className="px-3 py-2">Campaign #{mapping.campaignid}</td>
+                  <td className="px-3 py-2">{mapping.contentkeyid}</td>
+                  <td className="px-3 py-2">{endpointLabel(mapping.apiid)}</td>
+                  <td className="px-3 py-2 text-xs">
+                    <div>Success: {mapping.success_contentkeyid || "—"}</div>
+                    <div>Error: {mapping.error_contentkeyid || "—"}</div>
                   </td>
-                  <td className="px-3 py-2">{endpointById[String(r.endpointId)]?.name || r.endpointId}</td>
                   <td className="px-3 py-2">
-                    {r.templateId ? formatterById[String(r.templateId)]?.name || r.templateId : <span className="text-muted-foreground">-</span>}
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        mapping.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      {mapping.is_active ? "Active" : "Disabled"}
+                    </span>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-right space-x-2">
                     <button
-                      className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
-                      onClick={() => handleDelete(r.id as unknown as number)}
+                      className="rounded border px-2 py-1 text-xs"
+                      onClick={async () => {
+                        if (!mapping.mappingid) return;
+                        await Api.updateMapping(mapping.mappingid, { ...mapping, is_active: !mapping.is_active });
+                        refresh();
+                      }}
+                    >
+                      {mapping.is_active ? "Disable" : "Enable"}
+                    </button>
+                    <button
+                      className="rounded border px-2 py-1 text-xs text-rose-600"
+                      onClick={async () => {
+                        if (!mapping.mappingid) return;
+                        await Api.deleteMapping(mapping.mappingid);
+                        refresh();
+                      }}
                     >
                       Delete
                     </button>
@@ -241,7 +228,7 @@ export default function MappingsPage() {
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
                   No mappings yet.
                 </td>
               </tr>
@@ -252,5 +239,3 @@ export default function MappingsPage() {
     </div>
   );
 }
-
-

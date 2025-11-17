@@ -1,59 +1,83 @@
+import type { ReactNode } from "react";
+
 export type MenuItem = {
   label: string;
   href: string;
   exact?: boolean;
 };
+
 export type MenuSection = {
   id: string;
   label: string;
-  icon?: React.ReactNode;
+  icon?: ReactNode;
   items: MenuItem[];
 };
 
 export const MENU: MenuSection[] = [
   {
-    id: "whatsapp",
-    label: "WhatsApp Gateway & API",
+    id: "overview",
+    label: "Overview",
+    items: [{ label: "Dashboard", href: "/", exact: true }],
+  },
+  {
+    id: "campaigns",
+    label: "Campaigns",
     items: [
-      { label: "Webhook Listener", href: "/whatsapp/webhook" },
-      { label: "Outbound Dispatcher", href: "/whatsapp/outbound" },
-      { label: "Auth & Tokens", href: "/whatsapp/auth" },
-      { label: "Delivery & Retries", href: "/whatsapp/delivery" },
+      { label: "Campaign List", href: "/campaign", exact: true },
+      { label: "Sessions", href: "/campaign/sessions" },
+      { label: "Keywords", href: "/campaign/keywords" },
+      { label: "Targets / User Flows", href: "/campaign/targets" },
     ],
   },
   {
     id: "content",
-    label: "Content Engine",
+    label: "Content",
     items: [
-      { label: "Overview", href: "/content", exact: true },
+      { label: "Content", href: "/content", exact: true },
       { label: "Template Library", href: "/content/templates" },
-      { label: "Input Validator", href: "/content/validator" },
-      { label: "Branching Logic", href: "/content/branching" },
-      { label: "Multilingual Handler", href: "/content/i18n" },
     ],
   },
   {
-    id: "campaign",
-    label: "Campaign Engine",
+    id: "flows",
+    label: "Flows",
     items: [
-      { label: "Overview", href: "/campaign", exact: true },
-      { label: "Campaigns", href: "/campaign/campaigns" },
-      { label: "Scheduler", href: "/campaign/schedule" },
-      { label: "Target / Flow ", href: "/campaign/targets" },
-      { label: "Sessions", href: "/campaign/sessions" },
-      { label: "Keyword Handler", href: "/campaign/keywords" },
+      { label: "Flow List", href: "/flows", exact: true },
     ],
+  },
+  {
+    id: "contacts",
+    label: "Contacts",
+    items: [{ label: "Contacts", href: "/contacts", exact: true }],
   },
   {
     id: "integration",
-    label: "Backend Integration & Live API",
+    label: "Integrations",
     items: [
-      { label: "Overview", href: "/integration", exact: true },
+      { label: "API Catalog", href: "/integration", exact: true },
       { label: "Endpoints", href: "/integration/endpoints" },
       { label: "Mappings", href: "/integration/mappings" },
-      { label: "Response Formatters", href: "/integration/formatters" },
-      { label: "Live Test Runner", href: "/integration/test-runner" },
+      { label: "Formatters", href: "/integration/formatters" },
+      { label: "Test Runner", href: "/integration/test-runner" },
       { label: "Logs", href: "/integration/logs" },
     ],
   },
-];
+  {
+    id: "reports",
+    label: "Reports",
+    items: [
+      { label: "Summary", href: "/reports", exact: true },
+      { label: "Delivery", href: "/reports/delivery" },
+      { label: "Flow Stats", href: "/reports/flow" },
+    ],
+  },
+  {
+    id: "system",
+    label: "System",
+    items: [
+      { label: "Admins", href: "/system/admins" },
+      { label: "Tokens", href: "/system/tokens" },
+      { label: "Security Logs", href: "/system/logs" },
+      { label: "WhatsApp Config", href: "/system/whatsapp" },
+    ],
+  },
+] as const;

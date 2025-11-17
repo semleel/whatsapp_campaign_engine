@@ -1,173 +1,183 @@
-﻿const introduction =
-  "Orchestrate structured WhatsApp campaigns with clear objectives (what), targeting (where), and precise timing (when) while remembering every user\'s progress across concurrent journeys.";
+"use client";
 
-const objectives = [
-  "Link every user session to the correct campaign ID for persistent context.",
-  "Enforce scheduling rules so campaigns only run inside approved windows.",
-  "Support multiple live campaigns per user without message mix-ups.",
-  "Give operators live controls to pause, extend, or resume campaigns on demand.",
-  "Improve user experience with structured, personalized messaging and analytics.",
-];
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Api } from "@/lib/client";
 
-const stats = [
-  { label: "Live campaigns", value: "12" },
-  { label: "Scheduled launches", value: "4" },
-  { label: "Paused for review", value: "1" },
-];
+interface Campaign {
+  campaignid: number;
+  campaignname: string;
+  userflowname: string;
+  regionname: string;
+  currentstatus: string;
+  start_at?: string | null;
+  end_at?: string | null;
+}
 
-const featureCards = [
-  {
-    title: "Campaign Management",
-    bullets: [
-      "Create campaigns by defining objectives, targeting, and duration.",
-      "Edit live campaigns or archive them without losing analytics.",
-      "Pause/resume journeys to react to compliance or performance signals.",
-    ],
-    example: "Example: Set up \"RAYA 2025\" with objective=Retention, region=MY, flow=Promo and archive it post-Raya.",
-    href: "/campaign/campaigns",
-  },
-  {
-    title: "Scheduler Module",
-    bullets: [
-      "Set start/end times, extend windows, and queue reminder jobs.",
-      "Ensure messages only send during approved delivery slots.",
-      "Centralize time-based controls for every region and segment.",
-    ],
-    example: "Example: Start 1 Apr 08:00, end 30 Apr 23:59, queue reminder on 12 Apr at noon.",
-    href: "/campaign/schedule",
-  },
-  {
-    title: "Target / User Flow",
-    bullets: [
-      "Add and manage target regions used for campaign targeting.",
-      "Define reusable user flows (Promo, Quiz, Survey) for campaigns.",
-      "Centralize reference data used across the campaign engine.",
-    ],
-    example: "Example: Add region MY and a new flow 'Promo'.",
-    href: "/campaign/targets",
-  },
-  {
-    title: "Session Management",
-    bullets: [
-      "Bind every conversation to a campaign ID with checkpoints.",
-      "Resume where users left off even days later.",
-      "Handle multi-campaign participants with clean separation.",
-    ],
-    example: "Example: User joins Promo + Quiz → system stores two session IDs and resumes each independently.",
-    href: "/campaign/sessions",
-  },
-  {
-    title: "Keyword & Entry Point Handler",
-    bullets: [
-      "Recognize promo/quiz/menu keywords and route instantly.",
-      "Present helpful fallback copy when input is unknown.",
-      "Keep entry-point logic centralized for operations teams.",
-    ],
-    example: "Example: Keyword \"promo\" → promo campaign; unknown keyword → \"Type MENU to see options.\"",
-    href: "/campaign/keywords",
-  },
-];
+const STATUS_STYLES: Record<string, string> = {
+  active: "bg-emerald-100 text-emerald-700",
+  new: "bg-emerald-100 text-emerald-700",
+  paused: "bg-amber-100 text-amber-700",
+  scheduled: "bg-sky-100 text-sky-700",
+  expired: "bg-rose-100 text-rose-700",
+};
 
-const recentCampaigns = [
-  {
-    name: "Retention Booster Q4",
-    status: "In flight",
-    owner: "CX Automation",
-    updated: "2 hours ago",
-  },
-  {
-    name: "Festive Loyalty Push",
-    status: "Scheduled",
-    owner: "Brand Squad",
-    updated: "Yesterday, 4:20 PM",
-  },
-  {
-    name: "Dormant Reactivation",
-    status: "Archived",
-    owner: "Revenue Ops",
-    updated: "Oct 21, 2025",
-  },
-];
+export default function CampaignsPage() {
+  const router = useRouter();
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-export default function CampaignOverviewPage() {
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await Api.listCampaigns();
+        setCampaigns(data);
+      } catch (err) {
+        console.error(err);
+        setMessage(err instanceof Error ? err.message : "Unable to load campaigns right now.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const handleEdit = (id: number) => router.push(`/campaign/${id}`);
+
+  const handleArchive = async (id: number) => {
+    if (!confirm("Archive this campaign?")) return;
+    try {
+      await Api.archiveCampaign(id);
+      setMessage("Campaign archived successfully.");
+      setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
+    } catch (err) {
+      console.error(err);
+      setMessage(err instanceof Error ? err.message : "Failed to archive campaign.");
+    }
+  };
+
+  const activeCount = useMemo(
+    () => campaigns.filter((c) => c.currentstatus?.toLowerCase() === "active").length,
+    [campaigns]
+  );
+
+  const filteredCampaigns = useMemo(() => {
+    if (statusFilter === "all") return campaigns;
+    const wanted = statusFilter.toLowerCase();
+    return campaigns.filter((c) => (c.currentstatus || "").toLowerCase() === wanted);
+  }, [campaigns, statusFilter]);
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "—";
+    return date.toLocaleString();
+  };
+
   return (
     <div className="space-y-6">
-      <section className="rounded-xl border bg-card p-6 space-y-4">
-        <div className="space-y-2">
-          <h3 className="text-base font-semibold">What this module does</h3>
-          <p className="text-sm text-muted-foreground">{introduction}</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold">Campaign Management</h3>
+          <p className="text-sm text-muted-foreground">
+            Manage live journeys, inspect targeting, and nudge campaigns through approvals without leaving this view.
+          </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {objectives.map((objective) => (
-            <div key={objective} className="rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
-              {objective}
-            </div>
-          ))}
+        <div className="flex flex-wrap gap-2 items-center">
+          <label className="text-sm text-muted-foreground mr-2">Filter by status</label>
+          <select
+            className="rounded-md border px-2 py-1 text-sm mr-4"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All</option>
+            <option value="New">New</option>
+            <option value="Active">Active</option>
+            <option value="On Hold">On Hold</option>
+            <option value="Paused">Paused</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+          <Link
+            href="/campaign/archived"
+            className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+            Archived Campaigns
+          </Link>
+          <Link
+            href="/campaign/create"
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
+            New Campaign
+          </Link>
         </div>
-      </section>
+      </div>
 
-      <section className="rounded-xl border p-5 space-y-3">
-        <h4 className="text-base font-semibold">Module stats</h4>
-        <div className="grid gap-3 sm:grid-cols-3">
-          {stats.map((stat) => (
-            <div key={stat.label} className="rounded-lg border border-dashed px-3 py-2">
-              <div className="text-sm text-muted-foreground">{stat.label}</div>
-              <div className="text-lg font-semibold">{stat.value}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <div className="rounded-xl border overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Campaign</th>
+              <th className="px-3 py-2 text-left font-medium">User flow</th>
+              <th className="px-3 py-2 text-left font-medium">Region</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
+              <th className="px-3 py-2 text-left font-medium">Start</th>
+              <th className="px-3 py-2 text-left font-medium">End</th>
+              <th className="px-3 py-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                  Loading campaigns...
+                </td>
+              </tr>
+            ) : filteredCampaigns.length ? (
+              filteredCampaigns.map((c) => {
+                const badge = STATUS_STYLES[c.currentstatus?.toLowerCase()] || "bg-slate-100 text-slate-700";
+                return (
+                  <tr key={c.campaignid} className="border-t">
+                    <td className="px-3 py-2 font-medium">{c.campaignname}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.userflowname}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.regionname}</td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}>{c.currentstatus}</span>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.start_at)}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.end_at)}</td>
+                    <td className="px-3 py-2 text-right space-x-2">
+                      <button
+                        onClick={() => handleEdit(c.campaignid)}
+                        className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleArchive(c.campaignid)}
+                        className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      >
+                        Archive
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
+              <tr>
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                  No campaigns yet. Create one to get started.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        {featureCards.map((card) => (
-          <article key={card.title} className="rounded-xl border p-5 space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h4 className="text-base font-semibold">{card.title}</h4>
-              <a href={card.href} className="text-sm font-medium text-primary hover:underline">
-                Open
-              </a>
-            </div>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              {card.bullets.map((bullet) => (
-                <li key={bullet}>{bullet}</li>
-              ))}
-            </ul>
-            <div className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{card.example}</div>
-          </article>
-        ))}
-      </section>
-
-      <section className="rounded-xl border p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-base font-semibold">Recent campaigns</h4>
-          <a href="/campaign/campaigns" className="text-sm font-medium text-primary hover:underline">
-            View workspace
-          </a>
-        </div>
-        <div className="divide-y text-sm">
-          {recentCampaigns.map((campaign) => (
-            <div key={campaign.name} className="flex flex-wrap items-center justify-between gap-3 py-3">
-              <div>
-                <div className="font-medium">{campaign.name}</div>
-                <div className="text-xs text-muted-foreground">Owner · {campaign.owner}</div>
-              </div>
-              <div className="text-sm text-muted-foreground">{campaign.updated}</div>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-medium ${
-                  campaign.status === "In flight"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : campaign.status === "Scheduled"
-                    ? "bg-amber-100 text-amber-700"
-                    : "bg-slate-100 text-slate-700"
-                }`}
-              >
-                {campaign.status}
-              </span>
-            </div>
-          ))}
-          {!recentCampaigns.length && <div className="text-muted-foreground text-sm">No campaigns yet.</div>}
-        </div>
-      </section>
+      <div className="rounded-xl border p-4 text-sm text-muted-foreground flex flex-wrap items-center justify-between gap-3">
+        <div>Active journeys: {activeCount}</div>
+        {message && <div className="text-xs">{message}</div>}
+      </div>
     </div>
   );
 }
+

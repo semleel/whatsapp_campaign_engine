@@ -1,165 +1,263 @@
-import { supabase } from "../services/supabaseService.js";
+import prisma from "../config/prismaClient.js";
+import { normalizeCampaignStatus, statusFromId, statusToId } from "../constants/campaignStatus.js";
+
+const DEFAULT_STATUS = "New";
+const STATUS_ACTIVE = "Active";
+const STATUS_ON_HOLD = "On Hold";
+const STATUS_INACTIVE = "Inactive";
+
+const parseNullableDate = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const parseNullableInt = (value) => {
+  if (value == null || value === "") return null;
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+};
 
 export async function createCampaign(req, res) {
   try {
-    const { campaignName, objective, targetRegionID, userFlowID, campaignScheduleID } = req.body;
+    const { campaignName, objective, targetRegionID, userFlowID, status, startAt, endAt } = req.body;
 
-    const insertData = {
+    if (!campaignName) {
+      return res.status(400).json({ error: "campaignName is required" });
+    }
+
+    const data = {
       campaignname: campaignName,
-      objective,
-      targetregionid: targetRegionID ? parseInt(targetRegionID, 10) : null,
-      userflowid: userFlowID ? parseInt(userFlowID, 10) : null,
-      campaignscheduleid: campaignScheduleID ? parseInt(campaignScheduleID, 10) : null,
+      objective: objective || null,
+      targetregionid: parseNullableInt(targetRegionID),
+      userflowid: parseNullableInt(userFlowID),
+      status: normalizeCampaignStatus(status, DEFAULT_STATUS),
+      start_at: parseNullableDate(startAt),
+      end_at: parseNullableDate(endAt),
     };
 
-    const { data, error } = await supabase.from("campaign").insert([insertData]).select();
-    if (error) throw error;
-
-    res.status(201).json({ message: "Campaign created successfully!", data });
+    const campaign = await prisma.campaign.create({ data });
+    return res.status(201).json({ message: "Campaign created successfully!", data: campaign });
   } catch (err) {
-    console.error("Create error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("Create campaign error:", err);
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function listCampaigns(_req, res) {
   try {
-    const { data, error } = await supabase
-      .from("campaign")
-      .select(`
-        campaignid,
-        campaignname,
-        objective,
-        targetregion:targetregionid (regionname),
-        userflow:userflowid (userflowname),
-        campaignstatus:camstatusid (currentstatus),
-        camstatusid,
-        campaignscheduleid
-      `)
-      .neq("camstatusid", 3);
+    const campaigns = await prisma.campaign.findMany({
+      where: { status: { not: "Archived" } },
+      include: {
+        targetregion: { select: { regionname: true } },
+        userflow: { select: { userflowname: true } },
+      },
+      orderBy: { campaignid: "desc" },
+    });
 
-    if (error) throw error;
-
-    const formatted = data.map((c) => ({
-      campaignid: c.campaignid,
-      campaignname: c.campaignname,
-      objective: c.objective,
-      regionname: c.targetregion?.regionname || "N/A",
-      userflowname: c.userflow?.userflowname || "N/A",
-      currentstatus: c.campaignstatus?.currentstatus || "N/A",
-      camstatusid: c.camstatusid,
-      campaignscheduleid: c.campaignscheduleid ?? null,
+    const formatted = campaigns.map((campaign) => ({
+      campaignid: campaign.campaignid,
+      campaignname: campaign.campaignname,
+      objective: campaign.objective,
+      regionname: campaign.targetregion?.regionname ?? "N/A",
+      userflowname: campaign.userflow?.userflowname ?? "N/A",
+      currentstatus: campaign.status ?? "Unknown",
+      status: campaign.status ?? "Unknown",
+      camstatusid: statusToId(campaign.status),
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
     }));
 
-    res.status(200).json(formatted);
+    return res.status(200).json(formatted);
   } catch (err) {
-    console.error("Fetch campaign list error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("List campaigns error:", err);
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function listArchivedCampaigns(_req, res) {
   try {
-    const { data, error } = await supabase
-      .from("campaign")
-      .select(`
-        campaignid,
-        campaignname,
-        objective,
-        targetregion:targetregionid (regionname),
-        userflow:userflowid (userflowname),
-        campaignstatus:camstatusid (currentstatus)
-      `)
-      .eq("camstatusid", 3);
+    const campaigns = await prisma.campaign.findMany({
+      where: { status: "Archived" },
+      include: {
+        targetregion: { select: { regionname: true } },
+        userflow: { select: { userflowname: true } },
+      },
+      orderBy: { campaignid: "desc" },
+    });
 
-    if (error) throw error;
-
-    const formatted = data.map((c) => ({
-      campaignid: c.campaignid,
-      campaignname: c.campaignname,
-      objective: c.objective,
-      regionname: c.targetregion?.regionname || "N/A",
-      userflowname: c.userflow?.userflowname || "N/A",
-      currentstatus: c.campaignstatus?.currentstatus || "Archived",
+    const formatted = campaigns.map((campaign) => ({
+      campaignid: campaign.campaignid,
+      campaignname: campaign.campaignname,
+      objective: campaign.objective,
+      regionname: campaign.targetregion?.regionname ?? "N/A",
+      userflowname: campaign.userflow?.userflowname ?? "N/A",
+      currentstatus: campaign.status ?? "Archived",
+      camstatusid: statusToId(campaign.status),
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
     }));
 
-    res.status(200).json(formatted);
+    return res.status(200).json(formatted);
   } catch (err) {
-    console.error("Fetch archived campaigns error:", err);
-    res.status(500).json({ error: err.message });
+    console.error("List archived campaigns error:", err);
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function getCampaignById(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
-    const { data, error } = await supabase.from("campaign").select("*").eq("campaignid", campaignID).single();
-    if (error) throw error;
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
 
-    res.status(200).json(data);
+    const campaign = await prisma.campaign.findUnique({
+      where: { campaignid: campaignID },
+      include: {
+        targetregion: true,
+        userflow: true,
+      },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    return res.status(200).json({
+      ...campaign,
+      camstatusid: statusToId(campaign.status),
+    });
   } catch (err) {
     console.error("Fetch single campaign error:", err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function updateCampaign(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
-    const { campaignName, objective, targetRegionID, userFlowID, camStatusID, campaignScheduleID } = req.body;
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
 
-    const updateData = {
-      campaignname: campaignName,
-      objective,
-      targetregionid: targetRegionID ? parseInt(targetRegionID, 10) : null,
-      userflowid: userFlowID ? parseInt(userFlowID, 10) : null,
-      camstatusid: camStatusID ? parseInt(camStatusID, 10) : null,
-      campaignscheduleid: campaignScheduleID ? parseInt(campaignScheduleID, 10) : null,
-    };
+    const { campaignName, objective, targetRegionID, userFlowID, camStatusID, status, startAt, endAt } = req.body;
 
-    const { error } = await supabase.from("campaign").update(updateData).eq("campaignid", campaignID);
-    if (error) throw error;
+    const requestedStatus = statusFromId(camStatusID) || normalizeCampaignStatus(status, null);
 
-    res.status(200).json({ message: "Campaign updated successfully!" });
+    const data = {};
+
+    if (typeof campaignName === "string" && campaignName.trim()) {
+      data.campaignname = campaignName;
+    }
+    if (typeof objective !== "undefined") {
+      data.objective = objective || null;
+    }
+    if (typeof targetRegionID !== "undefined") {
+      data.targetregionid = parseNullableInt(targetRegionID);
+    }
+    if (typeof userFlowID !== "undefined") {
+      data.userflowid = parseNullableInt(userFlowID);
+    }
+    if (typeof startAt !== "undefined") {
+      data.start_at = parseNullableDate(startAt);
+    }
+    if (typeof endAt !== "undefined") {
+      data.end_at = parseNullableDate(endAt);
+    }
+    if (requestedStatus) {
+      data.status = requestedStatus;
+    }
+
+    await prisma.campaign.update({
+      where: { campaignid: campaignID },
+      data,
+    });
+
+    return res.status(200).json({ message: "Campaign updated successfully!" });
   } catch (err) {
     console.error("Update campaign error:", err);
-    res.status(500).json({ error: err.message });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function archiveCampaign(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
-    const { error } = await supabase.from("campaign").update({ camstatusid: 3 }).eq("campaignid", campaignID);
-    if (error) throw error;
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
 
-    res.status(200).json({ message: "Campaign archived successfully!" });
+    await prisma.campaign.update({
+      where: { campaignid: campaignID },
+      data: { status: "Archived" },
+    });
+
+    return res.status(200).json({ message: "Campaign archived successfully!" });
   } catch (err) {
     console.error("Archive campaign error:", err);
-    res.status(500).json({ error: err.message });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+    return res.status(500).json({ error: err.message });
   }
 }
 
 export async function restoreCampaign(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
 
-    const { data: inactiveStatus, error: statusError } = await supabase
-      .from("campaignstatus")
-      .select("camstatusid")
-      .eq("currentstatus", "Inactive")
-      .single();
-    if (statusError) throw statusError;
+    await prisma.campaign.update({
+      where: { campaignid: campaignID },
+      data: { status: "Inactive" },
+    });
 
-    const { error } = await supabase
-      .from("campaign")
-      .update({ camstatusid: inactiveStatus.camstatusid })
-      .eq("campaignid", campaignID);
-    if (error) throw error;
-
-    res.status(200).json({ message: "Campaign restored to Inactive!" });
+    return res.status(200).json({ message: "Campaign restored to Inactive!" });
   } catch (err) {
     console.error("Restore campaign error:", err);
-    res.status(500).json({ error: err.message });
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function autoCheckCampaignStatuses() {
+  try {
+    const now = new Date();
+    const campaigns = await prisma.campaign.findMany({
+      where: { status: { not: "Archived" } },
+      select: { campaignid: true, status: true, start_at: true, end_at: true },
+    });
+
+    for (const campaign of campaigns) {
+      const startWindow = campaign.start_at ? new Date(campaign.start_at) : null;
+      const endWindow = campaign.end_at ? new Date(campaign.end_at) : null;
+      const currentStatus = campaign.status || "";
+
+      let nextStatus = null;
+      if (startWindow && now < startWindow) {
+        nextStatus = STATUS_ON_HOLD;
+      } else if (startWindow && now >= startWindow && (!endWindow || now <= endWindow)) {
+        nextStatus = STATUS_ACTIVE;
+      } else if (endWindow && now > endWindow) {
+        nextStatus = STATUS_INACTIVE;
+      }
+
+      if (nextStatus && nextStatus !== currentStatus) {
+        await prisma.campaign.update({
+          where: { campaignid: campaign.campaignid },
+          data: { status: nextStatus },
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[CampaignStatusJob] error:", err);
   }
 }

@@ -1,309 +1,373 @@
 "use client";
-import { useState } from "react";
-import type { EndpointConfig, HttpMethod, ApiParameter } from "@/lib/types";
+
+import { useMemo, useState } from "react";
+import type {
+  ApiAuthType,
+  ApiLocation,
+  ApiParameter,
+  ApiValueSource,
+  EndpointConfig,
+  HttpMethod,
+} from "@/lib/types";
 
 type Props = {
-    initial: EndpointConfig;
-    submitting?: boolean;
-    onCancel?: () => void;
-    onSubmit: (data: EndpointConfig) => Promise<void> | void;
+  initial: EndpointConfig;
+  submitting?: boolean;
+  onCancel?: () => void;
+  onSubmit: (data: EndpointConfig) => Promise<void> | void;
 };
 
-type KV = { key: string; value: string };
+const METHOD_OPTIONS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const LOCATION_OPTIONS: ApiLocation[] = ["path", "query", "header", "body"];
+const VALUE_SOURCE_OPTIONS: ApiValueSource[] = ["contact", "campaign", "constant"];
+
+function buildUrlPreview(base: string, path: string) {
+  const trimmedBase = base.replace(/\/+$/, "");
+  const trimmedPath = path ? `/${path.replace(/^\/+/, "")}` : "";
+  return `${trimmedBase}${trimmedPath || "/"}`;
+}
 
 export default function EndpointForm({ initial, submitting, onCancel, onSubmit }: Props) {
-    const [name, setName] = useState(initial.name);
-    const [method, setMethod] = useState<HttpMethod>(initial.method);
-    const [url, setUrl] = useState(initial.url);
-    const [description, setDescription] = useState(initial.description || "");
-    const [headers, setHeaders] = useState<KV[]>(initial.headers || []);
-    const [query, setQuery] = useState<KV[]>(initial.query || []);
-    const [bodyTemplate, setBodyTemplate] = useState(initial.bodyTemplate || "");
-    const [authType, setAuthType] = useState<"none" | "bearer" | "apiKey">(initial.auth?.type ?? "none");
-    const [authHeaderName, setAuthHeaderName] = useState(initial.auth?.headerName ?? "Authorization");
-    const [authTokenRef, setAuthTokenRef] = useState(initial.auth?.tokenRef ?? "");
-    const [timeoutMs, setTimeoutMs] = useState<number>(initial.timeoutMs ?? 8000);
-    const [retries, setRetries] = useState<number>(initial.retries ?? 0);
-    const [backoffMs, setBackoffMs] = useState<number>(initial.backoffMs ?? 300);
-    const [parameters, setParameters] = useState<ApiParameter[]>(initial.parameters || []);
+  const [name, setName] = useState(initial.name || "");
+  const [description, setDescription] = useState(initial.description || "");
+  const [method, setMethod] = useState<HttpMethod>((initial.method as HttpMethod) || "GET");
+  const [baseUrl, setBaseUrl] = useState(initial.base_url || "https://");
+  const [path, setPath] = useState(initial.path || "/");
+  const [authType, setAuthType] = useState<ApiAuthType>(initial.auth_type || "none");
+  const [authHeader, setAuthHeader] = useState(initial.auth_header_name || "Authorization");
+  const [authToken, setAuthToken] = useState(initial.auth_token || "");
+  const [timeoutMs, setTimeoutMs] = useState<number>(initial.timeout_ms ?? 5000);
+  const [retryEnabled, setRetryEnabled] = useState(Boolean(initial.retry_enabled));
+  const [retryCount, setRetryCount] = useState<number>(initial.retry_count ?? 0);
+  const [isActive, setIsActive] = useState(initial.is_active ?? true);
+  const [parameters, setParameters] = useState<ApiParameter[]>(initial.parameters || []);
 
-    function setKV(list: KV[], i: number, field: "key" | "value", v: string) {
-        const next = list.slice();
-        next[i] = { ...next[i], [field]: v };
-        return next;
-    }
-    function addKV(list: KV[]) { return [...list, { key: "", value: "" }]; }
-    function removeKV(list: KV[], i: number) { return list.filter((_, idx) => idx !== i); }
-    function updateParam(i: number, field: keyof ApiParameter, value: string | boolean) {
-        setParameters(prev => {
-            const next = prev.slice();
-            const existing = next[i] || { key: "", value: "", valueSource: "query", required: false };
-            next[i] = { ...existing, [field]: value } as ApiParameter;
-            return next;
-        });
-    }
-    function addParam() {
-        setParameters(prev => [...prev, { key: "", value: "", valueSource: "query", required: true }]);
-    }
-    function removeParam(i: number) {
-        setParameters(prev => prev.filter((_, idx) => idx !== i));
-    }
+  const urlPreview = useMemo(() => buildUrlPreview(baseUrl, path), [baseUrl, path]);
+  const showAuthFields = authType !== "none";
 
-    async function handleSubmit() {
-        const payload: EndpointConfig = {
-            ...("id" in initial ? { id: initial.id } : {}),
-            name,
-            method,
-            url,
-            description,
-            headers,
-            query,
-            bodyTemplate,
-            auth: authType === "none" ? { type: "none" } : {
-                type: authType,
-                headerName: authHeaderName || (authType === "bearer" ? "Authorization" : "X-API-Key"),
-                tokenRef: authTokenRef, // e.g. env var name or secure store key
-            },
-            timeoutMs,
-            retries,
-            backoffMs,
-            parameters,
-        };
+  const handleParamChange = (idx: number, patch: Partial<ApiParameter>) => {
+    setParameters((prev) => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...patch };
+      return next;
+    });
+  };
 
-        // very light validation
-        if (!name.trim()) return alert("Name is required.");
-        if (!url.trim()) return alert("URL is required.");
+  const handleRemoveParam = (idx: number) => {
+    setParameters((prev) => prev.filter((_, i) => i !== idx));
+  };
 
-        await onSubmit(payload);
+  const handleSubmit = async () => {
+    const trimmedBase = baseUrl.trim();
+    if (!name.trim()) {
+      alert("Name is required");
+      return;
+    }
+    if (!/^https:\/\//i.test(trimmedBase)) {
+      alert("Base URL must start with https://");
+      return;
     }
 
-    return (
-        <div className="space-y-5">
-            <div className="rounded-lg border p-4 space-y-3">
-                <div className="font-semibold text-sm uppercase tracking-wide text-muted-foreground">API Connector & Dispatcher</div>
-                <div className="grid md:grid-cols-2 gap-3">
-                    <input className="rounded-md border px-3 py-2" placeholder="Name"
-                        value={name} onChange={e => setName(e.target.value)} />
-                    <div className="grid grid-cols-2 gap-3">
-                        <select className="rounded-md border px-3 py-2"
-                            value={method} onChange={e => setMethod(e.target.value as HttpMethod)}>
-                            <option value="GET">GET</option>
-                            <option value="POST">POST</option>
-                        </select>
-                        <input className="rounded-md border px-3 py-2" placeholder="Timeout (ms)"
-                            type="number" value={timeoutMs}
-                            onChange={e => setTimeoutMs(Number(e.target.value || 0))} />
-                    </div>
-                    <input className="md:col-span-2 rounded-md border px-3 py-2" placeholder="https://api.example.com/path"
-                        value={url} onChange={e => setUrl(e.target.value)} />
-                    <textarea className="md:col-span-2 rounded-md border px-3 py-2 min-h-20 text-sm"
-                        placeholder="Describe what this endpoint does (e.g. Fetch loyalty balance)"
-                        value={description}
-                        onChange={e => setDescription(e.target.value)} />
-                </div>
-            </div>
+    const payload: EndpointConfig = {
+      ...("apiid" in initial && initial.apiid ? { apiid: initial.apiid } : {}),
+      name: name.trim(),
+      description: description.trim() || null,
+      base_url: trimmedBase,
+      path: path.trim() || "/",
+      method,
+      auth_type: authType,
+      auth_header_name: showAuthFields ? authHeader.trim() || "Authorization" : null,
+      auth_token: showAuthFields ? authToken.trim() || null : null,
+      timeout_ms: Number(timeoutMs) || 0,
+      retry_enabled: retryEnabled,
+      retry_count: retryEnabled ? Number(retryCount) || 0 : 0,
+      is_active: isActive,
+      parameters: parameters
+        .map((param) => ({
+          ...param,
+          location: param.location || "query",
+          key: (param.key || "").trim(),
+          valuesource: param.valuesource || "contact",
+          valuepath: param.valuesource === "constant" ? null : (param.valuepath || "").trim() || null,
+          constantvalue:
+            param.valuesource === "constant" ? (param.constantvalue || "").trim() || null : param.constantvalue || null,
+          required: Boolean(param.required),
+        }))
+        .filter((param) => param.key),
+    };
 
-            {/* auth */}
-            <div className="rounded-lg border p-3 space-y-3">
-                <div className="font-medium text-sm">Secure Communication</div>
-                <div className="grid md:grid-cols-3 gap-3">
-                    <select className="rounded-md border px-3 py-2"
-                        value={authType} onChange={e => setAuthType(e.target.value as any)}>
-                        <option value="none">None</option>
-                        <option value="bearer">Bearer</option>
-                        <option value="apiKey">API Key (custom header)</option>
-                    </select>
-                    <input className="rounded-md border px-3 py-2" placeholder="Header name"
-                        disabled={authType === "none"}
-                        value={authHeaderName}
-                        onChange={e => setAuthHeaderName(e.target.value)} />
-                    <input className="rounded-md border px-3 py-2" placeholder="Token ref (e.g. ENV_WH_KEY)"
-                        disabled={authType === "none"}
-                        value={authTokenRef}
-                        onChange={e => setAuthTokenRef(e.target.value)} />
-                </div>
-            </div>
+    await onSubmit(payload);
+  };
 
-            <ParamEditor
-                rows={parameters}
-                onAdd={addParam}
-                onChange={updateParam}
-                onRemove={removeParam}
+  return (
+    <form
+      className="space-y-6"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        await handleSubmit();
+      }}
+    >
+      <section className="rounded-xl border p-4 space-y-4">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Destination API</p>
+          <p className="text-sm text-muted-foreground">
+            Define how the platform calls the upstream system whenever a campaign node is executed.
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Name</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Loyalty balance"
             />
-
-            {/* headers */}
-            <KVEditor
-                title="Custom Headers (optional overrides)"
-                rows={headers}
-                onAdd={() => setHeaders(addKV(headers))}
-                onChange={(i, field, v) => setHeaders(setKV(headers, i, field, v))}
-                onRemove={(i) => setHeaders(removeKV(headers, i))}
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Method</span>
+            <select className="w-full rounded-md border px-3 py-2" value={method} onChange={(e) => setMethod(e.target.value as HttpMethod)}>
+              {METHOD_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm font-medium md:col-span-2">
+            <span>Description</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Fetch balance from loyalty core"
             />
-
-            {/* query */}
-            <KVEditor
-                title="Query Params (advanced)"
-                rows={query}
-                onAdd={() => setQuery(addKV(query))}
-                onChange={(i, field, v) => setQuery(setKV(query, i, field, v))}
-                onRemove={(i) => setQuery(removeKV(query, i))}
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Base URL</span>
+            <input
+              className="w-full rounded-md border px-3 py-2 font-mono text-xs"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://api.company.com"
             />
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Path</span>
+            <input
+              className="w-full rounded-md border px-3 py-2 font-mono text-xs"
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="/loyalty/balance"
+            />
+          </label>
+        </div>
+        <div className="rounded-lg bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
+          {urlPreview}
+        </div>
+      </section>
 
-            {/* POST body template */}
-            <div className="rounded-lg border p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                    <div className="font-medium text-sm">Body Template (JSON with &#123;&#123; placeholders &#125;&#125;)</div>
-                    <span className="text-xs text-zinc-500">Used for POST only</span>
-                </div>
-                <textarea
-                    className="w-full h-36 rounded-md border px-3 py-2 font-mono text-xs"
-                    placeholder='{"userId":"{{msisdn}}","campaign":"{{campaignCode}}"}'
-                    value={bodyTemplate}
-                    onChange={e => setBodyTemplate(e.target.value)}
-                />
-            </div>
+      <section className="rounded-xl border p-4 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Authentication</p>
+            <p className="text-xs text-muted-foreground">
+              Supports disabled auth, Bearer headers, or custom API-key headers.
+            </p>
+          </div>
+          <select
+            className="rounded-md border px-3 py-2 text-sm"
+            value={authType}
+            onChange={(e) => setAuthType(e.target.value as ApiAuthType)}
+          >
+            <option value="none">No auth</option>
+            <option value="bearer_header">Bearer header</option>
+            <option value="api_key_header">API key header</option>
+          </select>
+        </div>
+        {showAuthFields && (
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm font-medium">
+              <span>Header name</span>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                value={authHeader}
+                onChange={(e) => setAuthHeader(e.target.value)}
+                placeholder="Authorization"
+              />
+            </label>
+            <label className="space-y-1 text-sm font-medium">
+              <span>Token / secret</span>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                value={authToken}
+                onChange={(e) => setAuthToken(e.target.value)}
+                placeholder="env:LOYALTY_TOKEN"
+              />
+            </label>
+          </div>
+        )}
+      </section>
 
-            {/* reliability */}
-            <div className="rounded-lg border p-3 space-y-3">
-                <div className="font-medium text-sm">Retry</div>
-                <div className="grid md:grid-cols-3 gap-3">
-                    <input className="rounded-md border px-3 py-2" type="number" placeholder="Retries"
-                        value={retries} onChange={e => setRetries(Number(e.target.value || 0))} />
-                    <input className="rounded-md border px-3 py-2" type="number" placeholder="Backoff (ms)"
-                        value={backoffMs} onChange={e => setBackoffMs(Number(e.target.value || 0))} />
-                    <div />
-                </div>
-            </div>
+      <section className="rounded-xl border p-4 space-y-4">
+        <p className="text-sm font-medium">Execution policy</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Timeout (ms)</span>
+            <input
+              type="number"
+              className="w-full rounded-md border px-3 py-2"
+              value={timeoutMs}
+              onChange={(e) => setTimeoutMs(Number(e.target.value))}
+              min={1000}
+              step={500}
+            />
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Retry enabled</span>
+            <select
+              className="w-full rounded-md border px-3 py-2"
+              value={retryEnabled ? "yes" : "no"}
+              onChange={(e) => setRetryEnabled(e.target.value === "yes")}
+            >
+              <option value="no">No</option>
+              <option value="yes">Yes</option>
+            </select>
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Retry count</span>
+            <input
+              type="number"
+              className="w-full rounded-md border px-3 py-2"
+              value={retryCount}
+              onChange={(e) => setRetryCount(Number(e.target.value))}
+              min={0}
+              disabled={!retryEnabled}
+            />
+          </label>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="rounded border"
+            checked={isActive}
+            onChange={(e) => setIsActive(e.target.checked)}
+          />
+          Endpoint is active
+        </label>
+      </section>
 
-            <div className="flex gap-2">
-                {onCancel && (
-                    <button type="button" onClick={onCancel} className="px-3 py-2 rounded-md border">
-                        Cancel
-                    </button>
-                )}
-                <button
-                    type="button"
-                    disabled={!!submitting}
-                    onClick={handleSubmit}
-                    className="px-3 py-2 rounded-md bg-primary text-primary-foreground disabled:opacity-50"
-                >
-                    {submitting ? "Saving…" : "Save"}
+      <section className="rounded-xl border p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-medium">Parameter mapping</p>
+          <button
+            type="button"
+            className="rounded-md border px-3 py-1 text-sm font-medium"
+            onClick={() =>
+              setParameters((prev) => [
+                ...prev,
+                {
+                  location: "query",
+                  key: "",
+                  valuesource: "contact",
+                  valuepath: "",
+                  constantvalue: "",
+                  required: true,
+                },
+              ])
+            }
+          >
+            Add parameter
+          </button>
+        </div>
+        {parameters.length === 0 && <p className="text-sm text-muted-foreground">No parameters defined.</p>}
+        <div className="space-y-3">
+          {parameters.map((param, idx) => (
+            <div key={param.paramid ?? idx} className="rounded-lg border p-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-wide text-muted-foreground">
+                <span>Parameter #{idx + 1}</span>
+                <button type="button" className="text-rose-600" onClick={() => handleRemoveParam(idx)}>
+                  Remove
                 </button>
+              </div>
+              <div className="grid gap-3 md:grid-cols-4">
+                <select
+                  className="rounded-md border px-3 py-2 text-sm"
+                  value={param.location}
+                  onChange={(e) => handleParamChange(idx, { location: e.target.value as ApiLocation })}
+                >
+                  {LOCATION_OPTIONS.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="rounded-md border px-3 py-2 text-sm"
+                  placeholder="Key"
+                  value={param.key || ""}
+                  onChange={(e) => handleParamChange(idx, { key: e.target.value })}
+                />
+                <select
+                  className="rounded-md border px-3 py-2 text-sm"
+                  value={param.valuesource}
+                  onChange={(e) => handleParamChange(idx, { valuesource: e.target.value as ApiValueSource })}
+                >
+                  {VALUE_SOURCE_OPTIONS.map((source) => (
+                    <option key={source} value={source}>
+                      {source}
+                    </option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(param.required)}
+                    onChange={(e) => handleParamChange(idx, { required: e.target.checked })}
+                  />
+                  Required
+                </label>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <input
+                  className="rounded-md border px-3 py-2 text-sm font-mono"
+                  placeholder="value path (contact.email)"
+                  value={param.valuepath || ""}
+                  onChange={(e) => handleParamChange(idx, { valuepath: e.target.value })}
+                  disabled={param.valuesource === "constant"}
+                />
+                <input
+                  className="rounded-md border px-3 py-2 text-sm font-mono"
+                  placeholder="constant value"
+                  value={param.constantvalue || ""}
+                  onChange={(e) => handleParamChange(idx, { constantvalue: e.target.value })}
+                  disabled={param.valuesource !== "constant"}
+                />
+              </div>
             </div>
+          ))}
         </div>
-    );
-}
+      </section>
 
-function KVEditor({
-    title, rows, onAdd, onChange, onRemove,
-}: {
-    title: string;
-    rows: KV[];
-    onAdd: () => void;
-    onChange: (i: number, field: "key" | "value", v: string) => void;
-    onRemove: (i: number) => void;
-}) {
-    return (
-        <div className="rounded-lg border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-                <div className="font-medium text-sm">{title}</div>
-                <button type="button" className="text-sm underline" onClick={onAdd}>Add</button>
-            </div>
-            {rows.length === 0 ? (
-                <div className="text-xs text-zinc-500">No items</div>
-            ) : (
-                <div className="space-y-2">
-                    {rows.map((row, i) => (
-                        <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                            <input className="rounded-md border px-3 py-2" placeholder="Key"
-                                value={row.key} onChange={e => onChange(i, "key", e.target.value)} />
-                            <input className="rounded-md border px-3 py-2" placeholder="Value"
-                                value={row.value} onChange={e => onChange(i, "value", e.target.value)} />
-                            <button type="button" className="px-2 py-2 rounded-md border" onClick={() => onRemove(i)}>
-                                Remove
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-}
-
-const PARAM_SOURCES = [
-    { value: "query", label: "Query" },
-    { value: "header", label: "Header" },
-    { value: "body", label: "Body" },
-    { value: "path", label: "Path" },
-    { value: "context", label: "Context" },
-];
-
-function ParamEditor({
-    rows,
-    onAdd,
-    onChange,
-    onRemove,
-}: {
-    rows: ApiParameter[];
-    onAdd: () => void;
-    onChange: (i: number, field: keyof ApiParameter, value: string | boolean) => void;
-    onRemove: (i: number) => void;
-}) {
-    return (
-        <div className="rounded-lg border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-                <div>
-                    <div className="font-medium text-sm">Parameter & Header Injection</div>
-                    <p className="text-xs text-muted-foreground">Map campaign/runtime variables into API inputs. Matches Supabase apiparameter schema.</p>
-                </div>
-                <button type="button" className="text-sm underline" onClick={onAdd}>Add</button>
-            </div>
-            {rows.length === 0 ? (
-                <div className="text-xs text-zinc-500">No parameters configured.</div>
-            ) : (
-                <div className="space-y-2">
-                    {rows.map((param, i) => (
-                        <div key={i} className="grid md:grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                            <select
-                                className="rounded-md border px-3 py-2 text-sm"
-                                value={param.valueSource}
-                                onChange={e => onChange(i, "valueSource", e.target.value as ApiParameter["valueSource"])}
-                            >
-                                {PARAM_SOURCES.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                        {opt.label}
-                                    </option>
-                                ))}
-                            </select>
-                            <input
-                                className="rounded-md border px-3 py-2"
-                                placeholder="Key"
-                                value={param.key}
-                                onChange={e => onChange(i, "key", e.target.value)}
-                            />
-                            <input
-                                className="rounded-md border px-3 py-2"
-                                placeholder='Value (e.g. {{mobile}})'
-                                value={param.value}
-                                onChange={e => onChange(i, "value", e.target.value)}
-                            />
-                            <div className="flex items-center gap-2">
-                                <label className="flex items-center gap-2 text-xs">
-                                    <input
-                                        type="checkbox"
-                                        checked={!!param.required}
-                                        onChange={e => onChange(i, "required", e.target.checked)}
-                                    />
-                                    Required
-                                </label>
-                                <button type="button" className="px-2 py-1 rounded-md border text-xs" onClick={() => onRemove(i)}>
-                                    Remove
-                                </button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
+      <div className="flex justify-end gap-3">
+        {onCancel && (
+          <button
+            type="button"
+            className="rounded-md border px-4 py-2 text-sm font-medium"
+            onClick={() => onCancel()}
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+        )}
+        <button
+          type="submit"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+          disabled={submitting}
+        >
+          {submitting ? "Saving..." : "Save endpoint"}
+        </button>
+      </div>
+    </form>
+  );
 }

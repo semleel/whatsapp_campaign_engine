@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { supabase } from "./supabaseService.js";
+import prisma from "../config/prismaClient.js";
 
 const responseTemplateStore = new Map();
 const mappingStore = new Map();
@@ -8,6 +8,7 @@ const logStore = [];
 let templateSeq = 1;
 
 const DEFAULT_LOG_LIMIT = 500;
+const BODY_TEMPLATE_KEY = "__body_template";
 
 function generateId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(2).toString("hex")}`;
@@ -27,65 +28,116 @@ export function seedIntegrationData() {
   responseTemplateStore.set(sampleTemplate.id, sampleTemplate);
 }
 
-function parseExtras(value) {
-  if (!value) return {};
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
+function ensureHttps(url) {
+  if (!/^https:\/\//i.test(url)) {
+    throw new Error("Only HTTPS endpoints are allowed.");
   }
 }
 
-function serializeExtras(data) {
-  return JSON.stringify({
-    description: data.description || "",
-    headers: data.headers || [],
-    query: data.query || [],
-    bodyTemplate: data.bodyTemplate || "",
-    auth: data.auth || { type: "none" },
-    timeoutMs: Number.isFinite(data.timeoutMs) ? Number(data.timeoutMs) : 8000,
-    retries: Number.isFinite(data.retries) ? Number(data.retries) : 0,
-    backoffMs: Number.isFinite(data.backoffMs) ? Number(data.backoffMs) : 300,
-  });
+function normalizePairs(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((row) => ({
+      key: String(row.key || "").trim(),
+      value: String(row.value || "").trim(),
+    }))
+    .filter((row) => row.key || row.value);
 }
 
-function mapParameter(row) {
+function normalizeParameters(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((param) => ({
+      key: String(param.key || "").trim(),
+      valueSource: ["query", "header", "body", "path", "context"].includes(param.valueSource)
+        ? param.valueSource
+        : "query",
+      value: String(param.value || "").trim(),
+      required: Boolean(param.required),
+    }))
+    .filter((param) => param.key && param.value);
+}
+
+function normalizeEndpointInput(body, current = {}) {
   return {
-    id: row.paramid,
-    key: row.key,
-    valueSource: row.valuesource || "query",
-    value: row.value,
-    required: !!row.required,
+    name: body.name ?? current.name ?? "",
+    method: body.method === "POST" ? "POST" : "GET",
+    url: body.url ?? current.url ?? "",
+    description: body.description ?? current.description ?? "",
+    headers: normalizePairs(body.headers ?? current.headers ?? []),
+    query: normalizePairs(body.query ?? current.query ?? []),
+    bodyTemplate: body.bodyTemplate ?? current.bodyTemplate ?? "",
+    auth: body.auth || current.auth || { type: "none" },
+    timeoutMs: Number(body.timeoutMs ?? current.timeoutMs ?? 8000),
+    retries: Number(body.retries ?? current.retries ?? 0),
+    backoffMs: Number(body.backoffMs ?? current.backoffMs ?? 0),
+    parameters: normalizeParameters(body.parameters ?? current.parameters ?? []),
   };
 }
 
+const buildUrl = (row) => {
+  const base = (row.base_url || "").replace(/\/$/, "");
+  const path = row.path ? `/${row.path}`.replace(/\/+/g, "/") : "";
+  return (base + path).replace(":/", "://");
+};
+
+const splitUrl = (url) => {
+  try {
+    const parsed = new URL(url);
+    return {
+      base: `${parsed.protocol}//${parsed.host}`,
+      path: `${parsed.pathname}${parsed.search}`.replace(/^\//, ""),
+    };
+  } catch {
+    throw new Error("Invalid URL supplied.");
+  }
+};
+
+const mapKeyValue = (row) => ({
+  key: row.key,
+  value: row.constantvalue || row.valuepath || "",
+});
+
 function hydrateEndpoint(row, params = []) {
-  const extras = parseExtras(row.response);
+  const headers = params.filter((p) => p.location === "header");
+  const query = params.filter((p) => p.location === "query");
+  const parameterRows = params.filter((p) => p.location === "parameter");
+  const metaRows = params.filter((p) => p.location === "meta");
+  const bodyTemplateRow = metaRows.find((p) => p.key === BODY_TEMPLATE_KEY);
+
   return {
     id: row.apiid,
-    contentId: row.contentid ?? null,
     name: row.name,
     method: row.method?.toUpperCase() === "POST" ? "POST" : "GET",
-    url: row.url,
-    description: extras.description || "",
-    headers: extras.headers || [],
-    query: extras.query || [],
-    bodyTemplate: extras.bodyTemplate || "",
-    auth: extras.auth || { type: "none" },
-    timeoutMs: extras.timeoutMs ?? 8000,
-    retries: extras.retries ?? 0,
-    backoffMs: extras.backoffMs ?? 300,
-    parameters: params.map(mapParameter),
+    url: buildUrl(row),
+    description: row.description || "",
+    headers: headers.map(mapKeyValue),
+    query: query.map(mapKeyValue),
+    bodyTemplate: bodyTemplateRow?.constantvalue || "",
+    auth: {
+      type: row.auth_type || "none",
+      headerName: row.auth_header_name || undefined,
+      tokenRef: row.auth_token || undefined,
+    },
+    timeoutMs: row.timeout_ms ?? 8000,
+    retries: row.retry_enabled ? row.retry_count ?? 0 : 0,
+    backoffMs: 0,
+    parameters: parameterRows.map((p) => ({
+      id: p.paramid,
+      key: p.key,
+      valueSource: p.valuesource || "query",
+      value: p.constantvalue || p.valuepath || "",
+      required: !!p.required,
+    })),
   };
 }
 
 async function fetchParametersForIds(ids) {
   if (!ids.length) return [];
-  const { data, error } = await supabase.from("apiparameter").select("*").in("apiid", ids);
-  if (error) {
-    throw new Error(error.message || "Failed to load API parameters");
-  }
-  return data || [];
+  const rows = await prisma.apiparameter.findMany({
+    where: { apiid: { in: ids } },
+  });
+  return rows;
 }
 
 async function fetchParameters(apiId) {
@@ -93,99 +145,130 @@ async function fetchParameters(apiId) {
   return rows.filter((row) => row.apiid === apiId);
 }
 
-async function syncParameters(apiId, parameters = []) {
-  await supabase.from("apiparameter").delete().eq("apiid", apiId);
-  if (!parameters.length) return;
-  const insertRows = parameters
-    .filter((param) => param.key && param.value)
-    .map((param) => ({
+async function syncParameters(apiId, normalized) {
+  await prisma.apiparameter.deleteMany({ where: { apiid: apiId } });
+  const rows = [];
+
+  normalized.headers.forEach((header) => {
+    if (!header.key) return;
+    rows.push({
       apiid: apiId,
+      location: "header",
+      key: header.key,
+      valuesource: "constant",
+      constantvalue: header.value,
+    });
+  });
+
+  normalized.query.forEach((param) => {
+    if (!param.key) return;
+    rows.push({
+      apiid: apiId,
+      location: "query",
       key: param.key,
-      valuesource: param.valueSource || "query",
-      value: param.value,
-      required: !!param.required,
-    }));
-  if (insertRows.length) {
-    const { error } = await supabase.from("apiparameter").insert(insertRows);
-    if (error) {
-      throw new Error(error.message || "Failed to save API parameters");
-    }
+      valuesource: "constant",
+      constantvalue: param.value,
+    });
+  });
+
+  normalized.parameters.forEach((param) => {
+    rows.push({
+      apiid: apiId,
+      location: "parameter",
+      key: param.key,
+      valuesource: param.valueSource,
+      constantvalue: param.value,
+      required: param.required,
+    });
+  });
+
+  if (normalized.bodyTemplate) {
+    rows.push({
+      apiid: apiId,
+      location: "meta",
+      key: BODY_TEMPLATE_KEY,
+      valuesource: "constant",
+      constantvalue: normalized.bodyTemplate,
+    });
+  }
+
+  if (rows.length) {
+    await prisma.apiparameter.createMany({ data: rows });
   }
 }
 
 export async function listEndpoints() {
-  const { data, error } = await supabase.from("api").select("*").order("apiid");
-  if (error) {
-    throw new Error(error.message || "Failed to load endpoints");
-  }
-  const rows = data || [];
-  if (!rows.length) return [];
-  const paramRows = await fetchParametersForIds(rows.map((row) => row.apiid));
-  const grouped = paramRows.reduce((acc, row) => {
+  const endpoints = await prisma.api.findMany({
+    orderBy: { apiid: "asc" },
+  });
+  if (!endpoints.length) return [];
+  const params = await fetchParametersForIds(endpoints.map((row) => row.apiid));
+  const grouped = params.reduce((acc, row) => {
     const list = acc.get(row.apiid) || [];
     list.push(row);
     acc.set(row.apiid, list);
     return acc;
   }, new Map());
-  return rows.map((row) => hydrateEndpoint(row, grouped.get(row.apiid) || []));
+  return endpoints.map((row) => hydrateEndpoint(row, grouped.get(row.apiid) || []));
 }
 
 export async function getEndpoint(id) {
   if (!id) return null;
-  const { data, error } = await supabase.from("api").select("*").eq("apiid", Number(id)).maybeSingle();
-  if (error) {
-    throw new Error(error.message || "Failed to load endpoint");
-  }
-  if (!data) return null;
-  const params = await fetchParameters(data.apiid);
-  return hydrateEndpoint(data, params);
+  const numericId = Number(id);
+  if (Number.isNaN(numericId)) return null;
+  const row = await prisma.api.findUnique({ where: { apiid: numericId } });
+  if (!row) return null;
+  const params = await fetchParameters(row.apiid);
+  return hydrateEndpoint(row, params);
 }
 
 export async function saveEndpoint(data) {
-  const record = {
-    contentid: data.contentId ?? null,
-    name: data.name,
-    url: data.url,
-    method: (data.method ?? "GET").toUpperCase(),
-    response: serializeExtras(data),
-    lastupdated: new Date().toISOString(),
+  ensureHttps(data.url);
+  const normalized = normalizeEndpointInput(data);
+  const { base, path } = splitUrl(normalized.url);
+  const payload = {
+    name: normalized.name,
+    description: normalized.description,
+    base_url: base,
+    path,
+    method: normalized.method,
+    auth_type: normalized.auth?.type || "none",
+    auth_header_name: normalized.auth?.headerName || "Authorization",
+    auth_token: normalized.auth?.tokenRef || null,
+    timeout_ms: normalized.timeoutMs,
+    retry_enabled: normalized.retries > 0,
+    retry_count: normalized.retries,
+    lastupdated: new Date(),
   };
+
   let row;
   if (data.id) {
-    const { data: updated, error } = await supabase
-      .from("api")
-      .update(record)
-      .eq("apiid", Number(data.id))
-      .select()
-      .single();
-    if (error) {
-      throw new Error(error.message || "Failed to update endpoint");
-    }
-    row = updated;
+    row = await prisma.api.update({
+      where: { apiid: Number(data.id) },
+      data: payload,
+    });
   } else {
-    const { data: inserted, error } = await supabase
-      .from("api")
-      .insert(record)
-      .select()
-      .single();
-    if (error) {
-      throw new Error(error.message || "Failed to create endpoint");
-    }
-    row = inserted;
+    row = await prisma.api.create({ data: payload });
   }
-  await syncParameters(row.apiid, data.parameters || []);
+
+  await syncParameters(row.apiid, normalized);
   const params = await fetchParameters(row.apiid);
   return hydrateEndpoint(row, params);
 }
 
 export async function deleteEndpoint(id) {
-  if (!id) return false;
-  await supabase.from("apiparameter").delete().eq("apiid", Number(id));
-  const { data, error } = await supabase.from("api").delete().eq("apiid", Number(id)).select("apiid");
-  if (error) {
-    throw new Error(error.message || "Failed to delete endpoint");
+  const numericId = Number(id);
+  if (Number.isNaN(numericId)) return false;
+  await prisma.apiparameter.deleteMany({ where: { apiid: numericId } });
+  try {
+    await prisma.api.delete({
+      where: { apiid: numericId },
+    });
+    return true;
+  } catch (err) {
+    if (err.code === "P2025") return false;
+    throw err;
   }
-  return (data?.length || 0) > 0;
 }
 
 export function listResponseTemplates() {

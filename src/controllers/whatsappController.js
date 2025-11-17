@@ -1,6 +1,15 @@
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
-import { supabase } from "../services/supabaseService.js";
+import prisma from "../config/prismaClient.js";
 import { log, error as logError } from "../utils/logger.js";
+
+const describeMessage = (message) => {
+  const contentType = message.type;
+  if (contentType === "text") return message?.text?.body ?? "";
+  if (contentType === "image") return `[image] ${message?.image?.caption ?? ""}`.trim();
+  if (contentType === "sticker") return "[sticker]";
+  if (contentType === "interactive") return `[interactive:${message?.interactive?.type}]`;
+  return `[${contentType}]`;
+};
 
 export async function sendMessage(req, res) {
   const { to, message } = req.body;
@@ -13,37 +22,21 @@ export async function sendMessage(req, res) {
     const response = await sendWhatsAppMessage(to, message);
     const providerId = response?.messages?.[0]?.id ?? null;
 
-    const contentType = message.type;
-    const messagePreview =
-      contentType === "text"
-        ? message?.text?.body ?? ""
-        : contentType === "image"
-        ? `[image] ${message?.image?.caption ?? ""}`.trim()
-        : contentType === "sticker"
-        ? "[sticker]"
-        : contentType === "interactive"
-        ? `[interactive:${message?.interactive?.type}]`
-        : `[${contentType}]`;
-
-    const { error } = await supabase.from("message").insert([
-      {
-        content_type: contentType,
-        message_content: messagePreview,
+    await prisma.message.create({
+      data: {
+        direction: "outbound",
+        content_type: message.type,
+        message_content: describeMessage(message),
         senderid: "server-api",
         receiverid: to,
         provider_msg_id: providerId,
-        timestamp: new Date().toISOString(),
-        message_status: "sent",
+        timestamp: new Date(),
+        message_status: providerId ? "sent" : "error",
         payload_json: JSON.stringify(message),
       },
-    ]);
+    });
 
-    if (error) {
-      logError("Supabase insert error:", error);
-      return res.status(500).json({ error: "DB insert failed", details: error.message ?? error });
-    }
-
-    log(`Sent ${contentType} to ${to} | provider_id=${providerId}`);
+    log(`Sent ${message.type} to ${to} | provider_id=${providerId}`);
     return res.status(200).json({
       success: true,
       provider_msg_id: providerId,
