@@ -343,3 +343,18 @@ export type FlowDefinition = {
     fallbackKey: string;
     nodes: FlowNodeDefinition[];
 };
+
+// campaign session types
+export type SessionStatus = "ACTIVE" | "PAUSED" | "COMPLETED" | "EXPIRED" | "CANCELLED";
+
+export interface CampaignSession {
+  id: number;                // campaignsessionid
+  contactid?: number | null;
+  campaignid?: number | null;
+  campaignname?: string | null;
+  contact_phonenum?: string | null;
+  checkpoint?: string | null;
+  status?: SessionStatus;
+  createdAt?: string | null;
+  lastActiveAt?: string | null;
+}

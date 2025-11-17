@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 // --- Routes ---
 import apiRoutes from "./routes/index.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
-import { startCampaignStatusJob } from "./jobs/campaignStatusJob.js";
+import { startJobs } from "./jobs/index.js";
 
 // --- Middleware ---
 import errorHandler from "./middleware/errorHandler.js";
@@ -51,7 +51,7 @@ app.get("/", (req, res) => {
 });
 
 // --- Automatic Schedule Status Checker (runs every minute) ---
-startCampaignStatusJob();
+startJobs();
 
 // --- Global Error Handler ---
 app.use(errorHandler);

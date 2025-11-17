@@ -43,6 +43,17 @@ export async function sendMessage(req, res) {
       details: response,
     });
   } catch (err) {
+    // Special case: account restricted
+    if (err.name === "WhatsAppRestrictedError") {
+      logError("WhatsApp account is restricted, cannot send messages.", err.meta);
+      return res.status(503).json({
+        error: "whatsapp_account_restricted",
+        message:
+          "Your WhatsApp Business account is restricted by Meta. Please fix it in Meta Business / WhatsApp Manager before sending messages.",
+        details: err.meta,
+      });
+    }
+
     const details = err?.response?.data ?? err?.message ?? err;
     logError("/api/wa/send failed:", details);
     return res.status(500).json({ error: "Failed to send message", details });

@@ -2,11 +2,69 @@ import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
+import { processIncomingMessage } from "../services/flowEngine.js";
 
 const KEYWORD_FALLBACK_MESSAGE =
   process.env.KEYWORD_FALLBACK_MESSAGE ||
   process.env.NEXT_PUBLIC_KEYWORD_FALLBACK_MESSAGE ||
   "Sorry, I didn't understand that. Type MENU to see available campaigns.";
+
+/**
+ * Build WhatsApp LIST message showing active campaigns + their keywords
+ */
+const buildWhatsappMenuList = async () => {
+  const campaigns = await prisma.campaign.findMany({
+    where: { status: "Active" },
+    select: {
+      campaignid: true,
+      campaignname: true,
+      objective: true,
+      keyword: {
+        take: 1, // only 1 keyword per campaign
+        orderBy: { keywordid: "asc" },
+        select: { value: true },
+      },
+    },
+    orderBy: { campaignid: "asc" },
+  });
+
+  // Filter out campaigns that have NO keywords
+  const validCampaigns = campaigns.filter((c) => c.keyword.length > 0);
+
+  if (!validCampaigns.length) {
+    return {
+      type: "text",
+      text: { body: "There are no available keywords at the moment." },
+    };
+  }
+
+  const rows = validCampaigns.slice(0, 10).map((c) => {
+    const keyword = c.keyword[0].value;
+    return {
+      id: `keyword_${keyword}`,
+      title: c.campaignname.slice(0, 24), // shown to user
+      // description: (c.objective || "").slice(0, 72),
+    };
+  });
+
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: "Available Campaigns:" },
+      footer: { text: "Choose one to view campaign details." },
+      action: {
+        button: "View Campaigns", // must be ≤ 20 chars
+        sections: [
+          {
+            title: "Campaign List",
+            rows,
+          },
+        ],
+      },
+    },
+  };
+};
 
 export async function verifyWebhook(req, res) {
   const mode = req.query["hub.mode"];
@@ -21,6 +79,9 @@ export async function verifyWebhook(req, res) {
   return res.sendStatus(403);
 }
 
+/**
+ * Convert raw WA message into a simple display text for logging/DB
+ */
 const buildDisplayText = (message) => {
   switch (message.type) {
     case "text":
@@ -42,6 +103,151 @@ const buildDisplayText = (message) => {
   }
 };
 
+/**
+ * Build a WhatsApp message object from a `content` row.
+ * Supports text / image / video / document / interactive buttons / list.
+ */
+function buildWhatsappMessageFromContent(content) {
+  const type = (content.type || "text").toLowerCase();
+  const baseText =
+    content.body ||
+    content.description ||
+    content.title ||
+    "Thank you, we have moved you to the next step of the campaign.";
+
+  // Default: plain text
+  const asText = {
+    replyText: baseText,
+    message: { type: "text", text: { body: baseText } },
+  };
+
+  // TEXT
+  if (!type || type === "text") {
+    return asText;
+  }
+
+  // IMAGE
+  if (type === "image") {
+    if (!content.mediaurl) return asText;
+
+    return {
+      replyText: baseText,
+      message: {
+        type: "image",
+        image: {
+          link: content.mediaurl,
+          caption: baseText,
+        },
+      },
+    };
+  }
+
+  // VIDEO
+  if (type === "video") {
+    if (!content.mediaurl) return asText;
+
+    return {
+      replyText: baseText,
+      message: {
+        type: "video",
+        video: {
+          link: content.mediaurl,
+          caption: baseText,
+        },
+      },
+    };
+  }
+
+  // DOCUMENT / FILE
+  if (type === "document" || type === "file") {
+    if (!content.mediaurl) return asText;
+
+    return {
+      replyText: baseText,
+      message: {
+        type: "document",
+        document: {
+          link: content.mediaurl,
+          caption: baseText,
+        },
+      },
+    };
+  }
+
+  // BUTTONS (interactive)
+  if (type === "interactive_buttons") {
+    let buttons = [];
+    try {
+      const ph = content.placeholders;
+      if (ph && typeof ph === "object" && Array.isArray(ph.buttons)) {
+        buttons = ph.buttons;
+      }
+    } catch (e) {
+      // ignore malformed placeholders
+    }
+
+    if (!buttons.length) return asText;
+
+    return {
+      replyText: baseText,
+      message: {
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: baseText },
+          action: {
+            buttons: buttons.slice(0, 3).map((b, idx) => ({
+              type: "reply",
+              reply: {
+                id: b.id || `btn_${idx + 1}`,
+                title: b.title || `Option ${idx + 1}`,
+              },
+            })),
+          },
+        },
+      },
+    };
+  }
+
+  // LIST (interactive)
+  if (type === "interactive_list") {
+    // expects placeholders.sections = [{ title, rows: [{ id, title, description }] }]
+    let sections = [];
+    try {
+      const ph = content.placeholders;
+      if (ph && typeof ph === "object" && Array.isArray(ph.sections)) {
+        sections = ph.sections;
+      }
+    } catch (e) {
+      // ignore malformed placeholders
+    }
+
+    if (!sections.length) return asText;
+
+    return {
+      replyText: baseText,
+      message: {
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: { text: baseText },
+          footer: { text: content.description || "" },
+          action: {
+            button: "Select", // you can customize with placeholders later
+            sections: sections,
+          },
+        },
+      },
+    };
+  }
+
+  // Fallback = text
+  return asText;
+}
+
+/**
+ * Map WA status callbacks (sent/delivered/read) onto your message table
+ */
 const upsertStatus = async (statusPayload) => {
   const providerId = statusPayload?.id || "";
   if (!providerId) return;
@@ -57,24 +263,202 @@ const upsertStatus = async (statusPayload) => {
   });
 };
 
-const keywordReply = async (text) => {
-  if (!text) return null;
-  const keyword = await prisma.keyword.findFirst({
-    where: { value: text.toLowerCase() },
-  });
-  if (!keyword) return null;
+/**
+ * Helper: handle text/keyword via flow engine + MENU / JOIN specials.
+ *
+ * Returns:
+ *  - replyText: string | null
+ *  - replyMessageObj: full WA message payload
+ *  - sessionid: campaignsessionid | null
+ *  - campaignid: campaignid | null
+ *  - contentkeyid: contentkeyid | null
+ */
+async function handleFlowOrKeyword({ from, text }) {
+  const normalizedOriginal = (text || "").trim();
+  const normalizedLower = normalizedOriginal.toLowerCase();
 
-  const campaign = await prisma.campaign.findUnique({
-    where: { campaignid: keyword.campaignid },
-    select: { campaignname: true, objective: true },
-  });
-
-  if (!campaign) {
-    return `Campaign (ID: ${keyword.campaignid}) found, but no detailed record available.`;
+  // OPTION A: "hi" always restarts conversation
+  if (normalizedLower === "hi") {
+    const replyText =
+      "Welcome! Please choose a campaign keyword to begin, or type MENU to see available options.";
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
   }
 
-  return `Campaign: ${campaign.campaignname}\n\nObjective: ${campaign.objective || "N/A"}\n\nType 'JOIN' to participate or 'MENU' for other campaigns.`;
-};
+  // Special command: MENU -> show list of campaigns/keywords
+  if (normalizedLower === "menu") {
+    const menuMessage = await buildWhatsappMenuList();
+    return {
+      replyText: null,
+      replyMessageObj: menuMessage,
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  // Special command: JOIN (simple static response for now)
+  if (normalizedLower === "join") {
+    const replyText =
+      "You have successfully joined the campaign. Please wait for further updates.";
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  // Hand off to flow engine
+  try {
+    const flow = await processIncomingMessage({ from, text: normalizedOriginal });
+
+    if (!flow || !flow.action) {
+      const replyText = KEYWORD_FALLBACK_MESSAGE;
+      return {
+        replyText,
+        replyMessageObj: { type: "text", text: { body: replyText } },
+        sessionid: null,
+        campaignid: null,
+        contentkeyid: null,
+      };
+    }
+
+    // No campaign matched this keyword
+    if (flow.action === "no_campaign") {
+      const replyText = KEYWORD_FALLBACK_MESSAGE;
+      return {
+        replyText,
+        replyMessageObj: { type: "text", text: { body: replyText } },
+        sessionid: null,
+        campaignid: null,
+        contentkeyid: null,
+      };
+    }
+
+    // Session exists but is paused or completed
+    if (flow.action === "paused" || flow.action === "completed") {
+      const replyText = flow.reply || KEYWORD_FALLBACK_MESSAGE;
+      return {
+        replyText,
+        replyMessageObj: { type: "text", text: { body: replyText } },
+        sessionid: flow.sessionid || null,
+        campaignid: flow.campaignid || null,
+        contentkeyid: null,
+      };
+    }
+
+    // Session expired (2h or cron)
+    if (flow.action === "expired") {
+      const replyText = flow.reply;
+      return {
+        replyText,
+        replyMessageObj: { type: "text", text: { body: replyText } },
+        sessionid: flow.sessionid,
+        campaignid: flow.campaignid,
+        contentkeyid: null,
+      };
+    }
+
+    // Session moved to next checkpoint
+    if (flow.action === "moved") {
+      const sessionid = flow.sessionid || null;
+      const campaignid = flow.campaignid || null;
+      const contentkeyid = flow.nextKey || null;
+
+      // Case 1: we have a nextKey => use content
+      if (flow.nextKey) {
+        const km = await prisma.keymapping.findUnique({
+          where: { contentkeyid: flow.nextKey },
+          include: { content: true },
+        });
+
+        const content = km?.content || null;
+        if (content) {
+          const built = buildWhatsappMessageFromContent(content);
+          return {
+            replyText: built.replyText,
+            replyMessageObj: built.message,
+            sessionid,
+            campaignid,
+            contentkeyid,
+          };
+        }
+
+        // no content found for that key
+        const replyText =
+          "We couldn't find the next step in this flow. Please type MENU to start again.";
+        return {
+          replyText,
+          replyMessageObj: { type: "text", text: { body: replyText } },
+          sessionid,
+          campaignid,
+          contentkeyid,
+        };
+      }
+
+      // Case 2: no nextKey => fallback to campaign intro (your old keywordReply behaviour)
+      if (campaignid) {
+        const campaign = await prisma.campaign.findUnique({
+          where: { campaignid },
+          select: { campaignname: true, objective: true },
+        });
+
+        if (campaign) {
+          const replyText =
+            `Campaign: *${campaign.campaignname}*\n\n` +
+            `${campaign.objective || "N/A"}\n\n` +
+            `Type 'JOIN' to participate or 'MENU' for other campaigns.`;
+
+          return {
+            replyText,
+            replyMessageObj: { type: "text", text: { body: replyText } },
+            sessionid,
+            campaignid,
+            contentkeyid: null,
+          };
+        }
+      }
+
+      // If still nothing, show generic error
+      const replyText =
+        "We couldn't find the next step in this flow. Please type MENU to start again.";
+      return {
+        replyText,
+        replyMessageObj: { type: "text", text: { body: replyText } },
+        sessionid,
+        campaignid,
+        contentkeyid: null,
+      };
+    }
+
+    // Unknown action => fallback
+    const replyText = KEYWORD_FALLBACK_MESSAGE;
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  } catch (err) {
+    error("Error in processIncomingMessage:", err);
+    const replyText = KEYWORD_FALLBACK_MESSAGE;
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+}
 
 export async function webhookHandler(req, res) {
   const parseResult = whatsappWebhookSchema.safeParse(req.body);
@@ -92,6 +476,7 @@ export async function webhookHandler(req, res) {
     const waDisplayPhone = value?.metadata?.display_phone_number || null;
     const waPhoneNumberId = value?.metadata?.phone_number_id || null;
 
+    // STATUS RECEIPTS
     const statuses = value?.statuses || [];
     if (statuses.length) {
       for (const st of statuses) {
@@ -113,10 +498,14 @@ export async function webhookHandler(req, res) {
     for (const message of messages) {
       const from = message?.from;
       if (!from) {
-        error("Incoming message missing 'from':", JSON.stringify(message, null, 2));
+        error(
+          "Incoming message missing 'from':",
+          JSON.stringify(message, null, 2)
+        );
         continue;
       }
 
+      // Dedup inbound by provider message ID
       if (message.id) {
         const duplicate = await prisma.message.findFirst({
           where: { provider_msg_id: message.id },
@@ -127,10 +516,26 @@ export async function webhookHandler(req, res) {
         }
       }
 
+      // Ensure contact exists for this phone number
+      let contact = null;
+      try {
+        contact = await prisma.contact.upsert({
+          where: { phonenum: from },
+          update: {},
+          create: { phonenum: from },
+        });
+      } catch (contactErr) {
+        error("Failed to upsert contact:", contactErr);
+      }
+
       const rawText = buildDisplayText(message);
       log(`Message received: "${rawText}"`);
-      log(`From ${from} (to ${waDisplayPhone || "unknown"} [id ${waPhoneNumberId || "unknown"}])`);
+      log(
+        `From ${from} (to ${waDisplayPhone || "unknown"} [id ${waPhoneNumberId || "unknown"
+        }])`
+      );
 
+      // Store inbound message
       await prisma.message.create({
         data: {
           direction: "inbound",
@@ -141,54 +546,119 @@ export async function webhookHandler(req, res) {
           provider_msg_id: message.id ?? null,
           timestamp: new Date(),
           message_status: "received",
+          contactid: contact?.contactid ?? null,
         },
       });
 
-      let replyText;
-      const isText = message.type === "text";
-      const normalizedText = (message.text?.body || "").trim().toLowerCase();
+      let replyText = null;
+      let replyMessageObj = null;
+      let linkSessionId = null;
+      let linkCampaignId = null;
+      let linkContentKeyId = null;
 
-      if (isText && normalizedText === "join") {
-        replyText =
-          "You have successfully joined the campaign. Please wait for further updates.";
-      } else if (isText) {
-        const keywordResponse = await keywordReply(normalizedText);
-        replyText = keywordResponse || KEYWORD_FALLBACK_MESSAGE;
+      // -----------------------------
+      // Decide reply based on type
+      // -----------------------------
+      if (message.type === "text") {
+        const textBody = message.text?.body || "";
+        const {
+          replyText: rText,
+          replyMessageObj: rMsg,
+          sessionid,
+          campaignid,
+          contentkeyid,
+        } = await handleFlowOrKeyword({ from, text: textBody });
+
+        replyText = rText;
+        replyMessageObj = rMsg;
+        linkSessionId = sessionid;
+        linkCampaignId = campaignid;
+        linkContentKeyId = contentkeyid;
+      } else if (
+        message.type === "interactive" &&
+        message.interactive?.type === "list_reply"
+      ) {
+        const list = message.interactive.list_reply;
+        const id = list?.id || ""; // e.g. "keyword_cny"
+        let keywordValue = null;
+
+        if (id.startsWith("keyword_")) {
+          keywordValue = id.replace("keyword_", "");
+        }
+
+        const {
+          replyText: rText,
+          replyMessageObj: rMsg,
+          sessionid,
+          campaignid,
+          contentkeyid,
+        } = await handleFlowOrKeyword({
+          from,
+          text: keywordValue || "",
+        });
+
+        replyText = rText;
+        replyMessageObj = rMsg;
+        linkSessionId = sessionid;
+        linkCampaignId = campaignid;
+        linkContentKeyId = contentkeyid;
       } else if (message.type === "image") {
         replyText =
           "Nice image! For campaigns, please send a keyword (e.g. CNY) or type 'MENU'.";
-      } else if (message.type === "interactive") {
-        replyText =
-          "Thanks for your selection! You can also type a campaign keyword or 'MENU'.";
+        replyMessageObj = { type: "text", text: { body: replyText } };
       } else if (message.type === "sticker") {
         replyText =
-          "Nice sticker! To join a campaign, send a keyword or type 'MENU'.";
+          "Nice sticker! To join a campaign, send a keyword (e.g. CNY) or type 'MENU'.";
+        replyMessageObj = { type: "text", text: { body: replyText } };
       } else {
         replyText =
-          "I received your message. Please send a campaign keyword or type 'MENU'.";
+          "I received your message. Please send a campaign keyword (e.g. CNY) or type 'MENU'.";
+        replyMessageObj = { type: "text", text: { body: replyText } };
       }
 
-      const replyMessageObj = { type: "text", text: { body: replyText } };
+      // Safety: if for some reason handler didn't produce a WA payload
+      if (!replyMessageObj) {
+        const fallback = replyText || KEYWORD_FALLBACK_MESSAGE;
+        replyText = fallback;
+        replyMessageObj = { type: "text", text: { body: fallback } };
+      }
 
+      // -----------------------------
+      // Send reply via WhatsApp API
+      // -----------------------------
       let providerId = null;
       try {
         const sendRes = await sendWhatsAppMessage(from, replyMessageObj);
         providerId = sendRes?.messages?.[0]?.id ?? null;
         log(`Reply sent to: ${from}`);
       } catch (sendErr) {
-        error("WhatsApp send error (webhook reply):", sendErr?.response?.data || sendErr?.message || sendErr);
+        if (sendErr.name === "WhatsAppRestrictedError") {
+          error("WA auto-reply blocked because account is restricted.");
+        } else {
+          error(
+            "WhatsApp send error (webhook reply):",
+            sendErr?.response?.data || sendErr?.message || sendErr
+          );
+        }
       }
 
+      // -----------------------------
+      // Record outbound reply
+      // -----------------------------
       await prisma.message.create({
         data: {
           direction: "outbound",
-          content_type: "text",
-          message_content: replyText,
+          content_type: replyMessageObj.type,
+          message_content: replyText ?? "[interactive message]",
           senderid: waDisplayPhone,
           receiverid: from,
           provider_msg_id: providerId,
           timestamp: new Date(),
           message_status: providerId ? "sent" : "error",
+          contactid: contact?.contactid ?? null,
+          campaignsessionid: linkSessionId,
+          campaignid: linkCampaignId,
+          contentkeyid: linkContentKeyId,
         },
       });
 

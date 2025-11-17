@@ -6,7 +6,6 @@ export async function sendWhatsAppMessage(to, messageObj) {
   try {
     if (!to || !messageObj) throw new Error("Invalid message payload");
 
-    // Allow plain string for convenience
     let normalized;
     if (typeof messageObj === "string") {
       normalized = { type: "text", text: { body: messageObj } };
@@ -19,7 +18,7 @@ export async function sendWhatsAppMessage(to, messageObj) {
     const payload = {
       messaging_product: "whatsapp",
       to,
-      ...normalized
+      ...normalized,
     };
 
     const res = await axios.post(
@@ -28,15 +27,36 @@ export async function sendWhatsAppMessage(to, messageObj) {
       {
         headers: {
           Authorization: `Bearer ${config.whatsapp.token}`,
-          "Content-Type": "application/json"
-        }
+          "Content-Type": "application/json",
+        },
       }
     );
 
     log(`✅ Message sent to ${to} (${normalized.type})`);
     return res.data;
   } catch (err) {
-    error("❌ WhatsApp send error:", err.response?.data || err.message);
+    const status = err.response?.status;
+    const data = err.response?.data;
+    const msg = data?.error?.message || err.message || "Unknown error";
+
+    error("❌ WhatsApp send error:", status, data || err.message);
+
+    // Detect “account restricted / suspended” style errors
+    const text = msg.toLowerCase();
+    const isRestricted =
+      text.includes("restricted") ||
+      text.includes("suspended") ||
+      text.includes("violated") ||
+      text.includes("blocked");
+
+    if (isRestricted) {
+      const restrictedErr = new Error("WhatsApp account is restricted");
+      restrictedErr.name = "WhatsAppRestrictedError";
+      restrictedErr.status = status;
+      restrictedErr.meta = data;
+      throw restrictedErr;
+    }
+
     throw err;
   }
 }

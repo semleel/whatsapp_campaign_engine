@@ -9,6 +9,7 @@ import debugRoutes from "./debugRoutes.js";
 import systemRoutes from "./systemRoutes.js";
 import keywordRoutes from "./keywordRoutes.js";
 import flowRoutes from "./flowRoutes.js";
+import sessionRoutes from "./sessionRoutes.js";
 
 const router = express.Router();
 
@@ -21,5 +22,6 @@ router.use("/debug", debugRoutes);
 router.use("/system", systemRoutes);
 router.use("/keyword", keywordRoutes);
 router.use("/flow", flowRoutes);
+router.use("/session", sessionRoutes);
 
 export default router;

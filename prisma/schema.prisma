@@ -142,6 +142,8 @@ model campaignsession {
   contact           contact      @relation(fields: [contactid], references: [contactid], onDelete: NoAction, onUpdate: NoAction)
   message           message[]
   sessionlog        sessionlog[]
+
+  @@unique([contactid, campaignid], map: "unique_user_campaign")
 }
 
 model contact {
@@ -224,7 +226,7 @@ model keymapping {
 
 model keyword {
   keywordid  Int      @id @default(autoincrement())
-  value      String   @db.VarChar(100)
+  value      String   @unique(map: "keyword_value_unique") @db.VarChar(100)
   campaignid Int
   campaign   campaign @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
 }

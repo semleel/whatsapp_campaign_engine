@@ -6,7 +6,6 @@ import { useParams, useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
 import type {
   RegionRef,
-  UserFlowRef,
   CampaignStatusRef,
   KeywordEntry,
 } from "@/lib/types";
@@ -31,13 +30,12 @@ export default function CampaignDetailPage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "",
+    userFlowID: "", // still part of payload, but no input field
     camStatusID: "",
     startAt: "",
     endAt: "",
   });
   const [regions, setRegions] = useState<RegionRef[]>([]);
-  const [flows, setFlows] = useState<UserFlowRef[]>([]);
   const [statuses, setStatuses] = useState<CampaignStatusRef[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -52,16 +50,15 @@ export default function CampaignDetailPage() {
     if (!id) return;
     (async () => {
       try {
-        const [regionRes, flowRes, statusRes, campaignRes, keywordRes] = await Promise.all([
-          Api.listRegions(),
-          Api.listUserFlows(),
-          Api.listCampaignStatuses(),
-          Api.getCampaign(id),
-          Api.listKeywordsByCampaign(id),
-        ]);
+        const [regionRes, statusRes, campaignRes, keywordRes] =
+          await Promise.all([
+            Api.listRegions(),
+            Api.listCampaignStatuses(),
+            Api.getCampaign(id),
+            Api.listKeywordsByCampaign(id),
+          ]);
 
         setRegions(regionRes);
-        setFlows(flowRes);
         setStatuses(statusRes);
 
         setForm({
@@ -84,8 +81,9 @@ export default function CampaignDetailPage() {
     })();
   }, [id]);
 
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
@@ -93,12 +91,17 @@ export default function CampaignDetailPage() {
     e.preventDefault();
     setMessage("Saving...");
     try {
-      await Api.updateCampaign(id, form);
+      await Api.updateCampaign(id, {
+        ...form,
+        userFlowID: "", // ensure user flow remains unset
+      });
       setMessage("Campaign updated successfully.");
       setTimeout(() => router.push("/campaign"), 1000);
     } catch (err) {
       console.error(err);
-      setMessage(err instanceof Error ? err.message : "Failed to update campaign.");
+      setMessage(
+        err instanceof Error ? err.message : "Failed to update campaign."
+      );
     }
   };
 
@@ -155,7 +158,10 @@ export default function CampaignDetailPage() {
     }
   };
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading campaign...</p>;
+  if (loading)
+    return (
+      <p className="text-sm text-muted-foreground">Loading campaign...</p>
+    );
 
   return (
     <div className="space-y-6">
@@ -163,19 +169,31 @@ export default function CampaignDetailPage() {
         <div>
           <h3 className="text-lg font-semibold">Edit Campaign</h3>
           <p className="text-sm text-muted-foreground">
-            Update targeting, flow mapping, schedule window, status, and entry keywords for this campaign.
+            Update targeting, schedule window, status, and entry keywords for
+            this campaign.
           </p>
         </div>
-        <Link href="/campaign" className="text-sm font-medium text-primary hover:underline">
+        <Link
+          href="/campaign"
+          className="text-sm font-medium text-primary hover:underline"
+        >
           Back to list
         </Link>
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-xl border bg-card p-6 space-y-5">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-xl border bg-card p-6 space-y-5"
+      >
         {/* Basic info */}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-1 text-sm font-medium">
-            <span>Campaign name</span>
+            <span>
+              Campaign name{" "}
+              <span className="text-rose-600" aria-hidden="true">
+                *
+              </span>
+            </span>
             <input
               type="text"
               name="campaignName"
@@ -187,19 +205,19 @@ export default function CampaignDetailPage() {
           </label>
           <label className="space-y-1 text-sm font-medium">
             <span>Objective</span>
-            <input
-              type="text"
+            <textarea
               name="objective"
               value={form.objective}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
+              className="w-full rounded-md border px-3 py-2 min-h-[80px]"
+              placeholder="Describe what this campaign is trying to achieve."
             />
           </label>
         </div>
 
-        {/* Region, flow, status */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="space-y-1 text-sm font-medium md:col-span-1">
+        {/* Region & status */}
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-1 text-sm font-medium">
             <span>Target region</span>
             <select
               name="targetRegionID"
@@ -209,30 +227,17 @@ export default function CampaignDetailPage() {
             >
               <option value="">Select region</option>
               {regions.map((region) => (
-                <option key={region.regionid} value={String(region.regionid)}>
+                <option
+                  key={region.regionid}
+                  value={String(region.regionid)}
+                >
                   {region.regionname}
                   {region.regioncode ? ` (${region.regioncode})` : ""}
                 </option>
               ))}
             </select>
           </label>
-          <label className="space-y-1 text-sm font-medium md:col-span-1">
-            <span>User flow</span>
-            <select
-              name="userFlowID"
-              value={form.userFlowID}
-              onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
-            >
-              <option value="">Select flow</option>
-              {flows.map((flow) => (
-                <option key={flow.userflowid} value={String(flow.userflowid)}>
-                  {flow.userflowname}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm font-medium md:col-span-1">
+          <label className="space-y-1 text-sm font-medium">
             <span>Status</span>
             <select
               name="camStatusID"
@@ -242,7 +247,10 @@ export default function CampaignDetailPage() {
             >
               <option value="">Select status</option>
               {statuses.map((status) => (
-                <option key={status.camstatusid} value={status.camstatusid}>
+                <option
+                  key={status.camstatusid}
+                  value={status.camstatusid}
+                >
                   {status.currentstatus}
                 </option>
               ))}
@@ -279,8 +287,10 @@ export default function CampaignDetailPage() {
           <div>
             <h4 className="text-sm font-semibold">Entry keywords</h4>
             <p className="text-xs text-muted-foreground">
-              Keywords that route inbound users into this campaign (e.g. <span className="font-mono">promo</span>,{" "}
-              <span className="font-mono">raya</span>). Multiple campaigns should not share the same active keyword.
+              Keywords that route inbound users into this campaign (e.g.{" "}
+              <span className="font-mono">promo</span>,{" "}
+              <span className="font-mono">raya</span>). Multiple campaigns
+              should not share the same active keyword.
             </p>
           </div>
 
@@ -305,7 +315,8 @@ export default function CampaignDetailPage() {
           <div className="rounded-lg border bg-muted/40 p-3">
             {keywords.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No keywords defined yet. Add at least one so users can enter this campaign via WhatsApp.
+                No keywords defined yet. Add at least one so users can enter
+                this campaign via WhatsApp.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -314,7 +325,9 @@ export default function CampaignDetailPage() {
                     key={k.keywordid}
                     className="inline-flex items-center gap-1 rounded-full bg-white border px-3 py-1 text-xs"
                   >
-                    <span className="font-mono text-[11px]">{k.value}</span>
+                    <span className="font-mono text-[11px]">
+                      {k.value}
+                    </span>
                     <button
                       type="button"
                       onClick={() => handleDeleteKeyword(k.keywordid)}
@@ -327,13 +340,18 @@ export default function CampaignDetailPage() {
               </div>
             )}
             {keywordMessage && (
-              <p className="mt-2 text-[11px] text-muted-foreground">{keywordMessage}</p>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                {keywordMessage}
+              </p>
             )}
           </div>
         </section>
 
         <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
-          <Link href="/campaign" className="text-sm font-medium text-muted-foreground hover:text-foreground">
+          <Link
+            href="/campaign"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
             Cancel
           </Link>
           <button
@@ -349,9 +367,3 @@ export default function CampaignDetailPage() {
     </div>
   );
 }
-
-
-
-
-
-

@@ -64,6 +64,7 @@ import type {
   FlowCreatePayload,
   FlowDefinition,
   FlowUpdatePayload,
+  CampaignSession
 } from "./types";
 
 // ------------------------------------------------------------------
@@ -296,4 +297,28 @@ export const Api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  // =========================================================
+  // Sessions (campaignsession)
+  // =========================================================
+  listSessions: (): Promise<CampaignSession[]> =>
+    http<CampaignSession[]>("/api/session/list"),
+
+  getSession: (id: number | string): Promise<CampaignSession> =>
+    http<CampaignSession>(`/api/session/${id}`),
+
+  createSession: (payload: { contactid: number; campaignid: number; checkpoint?: string }) =>
+    http<CampaignSession>("/api/session/create", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  pauseSession: (id: number | string) =>
+    http<{ message: string }>(`/api/session/${id}/pause`, { method: "POST" }),
+
+  resumeSession: (id: number | string) =>
+    http<{ message: string }>(`/api/session/${id}/resume`, { method: "POST" }),
+
+  cancelSession: (id: number | string) =>
+    http<{ message: string }>(`/api/session/${id}/cancel`, { method: "POST" }),
 };

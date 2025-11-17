@@ -82,7 +82,7 @@ export default function CampaignsPage() {
         <div>
           <h3 className="text-lg font-semibold">Campaign Management</h3>
           <p className="text-sm text-muted-foreground">
-            Manage live journeys, inspect targeting, and nudge campaigns through approvals without leaving this view.
+            Manage live campaigns, inspect targeting, and nudge campaigns through approvals without leaving this view.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
@@ -174,7 +174,7 @@ export default function CampaignsPage() {
       </div>
 
       <div className="rounded-xl border p-4 text-sm text-muted-foreground flex flex-wrap items-center justify-between gap-3">
-        <div>Active journeys: {activeCount}</div>
+        <div>Active campaigns: {activeCount}</div>
         {message && <div className="text-xs">{message}</div>}
       </div>
     </div>

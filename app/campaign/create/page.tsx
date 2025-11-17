@@ -12,13 +12,12 @@ export default function CampaignCreatePage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "",
+    userFlowID: "", // still in payload, but no input field
     startAt: "",
     endAt: "",
   });
 
   const [regions, setRegions] = useState<SelectOption[]>([]);
-  const [userFlows, setUserFlows] = useState<SelectOption[]>([]);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -30,10 +29,7 @@ export default function CampaignCreatePage() {
   useEffect(() => {
     (async () => {
       try {
-        const [regionData, userFlowData] = await Promise.all([
-          Api.listRegions(),
-          Api.listUserFlows(),
-        ]);
+        const regionData = await Api.listRegions();
         setRegions(
           regionData.map((r) => ({
             id: String(r.regionid),
@@ -41,17 +37,14 @@ export default function CampaignCreatePage() {
             code: r.regioncode || undefined,
           }))
         );
-        setUserFlows(
-          userFlowData.map((u) => ({ id: String(u.userflowid), name: u.userflowname }))
-        );
       } catch (err) {
-        console.error("Error fetching regions or user flows:", err);
+        console.error("Error fetching regions:", err);
       }
     })();
   }, []);
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
@@ -72,7 +65,7 @@ export default function CampaignCreatePage() {
         const data = availability.data;
         setKeywordMessage(
           (data && "error" in data && data.error) ||
-          "Unable to validate keyword. Please try again."
+            "Unable to validate keyword. Please try again."
         );
         return;
       }
@@ -100,7 +93,7 @@ export default function CampaignCreatePage() {
       campaignName: formData.campaignName,
       objective: formData.objective || null,
       targetRegionID: formData.targetRegionID || null,
-      userFlowID: formData.userFlowID || null,
+      userFlowID: null, // user flow disabled for now
       startAt: formData.startAt || null,
       endAt: formData.endAt || null,
     };
@@ -175,19 +168,30 @@ export default function CampaignCreatePage() {
         <div>
           <h3 className="text-lg font-semibold">New Campaign</h3>
           <p className="text-sm text-muted-foreground">
-            Define campaign intent, targeting, timing, flow, and entry keywords for WhatsApp.
+            Define campaign intent, targeting, timing, and entry keywords for WhatsApp.
           </p>
         </div>
-        <Link href="/campaign" className="text-sm font-medium text-primary hover:underline">
+        <Link
+          href="/campaign"
+          className="text-sm font-medium text-primary hover:underline"
+        >
           Back to list
         </Link>
       </div>
 
-      <form onSubmit={handleSubmit} className="rounded-xl border bg-card p-6 space-y-5">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-xl border bg-card p-6 space-y-5"
+      >
         {/* Basic info */}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-1 text-sm font-medium">
-            <span>Campaign name</span>
+            <span>
+              Campaign name{" "}
+              <span className="text-rose-600" aria-hidden="true">
+                *
+              </span>
+            </span>
             <input
               type="text"
               name="campaignName"
@@ -200,18 +204,17 @@ export default function CampaignCreatePage() {
           </label>
           <label className="space-y-1 text-sm font-medium">
             <span>Objective</span>
-            <input
-              type="text"
+            <textarea
               name="objective"
               value={formData.objective}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
-              placeholder="Drive redemptions, re-engage, etc."
+              className="w-full rounded-md border px-3 py-2 min-h-[80px]"
+              placeholder="Describe what this campaign is trying to achieve."
             />
           </label>
         </div>
 
-        {/* Target & flow & schedule */}
+        {/* Target & schedule */}
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-1 text-sm font-medium">
             <span>Target region</span>
@@ -226,22 +229,6 @@ export default function CampaignCreatePage() {
                 <option key={region.id} value={region.id}>
                   {region.name}
                   {region.code ? ` (${region.code})` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>User flow</span>
-            <select
-              name="userFlowID"
-              value={formData.userFlowID}
-              onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
-            >
-              <option value="">Select flow</option>
-              {userFlows.map((flow) => (
-                <option key={flow.id} value={flow.id}>
-                  {flow.name}
                 </option>
               ))}
             </select>
@@ -275,8 +262,8 @@ export default function CampaignCreatePage() {
             <p className="text-xs text-muted-foreground">
               Keywords that route inbound users into this campaign (e.g.{" "}
               <span className="font-mono">promo</span>,{" "}
-              <span className="font-mono">raya</span>). You can also edit them later on the
-              campaign detail page.
+              <span className="font-mono">raya</span>). You can also edit them
+              later on the campaign detail page.
             </p>
           </div>
 
@@ -301,8 +288,8 @@ export default function CampaignCreatePage() {
           <div className="rounded-lg border bg-muted/40 p-3">
             {keywords.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No keywords defined yet. Add at least one so users can enter this campaign via
-                WhatsApp.
+                No keywords defined yet. Add at least one so users can enter
+                this campaign via WhatsApp.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -324,7 +311,9 @@ export default function CampaignCreatePage() {
               </div>
             )}
             {keywordMessage && (
-              <p className="mt-2 text-[11px] text-muted-foreground">{keywordMessage}</p>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                {keywordMessage}
+              </p>
             )}
           </div>
         </section>
@@ -350,9 +339,3 @@ export default function CampaignCreatePage() {
     </div>
   );
 }
-
-
-
-
-
-
