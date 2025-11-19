@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
 
 // Types
 type TemplateData = {
@@ -166,11 +167,11 @@ export default function EditTemplatePage() {
 
   const handleFileSelected = (file: File) => {
     if (!["image/jpeg", "image/png"].includes(file.type)) {
-      alert("Only JPG or PNG allowed");
+      showCenteredAlert("Only JPG or PNG allowed");
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert("Max 5MB file size allowed");
+      showCenteredAlert("Max 5MB file size allowed");
       return;
     }
 
@@ -243,7 +244,7 @@ export default function EditTemplatePage() {
   // ----------------------------
   const handleSave = async () => {
     if (!form.title.trim()) {
-      alert("Title is required");
+      await showCenteredAlert("Title is required");
       return;
     }
 
@@ -304,9 +305,9 @@ export default function EditTemplatePage() {
 
       if (!res.ok) throw new Error("Failed to update template");
 
-      alert("Template updated successfully!");
+      await showCenteredAlert("Template updated successfully!");
     } catch (e: any) {
-      alert(e.message);
+      await showCenteredAlert(e.message);
     } finally {
       setSaving(false);
     }
@@ -316,7 +317,8 @@ export default function EditTemplatePage() {
   // SOFT DELETE HANDLER
   // ----------------------------
   const handleSoftDelete = async () => {
-    if (!confirm("Are you sure you want to delete this template?")) return;
+    const confirmed = await showCenteredConfirm("Are you sure you want to delete this template?");
+    if (!confirmed) return;
 
     try {
       const res = await fetch(`/api/template/${form.contentid}/delete`, {
@@ -325,10 +327,10 @@ export default function EditTemplatePage() {
 
       if (!res.ok) throw new Error("Delete failed");
 
-      alert("Template deleted.");
+      await showCenteredAlert("Template deleted.");
       router.push("/content/templates");
     } catch (e: any) {
-      alert(e.message);
+      await showCenteredAlert(e.message);
     }
   };
 

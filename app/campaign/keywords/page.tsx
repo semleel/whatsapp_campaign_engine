@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, FormEvent } from "react";
+import AnnouncementModal from "@/components/AnnouncementModal";
 import { Api } from "@/lib/client";
+import { showCenteredConfirm } from "@/lib/showAlert";
 
 type CampaignOption = {
   campaignid: number;
@@ -36,7 +38,8 @@ export default function KeywordEntryModule() {
   });
 
   const [submitting, setSubmitting] = useState(false);
-  const [keywordMessage, setKeywordMessage] = useState("");
+  const [keywordFormError, setKeywordFormError] = useState("");
+  const [announcement, setAnnouncement] = useState<string | null>(null);
   const [fallback] = useState(FALLBACK_MESSAGE); // read-only
 
   // Load campaigns and keywords on mount
@@ -80,7 +83,8 @@ export default function KeywordEntryModule() {
 
   const handleAdd = async (e: FormEvent) => {
     e.preventDefault();
-    setKeywordMessage("");
+    setKeywordFormError("");
+    setAnnouncement(null);
 
     const rawKeyword = draft.keyword.trim();
     if (!rawKeyword || draft.campaignId === 0) return;
@@ -103,31 +107,37 @@ export default function KeywordEntryModule() {
 
       setKeywords((prev) => [newRow, ...prev]);
       setDraft({ keyword: "", campaignId: 0 });
-      setKeywordMessage("Keyword mapping created.");
+      setKeywordFormError("");
+      setAnnouncement("Keyword mapping created.");
     } catch (err) {
       console.error("Create keyword error:", err);
-      setKeywordMessage("Failed to create keyword.");
+      setKeywordFormError("Failed to create keyword.");
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDelete = async (keywordid: number) => {
-    if (!confirm("Remove this keyword mapping?")) return;
-    setKeywordMessage("");
+    const confirmed = await showCenteredConfirm("Remove this keyword mapping?");
+    if (!confirmed) return;
+    setKeywordFormError("");
+    setAnnouncement(null);
     try {
       await Api.deleteKeyword(keywordid);
 
       setKeywords((prev) => prev.filter((k) => k.keywordid !== keywordid));
-      setKeywordMessage("Keyword removed.");
+      setAnnouncement("Keyword removed.");
     } catch (err) {
       console.error("Delete keyword error:", err);
-      setKeywordMessage("Failed to remove keyword.");
+      setKeywordFormError("Failed to remove keyword.");
     }
   };
 
   return (
     <div className="space-y-6">
+      {announcement && (
+        <AnnouncementModal message={announcement} onClose={() => setAnnouncement(null)} />
+      )}
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -252,9 +262,9 @@ export default function KeywordEntryModule() {
           </tbody>
         </table>
 
-        {keywordMessage && (
-          <div className="px-3 py-2 text-[11px] text-muted-foreground">
-            {keywordMessage}
+        {keywordFormError && (
+          <div className="px-3 py-2 text-[11px] text-rose-600">
+            {keywordFormError}
           </div>
         )}
       </section>

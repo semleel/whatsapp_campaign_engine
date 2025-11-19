@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
+import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
 
 interface Campaign {
   campaignid: number;
@@ -19,15 +21,19 @@ const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-100 text-emerald-700",
   new: "bg-emerald-100 text-emerald-700",
   paused: "bg-amber-100 text-amber-700",
-  scheduled: "bg-sky-100 text-sky-700",
-  expired: "bg-rose-100 text-rose-700",
+  "on hold": "bg-sky-100 text-sky-700",
+  inactive: "bg-slate-100 text-slate-700",
 };
+
+// ⬇️ only block editing when Active
+const canEditCampaign = (status: string | undefined | null) =>
+  (status || "").toLowerCase() !== "active";
 
 export default function CampaignsPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   useEffect(() => {
@@ -37,7 +43,11 @@ export default function CampaignsPage() {
         setCampaigns(data);
       } catch (err) {
         console.error(err);
-        setMessage(err instanceof Error ? err.message : "Unable to load campaigns right now.");
+        setErrorMessage(
+          err instanceof Error
+            ? err.message
+            : "Unable to load campaigns right now."
+        );
       } finally {
         setLoading(false);
       }
@@ -47,26 +57,59 @@ export default function CampaignsPage() {
   const handleEdit = (id: number) => router.push(`/campaign/${id}`);
 
   const handleArchive = async (id: number) => {
-    if (!confirm("Archive this campaign?")) return;
+    const confirmed = await showCenteredConfirm("Archive this campaign?");
+    if (!confirmed) return;
     try {
       await Api.archiveCampaign(id);
-      setMessage("Campaign archived successfully.");
+      await showCenteredAlert("Campaign archived successfully.");
       setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
     } catch (err) {
       console.error(err);
-      setMessage(err instanceof Error ? err.message : "Failed to archive campaign.");
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to archive campaign."
+      );
+    }
+  };
+
+  // ⬇️ Pause: only used when currentstatus is Active
+  const handlePause = async (id: number) => {
+    const confirmed = await showCenteredConfirm("Pause this campaign so you can edit the schedule?");
+    if (!confirmed) return;
+    try {
+      // Call your backend to set status = "Paused"
+      await Api.updateCampaign(id, { status: "Paused" });
+
+      // Optimistically update UI
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.campaignid === id
+            ? { ...c, currentstatus: "Paused" }
+            : c
+        )
+      );
+      await showCenteredAlert("Campaign paused. You can now edit the schedule.");
+    } catch (err) {
+      console.error(err);
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to pause campaign."
+      );
     }
   };
 
   const activeCount = useMemo(
-    () => campaigns.filter((c) => c.currentstatus?.toLowerCase() === "active").length,
+    () =>
+      campaigns.filter(
+        (c) => c.currentstatus?.toLowerCase() === "active"
+      ).length,
     [campaigns]
   );
 
   const filteredCampaigns = useMemo(() => {
     if (statusFilter === "all") return campaigns;
     const wanted = statusFilter.toLowerCase();
-    return campaigns.filter((c) => (c.currentstatus || "").toLowerCase() === wanted);
+    return campaigns.filter(
+      (c) => (c.currentstatus || "").toLowerCase() === wanted
+    );
   }, [campaigns, statusFilter]);
 
   const formatDateTime = (value?: string | null) => {
@@ -78,15 +121,24 @@ export default function CampaignsPage() {
 
   return (
     <div className="space-y-6">
+      <QueryAnnouncement />
+      {errorMessage && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {errorMessage}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">Campaign Management</h3>
           <p className="text-sm text-muted-foreground">
-            Manage live campaigns, inspect targeting, and nudge campaigns through approvals without leaving this view.
+            Manage live campaigns, inspect targeting, and nudge campaigns
+            through approvals without leaving this view.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
-          <label className="text-sm text-muted-foreground mr-2">Filter by status</label>
+          <label className="text-sm text-muted-foreground mr-2">
+            Filter by status
+          </label>
           <select
             className="rounded-md border px-2 py-1 text-sm mr-4"
             value={statusFilter}
@@ -101,12 +153,14 @@ export default function CampaignsPage() {
           </select>
           <Link
             href="/campaign/archived"
-            className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+            className="inline-flex items-center rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
             Archived Campaigns
           </Link>
           <Link
             href="/campaign/create"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90">
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+          >
             New Campaign
           </Link>
         </div>
@@ -134,24 +188,65 @@ export default function CampaignsPage() {
               </tr>
             ) : filteredCampaigns.length ? (
               filteredCampaigns.map((c) => {
-                const badge = STATUS_STYLES[c.currentstatus?.toLowerCase()] || "bg-slate-100 text-slate-700";
+                const badge =
+                  STATUS_STYLES[c.currentstatus?.toLowerCase()] ||
+                  "bg-slate-100 text-slate-700";
+
+                const isActive =
+                  (c.currentstatus || "").toLowerCase() === "active";
+                const editable = canEditCampaign(c.currentstatus);
+
                 return (
                   <tr key={c.campaignid} className="border-t">
-                    <td className="px-3 py-2 font-medium">{c.campaignname}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.userflowname}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.regionname}</td>
-                    <td className="px-3 py-2">
-                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}>{c.currentstatus}</span>
+                    <td className="px-3 py-2 font-medium">
+                      {c.campaignname}
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.start_at)}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.end_at)}</td>
-                    <td className="px-3 py-2 text-right space-x-2">
-                      <button
-                        onClick={() => handleEdit(c.campaignid)}
-                        className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {c.userflowname}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {c.regionname}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}
                       >
-                        Edit
-                      </button>
+                        {c.currentstatus}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.start_at)}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.end_at)}
+                    </td>
+                    <td className="px-3 py-2 text-right space-x-2">
+                      {isActive ? (
+                        <button
+                          onClick={() => handlePause(c.campaignid)}
+                          className="rounded border px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                          title="Pause this campaign to edit its schedule."
+                        >
+                          Pause
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => editable && handleEdit(c.campaignid)}
+                          disabled={!editable}
+                          title={
+                            editable
+                              ? "Edit campaign & schedule"
+                              : "Cannot edit this campaign."
+                          }
+                          className={`rounded border px-2 py-1 text-xs font-medium hover:bg-muted ${
+                            !editable
+                              ? "cursor-not-allowed opacity-50 hover:bg-transparent"
+                              : ""
+                          }`}
+                        >
+                          Edit
+                        </button>
+                      )}
                       <button
                         onClick={() => handleArchive(c.campaignid)}
                         className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
@@ -175,9 +270,7 @@ export default function CampaignsPage() {
 
       <div className="rounded-xl border p-4 text-sm text-muted-foreground flex flex-wrap items-center justify-between gap-3">
         <div>Active campaigns: {activeCount}</div>
-        {message && <div className="text-xs">{message}</div>}
       </div>
     </div>
   );
 }
-

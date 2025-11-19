@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
 import type { CampaignCreatePayload } from "@/lib/types";
+import { showCenteredAlert } from "@/lib/showAlert";
 
 type SelectOption = { id: string; name: string; code?: string };
 
 export default function CampaignCreatePage() {
+  const router = useRouter();
   const [formData, setFormData] = useState({
     campaignName: "",
     objective: "",
@@ -18,7 +21,6 @@ export default function CampaignCreatePage() {
   });
 
   const [regions, setRegions] = useState<SelectOption[]>([]);
-  const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // ✅ keyword UI state
@@ -86,7 +88,6 @@ export default function CampaignCreatePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    setMessage("Submitting...");
     setKeywordMessage("");
 
     const payload: CampaignCreatePayload = {
@@ -102,7 +103,8 @@ export default function CampaignCreatePage() {
       const response = await Api.createCampaign(payload);
       const createdCampaign = response.data;
 
-      setMessage("Campaign created successfully.");
+      let noticeMessage = "Campaign created successfully.";
+
       setFormData({
         campaignName: "",
         objective: "",
@@ -149,14 +151,17 @@ export default function CampaignCreatePage() {
         }
 
         if (keywordSummary.trim()) {
-          setKeywordMessage(keywordSummary.trim());
+          noticeMessage += ` ${keywordSummary.trim()}`;
+        } else {
+          noticeMessage += " Keywords created for this campaign.";
         }
       }
 
       setKeywords([]);
+      router.push(`/campaign?notice=${encodeURIComponent(noticeMessage)}`);
     } catch (err) {
       console.error(err);
-      setMessage(err instanceof Error ? err.message : "Network error.");
+      await showCenteredAlert(err instanceof Error ? err.message : "Network error.");
     } finally {
       setSubmitting(false);
     }
@@ -335,7 +340,6 @@ export default function CampaignCreatePage() {
         </div>
       </form>
 
-      {message && <p className="text-sm text-muted-foreground">{message}</p>}
     </div>
   );
 }

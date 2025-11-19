@@ -9,6 +9,7 @@ import type {
   CampaignStatusRef,
   KeywordEntry,
 } from "@/lib/types";
+import { showCenteredConfirm } from "@/lib/showAlert";
 
 const formatDateForInput = (value?: string | null) => {
   if (!value) return "";
@@ -143,7 +144,8 @@ export default function CampaignDetailPage() {
 
   // ✅ Delete keyword
   const handleDeleteKeyword = async (keywordid: number) => {
-    if (!confirm("Remove this keyword from this campaign?")) return;
+    const confirmed = await showCenteredConfirm("Remove this keyword from this campaign?");
+    if (!confirmed) return;
     setKeywordLoading(true);
     setKeywordMessage("");
     try {

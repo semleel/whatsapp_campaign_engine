@@ -3,6 +3,15 @@ import prisma from "../config/prismaClient.js";
 /**
  * Helper: map DB session to API shape
  */
+
+const SESSION_STATUS = {
+  ACTIVE: "ACTIVE",
+  PAUSED: "PAUSED",
+  COMPLETED: "COMPLETED",
+  EXPIRED: "EXPIRED",
+  CANCELLED: "CANCELLED",
+};
+
 function formatSession(s) {
     return {
         id: s.campaignsessionid,
@@ -16,6 +25,7 @@ function formatSession(s) {
         lastActiveAt: s.lastactiveat ?? null,
     };
 }
+
 
 /**
  * GET /api/session/list
@@ -179,4 +189,20 @@ export async function cancelSession(req, res) {
         if (err.code === "P2025") return res.status(404).json({ error: "Session not found" });
         return res.status(500).json({ error: err.message });
     }
+}
+
+export async function markSessionCompleted(campaignsessionid) {
+  try {
+    const updated = await prisma.campaignsession.update({
+      where: { campaignsessionid },
+      data: {
+        sessionstatus: SESSION_STATUS.COMPLETED,
+        lastactiveat: new Date(),
+      },
+    });
+    return updated;
+  } catch (err) {
+    console.error("markSessionCompleted error:", err);
+    throw err;
+  }
 }

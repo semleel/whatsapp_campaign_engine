@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { showCenteredAlert } from "@/lib/showAlert";
 
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
@@ -52,6 +54,7 @@ function generateId() {
 }
 
 export default function ContentCreatePage() {
+  const router = useRouter();
   const [form, setForm] = useState<TemplateForm>({
     title: "",
     type: "message",
@@ -70,7 +73,6 @@ export default function ContentCreatePage() {
     buttons: [],
   });
 
-  const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Header sample image (this is the ONLY media sample, like WANotifier)
@@ -156,7 +158,6 @@ export default function ContentCreatePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    setMessage("Submitting...");
 
     try {
       let headerSampleDataUrl: string | null = null;
@@ -236,7 +237,6 @@ export default function ContentCreatePage() {
           );
         }
 
-        setMessage("Template created successfully.");
         setForm({
           title: "",
           type: "message",
@@ -258,16 +258,19 @@ export default function ContentCreatePage() {
         setHeaderSamplePreview(null);
         setHeaderFileError(null);
         setHeaderInputKey((k) => k + 1); // reset file input after submit
+        router.push(
+          `/content/templates?notice=${encodeURIComponent("Template created successfully.")}`
+        );
       } else {
         const msg =
           typeof data === "string"
             ? data
             : (data as any)?.error || "Unknown error";
-        setMessage(`Error: ${msg}`);
+        await showCenteredAlert(`Error: ${msg}`);
       }
     } catch (err) {
       console.error(err);
-      setMessage("Network error.");
+      await showCenteredAlert("Network error.");
     } finally {
       setSubmitting(false);
     }
@@ -761,10 +764,6 @@ export default function ContentCreatePage() {
           </div>
         </aside>
       </div>
-
-      {message && (
-        <p className="text-sm text-muted-foreground">{message}</p>
-      )}
     </div>
   );
 }

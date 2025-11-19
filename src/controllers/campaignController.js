@@ -141,9 +141,45 @@ export async function updateCampaign(req, res) {
       return res.status(400).json({ error: "Invalid campaign id" });
     }
 
-    const { campaignName, objective, targetRegionID, userFlowID, camStatusID, status, startAt, endAt } = req.body;
+    const {
+      campaignName,
+      objective,
+      targetRegionID,
+      userFlowID,
+      camStatusID,
+      status,
+      startAt,
+      endAt,
+    } = req.body;
 
-    const requestedStatus = statusFromId(camStatusID) || normalizeCampaignStatus(status, null);
+    const existing = await prisma.campaign.findUnique({
+      where: { campaignid: campaignID },
+      select: {
+        status: true,
+        start_at: true,
+        end_at: true,
+      },
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    const currentStatus = existing.status || "Unknown";
+
+    const wantsScheduleChange =
+      typeof startAt !== "undefined" || typeof endAt !== "undefined";
+
+    if (wantsScheduleChange && currentStatus === "Active") {
+      return res.status(400).json({
+        error:
+          "You cannot edit the campaign schedule while it is Active. Pause it first, then update the schedule.",
+      });
+    }
+
+   
+    const requestedStatus =
+      statusFromId(camStatusID) || normalizeCampaignStatus(status, null);
 
     const data = {};
 
@@ -165,7 +201,29 @@ export async function updateCampaign(req, res) {
     if (typeof endAt !== "undefined") {
       data.end_at = parseNullableDate(endAt);
     }
-    if (requestedStatus) {
+
+    if (wantsScheduleChange && currentStatus !== "Active") {
+      const now = new Date();
+
+      const newStart =
+        typeof data.start_at !== "undefined" ? data.start_at : existing.start_at;
+      const newEnd =
+        typeof data.end_at !== "undefined" ? data.end_at : existing.end_at;
+
+      let nextStatus = null;
+
+      if (newStart && now < newStart) {
+        nextStatus = STATUS_ON_HOLD;
+      } else if (newStart && now >= newStart && (!newEnd || now <= newEnd)) {
+        nextStatus = STATUS_ACTIVE; 
+      } else if (newEnd && now > newEnd) {
+        nextStatus = STATUS_INACTIVE;
+      }
+
+      if (nextStatus) {
+        data.status = nextStatus;
+      }
+    } else if (requestedStatus) {
       data.status = requestedStatus;
     }
 
@@ -183,6 +241,7 @@ export async function updateCampaign(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
+
 
 export async function archiveCampaign(req, res) {
   try {
@@ -231,23 +290,44 @@ export async function restoreCampaign(req, res) {
 export async function autoCheckCampaignStatuses() {
   try {
     const now = new Date();
+
     const campaigns = await prisma.campaign.findMany({
-      where: { status: { not: "Archived" } },
-      select: { campaignid: true, status: true, start_at: true, end_at: true },
+      where: {
+        status: {
+          in: [STATUS_ON_HOLD, STATUS_ACTIVE], 
+        },
+      },
+      select: {
+        campaignid: true,
+        status: true,
+        start_at: true,
+        end_at: true,
+      },
     });
 
     for (const campaign of campaigns) {
-      const startWindow = campaign.start_at ? new Date(campaign.start_at) : null;
+      const currentStatus = campaign.status;
+      const startWindow = campaign.start_at
+        ? new Date(campaign.start_at)
+        : null;
       const endWindow = campaign.end_at ? new Date(campaign.end_at) : null;
-      const currentStatus = campaign.status || "";
 
       let nextStatus = null;
-      if (startWindow && now < startWindow) {
-        nextStatus = STATUS_ON_HOLD;
-      } else if (startWindow && now >= startWindow && (!endWindow || now <= endWindow)) {
-        nextStatus = STATUS_ACTIVE;
-      } else if (endWindow && now > endWindow) {
-        nextStatus = STATUS_INACTIVE;
+
+      if (currentStatus === STATUS_ON_HOLD) {
+        if (startWindow && now >= startWindow) {
+          nextStatus = STATUS_ACTIVE;
+
+          if (endWindow && now > endWindow) {
+            nextStatus = STATUS_INACTIVE;
+          }
+        }
+      }
+
+      if (currentStatus === STATUS_ACTIVE) {
+        if (endWindow && now > endWindow) {
+          nextStatus = STATUS_INACTIVE;
+        }
       }
 
       if (nextStatus && nextStatus !== currentStatus) {
@@ -261,3 +341,4 @@ export async function autoCheckCampaignStatuses() {
     console.error("[CampaignStatusJob] error:", err);
   }
 }
+

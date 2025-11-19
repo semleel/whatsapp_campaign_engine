@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import QueryAnnouncement from "@/components/QueryAnnouncement";
 
 type TemplateSummary = {
   contentid: number;
@@ -244,6 +245,7 @@ export default function TemplateLibraryPage() {
 
   return (
     <div className="space-y-6">
+      <QueryAnnouncement />
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

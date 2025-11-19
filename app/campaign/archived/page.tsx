@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Api } from "@/lib/client";
+import { showCenteredConfirm } from "@/lib/showAlert";
 
 interface Campaign {
   campaignid: number;
@@ -40,7 +41,8 @@ export default function ArchivedCampaignsPage() {
   }, []);
 
   const handleRestore = async (id: number) => {
-    if (!confirm("Restore this campaign?")) return;
+    const confirmed = await showCenteredConfirm("Restore this campaign?");
+    if (!confirmed) return;
     try {
       await Api.restoreCampaign(id);
       setMessage("Campaign restored successfully.");

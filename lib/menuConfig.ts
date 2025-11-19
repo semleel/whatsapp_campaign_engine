@@ -80,4 +80,11 @@ export const MENU: MenuSection[] = [
       { label: "WhatsApp Config", href: "/system/whatsapp" },
     ],
   },
+    {
+    id: "conversations",
+    label: "Conversations",
+    items: [
+      { label: "Conversations List", href: "/conversations/" },
+    ],
+  },
 ] as const;

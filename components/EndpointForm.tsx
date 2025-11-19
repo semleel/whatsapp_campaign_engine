@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { showCenteredAlert } from "@/lib/showAlert";
 import type {
   ApiAuthType,
   ApiLocation,
@@ -60,11 +61,11 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
   const handleSubmit = async () => {
     const trimmedBase = baseUrl.trim();
     if (!name.trim()) {
-      alert("Name is required");
+      await showCenteredAlert("Name is required");
       return;
     }
     if (!/^https:\/\//i.test(trimmedBase)) {
-      alert("Base URL must start with https://");
+      await showCenteredAlert("Base URL must start with https://");
       return;
     }
 

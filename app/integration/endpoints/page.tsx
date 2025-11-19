@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Api } from "@/lib/client";
 import type { EndpointConfig } from "@/lib/types";
+import { showCenteredConfirm } from "@/lib/showAlert";
 
 function formatUrl(endpoint: EndpointConfig) {
   const base = endpoint.base_url?.replace(/\/+$/, "") || "";
@@ -103,7 +104,8 @@ export default function EndpointsPage() {
                       className="rounded border px-2 py-1 text-rose-600"
                       onClick={async () => {
                         if (!endpoint.apiid) return;
-                        if (!confirm(`Delete ${endpoint.name}?`)) return;
+                        const confirmed = await showCenteredConfirm(`Delete ${endpoint.name}?`);
+                        if (!confirmed) return;
                         await Api.deleteEndpoint(endpoint.apiid);
                         refresh();
                       }}
