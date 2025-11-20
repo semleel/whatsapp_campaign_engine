@@ -10,7 +10,6 @@ import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
 interface Campaign {
   campaignid: number;
   campaignname: string;
-  userflowname: string;
   regionname: string;
   currentstatus: string;
   start_at?: string | null;
@@ -171,7 +170,6 @@ export default function CampaignsPage() {
           <thead className="bg-muted/40">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
-              <th className="px-3 py-2 text-left font-medium">User flow</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Start</th>
@@ -182,7 +180,7 @@ export default function CampaignsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={6} className="px-3 py-4 text-muted-foreground">
                   Loading campaigns...
                 </td>
               </tr>
@@ -200,9 +198,6 @@ export default function CampaignsPage() {
                   <tr key={c.campaignid} className="border-t">
                     <td className="px-3 py-2 font-medium">
                       {c.campaignname}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {c.userflowname}
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {c.regionname}

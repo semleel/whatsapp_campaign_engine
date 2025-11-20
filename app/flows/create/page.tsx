@@ -175,7 +175,7 @@ export default function FlowCreatePage() {
         `Next steps (in Flow Detail / builder):\n` +
         `• Map each CONTENT_KEY to content (tables: content + keymapping).\n` +
         `• Configure input validation (allowedinput), branching (branchrule), and fallbacks (fallback).\n` +
-        `• Link campaigns to this flow via campaign.userflowid in Campaign Create / Edit.\n\n` +
+        `• Link campaigns to this flow by setting the entry content key on the campaign.\n\n` +
         `Entry key: ${form.entryKey}\nFallback key: ${form.fallbackKey}\n` +
         `Nodes: ${steps.map((n) => n.key).join(", ")}`
       );
@@ -209,8 +209,8 @@ export default function FlowCreatePage() {
         <div>
           <h3 className="text-lg font-semibold">Create flow</h3>
           <p className="text-sm text-muted-foreground">
-            This defines a reusable <code>userflow</code>. Campaigns will link to
-            it via <code>campaign.userflowid</code>, and each node will later map
+            This defines a reusable <code>userflow</code>. Campaigns will use its
+            entry content key (set on the campaign) and each node will later map
             to <code>keymapping</code>, <code>allowedinput</code>,{" "}
             <code>branchrule</code>, and <code>fallback</code>.
           </p>
