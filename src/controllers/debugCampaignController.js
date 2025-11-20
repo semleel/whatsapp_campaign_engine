@@ -13,7 +13,6 @@ export async function debugCampaignConfig(req, res) {
                 campaignname: true,
                 status: true,
                 contentkeyid: true,
-                userflowid: true,
                 keyword: {
                     select: { value: true },
                 },
@@ -66,7 +65,6 @@ export async function debugCampaignConfig(req, res) {
                 id: c.campaignid,
                 name: c.campaignname,
                 status: c.status,
-                userflowid: c.userflowid,
                 contentkeyid: c.contentkeyid,
                 keywords: c.keyword.map((k) => k.value),
                 entryContent: content

@@ -31,7 +31,6 @@ export default function CampaignDetailPage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "", // still part of payload, but no input field
     camStatusID: "",
     startAt: "",
     endAt: "",
@@ -66,7 +65,6 @@ export default function CampaignDetailPage() {
           campaignName: campaignRes.campaignname || "",
           objective: campaignRes.objective || "",
           targetRegionID: campaignRes.targetregionid?.toString() || "",
-          userFlowID: campaignRes.userflowid?.toString() || "",
           camStatusID: campaignRes.camstatusid?.toString() || "",
           startAt: formatDateForInput(campaignRes.start_at),
           endAt: formatDateForInput(campaignRes.end_at),
@@ -94,7 +92,6 @@ export default function CampaignDetailPage() {
     try {
       await Api.updateCampaign(id, {
         ...form,
-        userFlowID: "", // ensure user flow remains unset
       });
       setMessage("Campaign updated successfully.");
       setTimeout(() => router.push("/campaign"), 1000);
