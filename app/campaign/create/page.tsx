@@ -15,6 +15,7 @@ export default function CampaignCreatePage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
+    userFlowID: "", // still in payload, but no input field
     startAt: "",
     endAt: "",
   });
@@ -93,6 +94,7 @@ export default function CampaignCreatePage() {
       campaignName: formData.campaignName,
       objective: formData.objective || null,
       targetRegionID: formData.targetRegionID || null,
+      userFlowID: null, // user flow disabled for now
       startAt: formData.startAt || null,
       endAt: formData.endAt || null,
     };
@@ -107,6 +109,7 @@ export default function CampaignCreatePage() {
         campaignName: "",
         objective: "",
         targetRegionID: "",
+        userFlowID: "",
         startAt: "",
         endAt: "",
       });
