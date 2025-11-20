@@ -7,12 +7,9 @@ import dotenv from "dotenv";
 // --- Routes ---
 import apiRoutes from "./routes/index.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
-<<<<<<< Updated upstream
 import { startJobs } from "./jobs/index.js";
-=======
 import tagRoutes from "./routes/tagRoutes.js";
 import { startCampaignStatusJob } from "./jobs/campaignStatusJob.js";
->>>>>>> Stashed changes
 
 // --- Middleware ---
 import errorHandler from "./middleware/errorHandler.js";

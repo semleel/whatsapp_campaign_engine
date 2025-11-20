@@ -3,14 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-<<<<<<< Updated upstream
 import { showCenteredAlert } from "@/lib/showAlert";
-=======
 import TagSelector from "@/components/TagSelector";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
->>>>>>> Stashed changes
 
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
@@ -85,15 +82,12 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-<<<<<<< Updated upstream
 export default function ContentCreatePage() {
   const router = useRouter();
   const [form, setForm] = useState<TemplateForm>({
-=======
 // Initial form factory so we can reuse it
 function createEmptyForm(): TemplateForm {
   return {
->>>>>>> Stashed changes
     title: "",
     type: "message",
     category: "Marketing", // default selection
@@ -112,14 +106,11 @@ function createEmptyForm(): TemplateForm {
   };
 }
 
-<<<<<<< Updated upstream
-=======
 export default function ContentCreatePage() {
   const router = useRouter();
 
   const [form, setForm] = useState<TemplateForm>(createEmptyForm);
   const [message, setMessage] = useState<string | null>(null);
->>>>>>> Stashed changes
   const [submitting, setSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
@@ -248,7 +239,6 @@ export default function ContentCreatePage() {
           );
         }
 
-<<<<<<< Updated upstream
         setForm({
           title: "",
           type: "message",
@@ -273,32 +263,24 @@ export default function ContentCreatePage() {
         router.push(
           `/content/templates?notice=${encodeURIComponent("Template created successfully.")}`
         );
-=======
         setMessage(null);
         setShowSuccess(true);
->>>>>>> Stashed changes
       } else {
         const msg =
           typeof data === "string"
             ? data
-<<<<<<< Updated upstream
             : (data as any)?.error || "Unknown error";
         await showCenteredAlert(`Error: ${msg}`);
-=======
             : (data as any)?.error ||
             (data as any)?.message ||
             "Unknown error";
         console.error("Create template error:", msg, data);
         setMessage(`Error: ${msg}`);
->>>>>>> Stashed changes
       }
     } catch (err: any) {
       console.error(err);
-<<<<<<< Updated upstream
       await showCenteredAlert("Network error.");
-=======
       setMessage(err?.message || "Network error.");
->>>>>>> Stashed changes
     } finally {
       setSubmitting(false);
     }
@@ -822,13 +804,10 @@ export default function ContentCreatePage() {
           </div>
         </aside>
       </div>
-<<<<<<< Updated upstream
-=======
 
       {message && (
         <p className="text-sm text-red-500">{message}</p>
       )}
->>>>>>> Stashed changes
     </div>
   );
 }
