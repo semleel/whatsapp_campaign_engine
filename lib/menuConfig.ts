@@ -75,7 +75,7 @@ export const MENU: MenuSection[] = [
     id: "system",
     label: "System",
     items: [
-      { label: "Admins", href: "/system/admins" },
+      { label: "Staff", href: "/system/staff" },
       { label: "Tokens", href: "/system/tokens" },
       { label: "Security Logs", href: "/system/logs" },
       { label: "WhatsApp Config", href: "/system/whatsapp" },

@@ -89,3 +89,79 @@ export async function upsertWhatsAppConfig(req, res) {
         return res.status(500).json({ message: err.message });
     }
 }
+
+// GET /api/system/tokens
+export async function listTokens(req, res) {
+    try {
+        const tokens = await prisma.sessiontoken.findMany({
+            orderBy: [{ is_revoked: "asc" }, { issuedat: "desc" }],
+            include: {
+                admin: {
+                    select: { adminid: true, name: true, email: true, role: true },
+                },
+            },
+        });
+
+        const normalized = tokens.map((t) => ({
+            tokenid: t.tokenid,
+            adminid: t.adminid,
+            admin: t.admin
+                ? { id: t.admin.adminid, name: t.admin.name, email: t.admin.email, role: t.admin.role }
+                : null,
+            roletype: t.roletype,
+            issuedat: t.issuedat,
+            expiryat: t.expiryat,
+            lastusedat: t.lastusedat,
+            is_revoked: t.is_revoked,
+            createdby: t.createdby,
+        }));
+
+        return res.json(normalized);
+    } catch (err) {
+        console.error("listTokens error:", err);
+        return res.status(500).json({ message: err.message });
+    }
+}
+
+// GET /api/system/security-logs
+export async function listSecurityLogs(req, res) {
+    try {
+        const limit = Math.min(Number(req.query.limit) || 200, 500);
+        const logs = await prisma.token_log.findMany({
+            orderBy: { logtime: "desc" },
+            take: limit,
+            include: {
+                sessiontoken: {
+                    select: {
+                        tokenid: true,
+                        roletype: true,
+                        admin: { select: { adminid: true, name: true, email: true, role: true } },
+                    },
+                },
+            },
+        });
+
+        const normalized = logs.map((log) => ({
+            logid: log.logid,
+            action: log.action,
+            ipaddress: log.ipaddress,
+            useragent: log.useragent,
+            logtime: log.logtime,
+            tokenid: log.tokenid,
+            role: log.sessiontoken?.roletype || null,
+            admin: log.sessiontoken?.admin
+                ? {
+                      id: log.sessiontoken.admin.adminid,
+                      name: log.sessiontoken.admin.name,
+                      email: log.sessiontoken.admin.email,
+                      role: log.sessiontoken.admin.role,
+                  }
+                : null,
+        }));
+
+        return res.json(normalized);
+    } catch (err) {
+        console.error("listSecurityLogs error:", err);
+        return res.status(500).json({ message: err.message });
+    }
+}

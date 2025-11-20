@@ -13,6 +13,8 @@ import sessionRoutes from "./sessionRoutes.js";
 import debugCampaignConfigRoutes from "./debugCampaignConfigRoutes.js";
 import reportRoutes from "./reportRoutes.js";
 import conversationRoutes from "./conversationRoutes.js";
+import authRoutes from "./authRoutes.js";
+import adminRoutes from "./adminRoutes.js";
 
 const router = express.Router();
 
@@ -29,5 +31,7 @@ router.use("/session", sessionRoutes);
 router.use("/debug", debugCampaignConfigRoutes);
 router.use("/report", reportRoutes);
 router.use("/conversation", conversationRoutes);
+router.use("/auth", authRoutes);
+router.use("/admin", adminRoutes);
 
 export default router;
