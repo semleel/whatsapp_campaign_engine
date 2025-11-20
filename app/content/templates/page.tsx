@@ -15,6 +15,7 @@ type TemplateSummary = {
   createdat?: string | null;
   expiresat?: string | null;
   mediaurl?: string | null;
+  isdeleted?: boolean | null;
 };
 
 type ButtonItem = {
@@ -59,7 +60,10 @@ export default function TemplateLibraryPage() {
         setLoading(true);
         setError(null);
 
-        const listRes = await fetch("http://localhost:3000/api/template/list");
+        // includeDeleted=true so we can show Archived
+        const listRes = await fetch(
+          "http://localhost:3000/api/template/list?includeDeleted=true"
+        );
         const listCt = listRes.headers.get("content-type") || "";
         if (!listRes.ok) {
           const txt = await listRes.text();
@@ -83,6 +87,7 @@ export default function TemplateLibraryPage() {
           createdat: item.createdat ?? null,
           expiresat: item.expiresat ?? null,
           mediaurl: item.mediaurl ?? null,
+          isdeleted: item.isdeleted ?? null,
         }));
 
         // fetch extra fields for preview
@@ -120,11 +125,15 @@ export default function TemplateLibraryPage() {
                 (placeholders?.footerText as string | null) ??
                 null;
 
+              const isdeleted: boolean | null =
+                data.isdeleted ?? t.isdeleted ?? null;
+
               return {
                 ...t,
                 title: data.title ?? t.title,
                 type: data.type ?? t.type,
-                status: data.status ?? t.status,
+                // show "Archived" in UI if soft-deleted
+                status: isdeleted ? "Archived" : data.status ?? t.status,
                 category: data.category ?? t.category ?? null,
                 lang: data.lang ?? data.defaultlang ?? t.lang ?? "",
                 description: data.description ?? null,
@@ -139,6 +148,7 @@ export default function TemplateLibraryPage() {
                 headerText,
                 headerMediaType,
                 buttons,
+                isdeleted,
               };
             } catch {
               return { ...t };
@@ -172,9 +182,18 @@ export default function TemplateLibraryPage() {
         t.title.toLowerCase().includes(search.toLowerCase()) ||
         (t.category || "").toLowerCase().includes(search.toLowerCase());
 
-      const matchesStatus =
-        statusFilter === "All" ||
-        (t.status || "").toLowerCase() === statusFilter.toLowerCase();
+      // status logic respects soft delete
+      let matchesStatus = true;
+      const statusNorm = (t.status || "").toLowerCase();
+      const filterNorm = statusFilter.toLowerCase();
+
+      if (statusFilter === "All") {
+        matchesStatus = !t.isdeleted; // hide archived from "All"
+      } else if (statusFilter === "Archived") {
+        matchesStatus = !!t.isdeleted; // only archived
+      } else {
+        matchesStatus = !t.isdeleted && statusNorm === filterNorm;
+      }
 
       const matchesCategory =
         categoryFilter === "All" ||
@@ -197,8 +216,11 @@ export default function TemplateLibraryPage() {
   const endIndex = Math.min(startIndex + pageSize, totalItems);
   const pageItems = filteredItems.slice(startIndex, endIndex);
 
-  const renderStatusPill = (status: string | null | undefined) => {
-    const normalized = (status || "").toLowerCase();
+  const renderStatusPill = (t: TemplateWithPreview) => {
+    const normalized = t.isdeleted
+      ? "archived"
+      : (t.status || "").toLowerCase();
+
     let styles =
       "bg-slate-100 text-slate-700 border border-slate-200 text-xs rounded-full px-2 py-0.5";
     if (normalized === "active") {
@@ -214,7 +236,9 @@ export default function TemplateLibraryPage() {
       styles =
         "bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs rounded-full px-2 py-0.5";
     }
-    return <span className={styles}>{status || "Unknown"}</span>;
+
+    const label = t.isdeleted ? "Archived" : t.status || "Unknown";
+    return <span className={styles}>{label}</span>;
   };
 
   const formatUpdated = (item: TemplateWithPreview) => {
@@ -318,20 +342,22 @@ export default function TemplateLibraryPage() {
           <button
             type="button"
             onClick={() => setViewMode("grid")}
-            className={`px-3 py-1 rounded-md ${viewMode === "grid"
+            className={`px-3 py-1 rounded-md ${
+              viewMode === "grid"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-muted"
-              }`}
+            }`}
           >
             Grid
           </button>
           <button
             type="button"
             onClick={() => setViewMode("table")}
-            className={`px-3 py-1 rounded-md ${viewMode === "table"
+            className={`px-3 py-1 rounded-md ${
+              viewMode === "table"
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-muted"
-              }`}
+            }`}
           >
             Table
           </button>
@@ -378,7 +404,7 @@ export default function TemplateLibraryPage() {
                           </span>
                         </div>
                         <div className="flex flex-col items-end gap-1">
-                          {renderStatusPill(t.status)}
+                          {renderStatusPill(t)}
                           <span className="text-[10px]">
                             {(t.lang || "-").toString().toUpperCase()} •{" "}
                             {t.type || ""}
@@ -481,7 +507,9 @@ export default function TemplateLibraryPage() {
                       <td className="px-3 py-2 text-muted-foreground capitalize">
                         {t.type}
                       </td>
-                      <td className="px-3 py-2">{renderStatusPill(t.status)}</td>
+                      <td className="px-3 py-2">
+                        {renderStatusPill(t)}
+                      </td>
                       <td className="px-3 py-2 uppercase">
                         {t.lang || "-"}
                       </td>
@@ -546,5 +574,3 @@ export default function TemplateLibraryPage() {
     </div>
   );
 }
-
-

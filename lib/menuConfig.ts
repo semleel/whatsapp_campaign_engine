@@ -35,6 +35,7 @@ export const MENU: MenuSection[] = [
     items: [
       { label: "Content", href: "/content", exact: true },
       { label: "Template Library", href: "/content/templates" },
+      { label: "Tags", href: "/content/tags" },
     ],
   },
   {

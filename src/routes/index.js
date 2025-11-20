@@ -11,6 +11,8 @@ import keywordRoutes from "./keywordRoutes.js";
 import flowRoutes from "./flowRoutes.js";
 import sessionRoutes from "./sessionRoutes.js";
 import debugCampaignConfigRoutes from "./debugCampaignConfigRoutes.js";
+import reportRoutes from "./reportRoutes.js";
+import conversationRoutes from "./conversationRoutes.js";
 
 const router = express.Router();
 
@@ -25,5 +27,7 @@ router.use("/keyword", keywordRoutes);
 router.use("/flow", flowRoutes);
 router.use("/session", sessionRoutes);
 router.use("/debug", debugCampaignConfigRoutes);
+router.use("/report", reportRoutes);
+router.use("/conversation", conversationRoutes);
 
 export default router;

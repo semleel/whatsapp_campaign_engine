@@ -3,7 +3,12 @@ import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
-import { processIncomingMessage, findOrCreateSession } from "../services/flowEngine.js";
+import {
+  processIncomingMessage, findOrCreateSession,
+  findOrCreateContactByPhone,
+  findCommandContentKeyForCampaign,
+  SESSION_STATUS,
+} from "../services/flowEngine.js";
 
 /**
  * Build WhatsApp LIST message showing active, launchable campaigns
@@ -104,6 +109,95 @@ export async function verifyWebhook(req, res) {
   }
   error("Webhook verification failed");
   return res.sendStatus(403);
+}
+
+async function handleJoinCommand(from) {
+  const phonenum = (from || "").trim();
+  if (!phonenum) {
+    const replyText = KEYWORD_FALLBACK_MESSAGE;
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  const contact = await findOrCreateContactByPhone(phonenum);
+
+  const session = await prisma.campaignsession.findFirst({
+    where: {
+      contactid: Number(contact.contactid),
+      sessionstatus: { not: SESSION_STATUS.CANCELLED },
+    },
+    include: { campaign: true },
+    orderBy: [
+      { lastactiveat: "desc" },
+      { createdat: "desc" },
+    ],
+  });
+
+  if (!session) {
+    const replyText =
+      "We couldn't find an active campaign. Please send a campaign keyword to start first.";
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  const joinKey = session.campaign
+    ? await findCommandContentKeyForCampaign(session.campaign, "join")
+    : null;
+
+  let replyText =
+    "You have successfully joined the campaign. Please wait for further updates.";
+  let replyMessageObj = { type: "text", text: { body: replyText } };
+  let contentkeyid = null;
+
+  if (joinKey) {
+    const km = await prisma.keymapping.findUnique({
+      where: { contentkeyid: joinKey },
+      include: { content: true },
+    });
+    if (km?.content) {
+      const built = buildWhatsappMessageFromContent(km.content);
+      replyText = built.replyText;
+      replyMessageObj = built.message;
+    }
+    contentkeyid = joinKey;
+  }
+
+  const updated = await prisma.campaignsession.update({
+    where: { campaignsessionid: session.campaignsessionid },
+    data: {
+      checkpoint: joinKey ?? session.checkpoint,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      lastactiveat: new Date(),
+    },
+  });
+
+  await prisma.sessionlog.create({
+    data: {
+      campaignsessionid: session.campaignsessionid,
+      contentkeyid: joinKey ?? session.checkpoint ?? null,
+      detail: joinKey
+        ? `JOIN command routed to ${joinKey}`
+        : "JOIN command received (no command key configured).",
+    },
+  });
+
+  return {
+    replyText,
+    replyMessageObj,
+    sessionid: updated.campaignsessionid,
+    campaignid: updated.campaignid,
+    contentkeyid,
+  };
 }
 
 /**
@@ -387,13 +481,27 @@ const upsertStatus = async (statusPayload) => {
   const tsIso = statusPayload?.timestamp
     ? new Date(parseInt(statusPayload.timestamp, 10) * 1000)
     : new Date();
-  await prisma.message.updateMany({
-    where: { provider_msg_id: providerId },
-    data: {
-      message_status: (statusPayload?.status || "unknown").toLowerCase(),
-      timestamp: tsIso,
-    },
-  });
+  const status = (statusPayload?.status || "unknown").toLowerCase();
+  const errorMsg = statusPayload?.errors?.[0]?.title || null;
+
+  await Promise.all([
+    prisma.message.updateMany({
+      where: { provider_msg_id: providerId },
+      data: {
+        message_status: status,
+        timestamp: tsIso,
+        error_message: errorMsg,
+      },
+    }),
+    prisma.deliverlog.updateMany({
+      where: { provider_msg_id: providerId },
+      data: {
+        deliverstatus: status,
+        lastattemptat: tsIso,
+        error_message: errorMsg,
+      },
+    }),
+  ]);
 };
 
 /**

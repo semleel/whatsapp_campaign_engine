@@ -155,9 +155,22 @@ export async function resumeSession(req, res) {
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
+        const session = await prisma.campaignsession.findUnique({
+            where: { campaignsessionid: id },
+            include: { campaign: true, contact: true },
+        });
+
+        if (!session) {
+            return res.status(404).json({ error: "Session not found" });
+        }
+
+        if (session.sessionstatus !== SESSION_STATUS.EXPIRED) {
+            return res.status(400).json({ error: "Only expired sessions can be resumed" });
+        }
+
         const updated = await prisma.campaignsession.update({
             where: { campaignsessionid: id },
-            data: { sessionstatus: "ACTIVE", lastactiveat: new Date() },
+            data: { sessionstatus: SESSION_STATUS.ACTIVE, lastactiveat: new Date() },
             include: { campaign: true, contact: true },
         });
 

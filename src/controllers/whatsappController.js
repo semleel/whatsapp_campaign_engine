@@ -24,22 +24,36 @@ export async function sendMessage(req, res) {
   }
 
   try {
-    const response = await sendWhatsAppMessage(to, message);
-    const providerId = response?.messages?.[0]?.id ?? null;
+    // Ensure contact exists so conversations can link messages reliably
+    const contact = await prisma.contact.upsert({
+      where: { phonenum: to },
+      update: {},
+      create: { phonenum: to },
+    });
 
-    await prisma.message.create({
+    const msgRecord = await prisma.message.create({
       data: {
         direction: "outbound",
         content_type: message.type,
         message_content: describeMessage(message),
         senderid: "server-api",
         receiverid: to,
-        provider_msg_id: providerId,
+        provider_msg_id: null,
         timestamp: new Date(),
-        message_status: providerId ? "sent" : "error",
+        message_status: "pending",
         payload_json: JSON.stringify(message),
+        contactid: contact.contactid,
       },
     });
+
+    const response = await sendWhatsAppMessage(to, message, msgRecord);
+    const providerId = response?.messages?.[0]?.id ?? null;
+    if (providerId) {
+      await prisma.message.update({
+        where: { messageid: msgRecord.messageid },
+        data: { provider_msg_id: providerId },
+      });
+    }
 
     log(`Sent ${message.type} to ${to} | provider_id=${providerId}`);
     return res.status(200).json({

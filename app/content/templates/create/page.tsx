@@ -1,9 +1,13 @@
 "use client";
 
+import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { showCenteredAlert } from "@/lib/showAlert";
+import TagSelector from "../../../../components/TagSelector";
+
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
 
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
@@ -21,16 +25,50 @@ type TemplateButton = {
   phone?: string;
 };
 
+// Template category type + options (WANotifier-style)
+type TemplateCategory =
+  | "Marketing"
+  | "Utility"
+  | "Authentication"
+  | string
+  | null;
+
+const TEMPLATE_CATEGORY_OPTIONS: {
+  value: TemplateCategory;
+  label: string;
+  subtitle: string;
+  icon: string;
+}[] = [
+    {
+      value: "Marketing",
+      label: "Marketing",
+      subtitle: "One-to-many bulk broadcast marketing messages",
+      icon: "📣",
+    },
+    {
+      value: "Utility",
+      label: "Utility",
+      subtitle: "Transactional updates triggered by a user action",
+      icon: "🔔",
+    },
+    {
+      value: "Authentication",
+      label: "Authentication",
+      subtitle: "One-time passwords and login verification",
+      icon: "🔐",
+    },
+  ];
+
 type TemplateForm = {
   title: string;
   type: string;
-  category: string;
+  category: TemplateCategory;
   status: string;
   lang: string;
   body: string;
   description: string;
-  mediaurl: string; // keep for backend compatibility (we send null now)
-  tags: string;
+  mediaurl: string; // URL only
+  tags: string[];
   expiresat: string;
 
   headerType: "none" | "text" | "media";
@@ -40,48 +78,38 @@ type TemplateForm = {
   buttons: TemplateButton[];
 };
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 function generateId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-export default function ContentCreatePage() {
-  const router = useRouter();
-  const [form, setForm] = useState<TemplateForm>({
+// Initial form factory so we can reuse it
+function createEmptyForm(): TemplateForm {
+  return {
     title: "",
     type: "message",
-    category: "",
+    category: "Marketing", // default selection
     status: "Draft",
     lang: "en",
     body: "",
     description: "",
     mediaurl: "",
-    tags: "",
+    tags: [],
     expiresat: "",
     headerType: "none",
     headerMediaType: "image",
     headerText: "",
     footerText: "",
     buttons: [],
-  });
+  };
+}
 
+export default function ContentCreatePage() {
+  const router = useRouter();
+
+  const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
+  const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  // Header sample image (this is the ONLY media sample, like WANotifier)
-  const [headerSampleFile, setHeaderSampleFile] = useState<File | null>(null);
-  const [headerSamplePreview, setHeaderSamplePreview] = useState<string | null>(
-    null
-  );
-  const [headerFileError, setHeaderFileError] = useState<string | null>(null);
-  const [headerInputKey, setHeaderInputKey] = useState(0); // used to force input remount
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const handleChange = (
     e:
@@ -93,31 +121,9 @@ export default function ContentCreatePage() {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleHeaderFileChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const validTypes = ["image/jpeg", "image/png"];
-    if (!validTypes.includes(file.type)) {
-      setHeaderFileError("Only JPEG and PNG images are allowed.");
-      setHeaderSampleFile(null);
-      setHeaderSamplePreview(null);
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setHeaderFileError("Max file size is 5MB.");
-      setHeaderSampleFile(null);
-      setHeaderSamplePreview(null);
-      return;
-    }
-
-    setHeaderFileError(null);
-    setHeaderSampleFile(file);
-    setHeaderSamplePreview(URL.createObjectURL(file));
-  };
-
+  // -----------------------------
+  // Buttons helpers
+  // -----------------------------
   const addButton = (type: ButtonType) => {
     setForm((prev) => ({
       ...prev,
@@ -155,17 +161,14 @@ export default function ContentCreatePage() {
     }));
   };
 
+  // -----------------------------
+  // Submit
+  // -----------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
 
     try {
-      let headerSampleDataUrl: string | null = null;
-
-      if (headerSampleFile) {
-        headerSampleDataUrl = await fileToDataUrl(headerSampleFile);
-      }
-
       const expiresAtIso = form.expiresat
         ? new Date(form.expiresat).toISOString()
         : null;
@@ -186,7 +189,7 @@ export default function ContentCreatePage() {
         lang: form.lang,
         body: form.body,
         description: form.description || form.body || null,
-        mediaurl: null, // we use sample image instead of external URL
+        mediaUrl: form.mediaurl?.trim() || null,
         expiresat: expiresAtIso,
         footerText: placeholderData.footerText,
         headerText: placeholderData.headerText,
@@ -194,10 +197,9 @@ export default function ContentCreatePage() {
         headerMediaType: placeholderData.headerMediaType,
         buttons: placeholderData.buttons,
         placeholders: placeholderData,
-        headerSampleDataUrl,
       };
 
-      const res = await fetch("http://localhost:3000/api/template/create", {
+      const res = await fetch(`${API_BASE}/api/template/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -211,85 +213,102 @@ export default function ContentCreatePage() {
         const created = (data as any)?.data;
         const contentId: number | undefined = created?.contentid;
 
-        // tags
-        const tags = form.tags
-          .split(/[\s,]+/)
-          .map((t) => t.trim())
-          .filter(Boolean);
+        // tags -> join table
+        const tags = form.tags;
         if (contentId && tags.length) {
-          await fetch(`http://localhost:3000/api/template/${contentId}/tags`, {
+          await fetch(`${API_BASE}/api/template/${contentId}/tags`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tags }),
           });
         }
 
-        // expiry
+        // expiry -> dedicated endpoint
         if (contentId && form.expiresat) {
           const iso = new Date(form.expiresat).toISOString();
-          await fetch(
-            `http://localhost:3000/api/template/${contentId}/expire`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ expiresAt: iso }),
-            }
-          );
+          await fetch(`${API_BASE}/api/template/${contentId}/expire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ expiresAt: iso }),
+          });
         }
 
-        setForm({
-          title: "",
-          type: "message",
-          category: "",
-          status: "Draft",
-          lang: "en",
-          body: "",
-          description: "",
-          mediaurl: "",
-          tags: "",
-          expiresat: "",
-          headerType: "none",
-          headerMediaType: "image",
-          headerText: "",
-          footerText: "",
-          buttons: [],
-        });
-        setHeaderSampleFile(null);
-        setHeaderSamplePreview(null);
-        setHeaderFileError(null);
-        setHeaderInputKey((k) => k + 1); // reset file input after submit
+        // reset form
+        setForm(createEmptyForm());
+        setShowSuccess(true);
+        setMessage(null);
+
+        // optional: auto-redirect handled by overlay button
         router.push(
-          `/content/templates?notice=${encodeURIComponent("Template created successfully.")}`
+          `/content/templates?notice=${encodeURIComponent(
+            "Template created successfully."
+          )}`
         );
       } else {
         const msg =
           typeof data === "string"
             ? data
-            : (data as any)?.error || "Unknown error";
+            : (data as any)?.error ||
+            (data as any)?.message ||
+            "Unknown error";
         await showCenteredAlert(`Error: ${msg}`);
+        console.error("Create template error:", msg, data);
+        setMessage(`Error: ${msg}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
       await showCenteredAlert("Network error.");
+      setMessage(err?.message || "Network error.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const previewBody =
-    form.body.trim() || "Body text here";
+  const previewBody = form.body.trim() || "Body text here";
   const previewFooter =
     form.footerText.trim() || "Sent via Campaign Engine";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {/* Success overlay */}
+      {showSuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-xl bg-card border shadow-lg p-6 space-y-4">
+            <h3 className="text-lg font-semibold">Template created</h3>
+            <p className="text-sm text-muted-foreground">
+              Your WhatsApp template has been created successfully. What
+              would you like to do next?
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <button
+                type="button"
+                className="flex-1 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+                onClick={() => {
+                  setShowSuccess(false);
+                  setForm(createEmptyForm());
+                }}
+              >
+                Continue creating
+              </button>
+              <button
+                type="button"
+                className="flex-1 inline-flex items-center justify-center rounded-md border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/60"
+                onClick={() => router.push("/content/templates")}
+              >
+                Back to library
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">Create Template</h3>
           <p className="text-sm text-muted-foreground">
-            Add a new WhatsApp-approved message, tag it with metadata,
-            and keep the versioning trail clean.
+            Add a new WhatsApp-approved message, tag it with metadata, and
+            keep the versioning trail clean.
           </p>
         </div>
         <Link
@@ -336,8 +355,8 @@ export default function ContentCreatePage() {
             </label>
           </div>
 
-          {/* Status / language / category */}
-          <div className="grid gap-4 md:grid-cols-3">
+          {/* Status + language */}
+          <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm font-medium">
               <span>Status</span>
               <select
@@ -367,51 +386,93 @@ export default function ContentCreatePage() {
                 ))}
               </select>
             </label>
-            <label className="space-y-1 text-sm font-medium">
-              <span>Category</span>
-              <input
-                type="text"
-                name="category"
-                placeholder="Optional"
-                value={form.category}
-                onChange={handleChange}
-                className="w-full rounded-md border px-3 py-2"
-              />
-            </label>
           </div>
 
-          {/* Tags + expiry */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-1 text-sm font-medium">
-              <span>Tags</span>
-              <input
-                type="text"
-                name="tags"
-                placeholder="e.g. RAYA2025 EN approved"
-                value={form.tags}
-                onChange={handleChange}
-                className="w-full rounded-md border px-3 py-2"
-              />
-              <span className="text-xs text-muted-foreground">
-                Separate with comma or space
-              </span>
-            </label>
-            <label className="space-y-1 text-sm font-medium">
-              <span>Expiry</span>
-              <input
-                type="datetime-local"
-                name="expiresat"
-                value={form.expiresat}
-                onChange={handleChange}
-                className="w-full rounded-md border px-3 py-2"
-              />
-              <span className="text-xs text-muted-foreground">
-                Optional. Auto-hides after this time.
-              </span>
-            </label>
+          {/* Category cards */}
+          <div className="mt-4 text-sm">
+            <span className="font-medium block mb-1">Category</span>
+            <p className="text-xs text-muted-foreground mb-3">
+              Choose what type of message this template is used for.
+            </p>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              {TEMPLATE_CATEGORY_OPTIONS.map((opt) => {
+                const isSelected =
+                  (form.category || "").toString().toLowerCase() ===
+                  (opt.value || "").toString().toLowerCase();
+
+                return (
+                  <button
+                    key={opt.value || opt.label}
+                    type="button"
+                    onClick={() =>
+                      setForm((prev) => ({
+                        ...prev,
+                        category: opt.value,
+                      }))
+                    }
+                    className={[
+                      "flex h-full flex-col items-start rounded-xl border bg-white px-3 py-3 text-left text-xs transition",
+                      "hover:border-primary/60 hover:bg-primary/5",
+                      isSelected
+                        ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                        : "border-border",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-lg">
+                        {opt.icon}
+                      </span>
+                      <span className="font-semibold text-sm">
+                        {opt.label}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      {opt.subtitle}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Header (with upload, WANotifier style) */}
+          {/* TAGS – Wati-style picker */}
+          <div className="border-t pt-4 space-y-2">
+            <h4 className="font-semibold text-sm">Tags</h4>
+            <p className="text-xs text-muted-foreground">
+              Use tags to group similar templates. Start typing to search and
+              select from your existing tags.
+            </p>
+
+            <TagSelector
+              selected={form.tags}
+              onChange={(tags: string[]) =>
+                setForm((prev) => ({
+                  ...prev,
+                  tags,
+                }))
+              }
+              apiBase={API_BASE}
+            />
+
+          </div>
+
+          {/* EXPIRY */}
+          <div className="border-t pt-4 space-y-2">
+            <h4 className="font-semibold text-sm">Expiry</h4>
+            <input
+              type="datetime-local"
+              name="expiresat"
+              value={form.expiresat}
+              onChange={handleChange}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+            />
+            <span className="text-xs text-muted-foreground">
+              Optional. Auto-hides after this time.
+            </span>
+          </div>
+
+          {/* Header (text/media config) */}
           <div className="space-y-3 border-t pt-4">
             <h4 className="text-sm font-semibold">
               Header{" "}
@@ -420,8 +481,8 @@ export default function ContentCreatePage() {
               </span>
             </h4>
             <p className="text-xs text-muted-foreground">
-              Add a title or sample media that you want to show in the
-              message header.
+              Add a title or media URL that you want to show in the message
+              header.
             </p>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -470,63 +531,22 @@ export default function ContentCreatePage() {
               )}
             </div>
 
+            {/* Media URL input (URL only, no file upload) */}
             {form.headerType === "media" && (
-              <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] items-start">
-                <div className="space-y-2 text-sm">
-                  <span className="font-medium">
-                    Upload sample image
-                  </span>
-                  <div className="flex items-center gap-3">
-                    {/* Styled "Choose file" button with key to force remount */}
-                    <label
-                      key={headerInputKey}
-                      className="inline-flex items-center rounded-md border px-3 py-2 text-xs font-medium cursor-pointer hover:bg-muted"
-                    >
-                      Choose file
-                      <input
-                        type="file"
-                        accept="image/jpeg,image/png"
-                        onChange={handleHeaderFileChange}
-                        className="sr-only"
-                      />
-                    </label>
-                    {headerSamplePreview && (
-                      <button
-                        type="button"
-                        className="text-xs text-red-500"
-                        onClick={() => {
-                          setHeaderSampleFile(null);
-                          setHeaderSamplePreview(null);
-                          setHeaderFileError(null);
-                          setHeaderInputKey((k) => k + 1); // allow re-selecting same file
-                        }}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Upload a sample image for WhatsApp to review the type
-                    of image you will be sending using this template.
-                    Supported formats: <strong>JPEG</strong> and{" "}
-                    <strong>PNG</strong>. Max size: <strong>5MB</strong>.
-                  </p>
-                  {headerFileError && (
-                    <p className="text-xs text-red-500">
-                      {headerFileError}
-                    </p>
-                  )}
-                </div>
-
-                {headerSamplePreview && (
-                  <div className="border rounded-md overflow-hidden bg-muted">
-                    <img
-                      src={headerSamplePreview}
-                      alt="Header sample"
-                      className="block w-full h-32 object-cover"
-                    />
-                  </div>
-                )}
+              <div className="space-y-1 text-sm font-medium">
+                <span>Header media URL</span>
+                <input
+                  type="text"
+                  name="mediaurl"
+                  placeholder="https://example.com/image.jpg"
+                  value={form.mediaurl}
+                  onChange={handleChange}
+                  className="w-full rounded-md border px-3 py-2"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Provide a public URL for an image / media shown above the
+                  message. Only URL is stored, no local file upload.
+                </p>
               </div>
             )}
           </div>
@@ -709,24 +729,27 @@ export default function ContentCreatePage() {
           <div className="rounded-xl border bg-card p-4 space-y-3">
             <h4 className="text-sm font-semibold">Template Preview</h4>
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
-              {/* header media preview (acts like WANotifier sample image) */}
-              {form.headerType === "media" && headerSamplePreview && (
+              {/* header media preview (URL-based) */}
+              {form.headerType === "media" && form.mediaurl.trim() && (
                 <div className="mb-2 overflow-hidden rounded-md bg-background">
                   <img
-                    src={headerSamplePreview}
+                    src={form.mediaurl.trim()}
                     alt="Header preview"
                     className="block w-full object-cover max-h-40"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display =
+                        "none";
+                    }}
                   />
                 </div>
               )}
 
               {/* header text preview */}
-              {form.headerType === "text" &&
-                form.headerText.trim() && (
-                  <p className="mb-1 text-xs font-semibold">
-                    {form.headerText}
-                  </p>
-                )}
+              {form.headerType === "text" && form.headerText.trim() && (
+                <p className="mb-1 text-xs font-semibold">
+                  {form.headerText}
+                </p>
+              )}
 
               {/* body bubble */}
               <div className="rounded-lg bg-background px-3 py-2 text-xs leading-relaxed shadow-sm">
@@ -764,6 +787,10 @@ export default function ContentCreatePage() {
           </div>
         </aside>
       </div>
+
+      {message && (
+        <p className="text-sm text-red-500">{message}</p>
+      )}
     </div>
   );
 }

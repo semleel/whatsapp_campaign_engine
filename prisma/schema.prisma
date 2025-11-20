@@ -144,6 +144,8 @@ model campaignsession {
   contact           contact      @relation(fields: [contactid], references: [contactid], onDelete: NoAction, onUpdate: NoAction)
   message           message[]
   sessionlog        sessionlog[]
+
+  @@unique([contactid, campaignid], map: "unique_user_campaign")
 }
 
 model contact {
@@ -288,6 +290,7 @@ model tag {
   updatedat  DateTime     @default(now()) @db.Timestamptz(6)
   contenttag contenttag[]
 }
+
 
 model targetregion {
   regionid   Int        @id @default(autoincrement())

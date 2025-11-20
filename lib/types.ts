@@ -89,6 +89,45 @@ export interface ApiLogEntry {
     called_at: string;                 // ISO datetime string
 }
 
+// Delivery report row (message + latest deliverlog)
+export interface DeliveryReportRow {
+    messageid: number;
+    campaign: string | null;
+    contact: string | null;
+    status: string | null;
+    retrycount: number;
+    sentAt: string | null;
+    provider_msg_id: string | null;
+    error_message: string | null;
+}
+
+// Conversations (threads from message/history)
+export type ConversationStatus = "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELLED" | "EXPIRED";
+
+export interface ConversationMessage {
+    id: string | number;
+    author: "customer" | "agent";
+    text: string;
+    timestamp: string;
+}
+
+export interface ConversationThread {
+    contactId: number;
+    contactName: string;
+    phone: string;
+    status: ConversationStatus;
+    lastMessage: string;
+    updatedAt: string;
+    campaign?: string | null;
+    messages: ConversationMessage[];
+}
+
+export interface SendMessageResponse {
+    success: boolean;
+    provider_msg_id?: string | null;
+    details?: any;
+}
+
 // =============================================
 // Flow / content side (if you want types for UI later)
 // (Optional – you can add more as needed)
