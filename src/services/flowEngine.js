@@ -33,7 +33,7 @@ export async function findCampaignByKeyword(text) {
     where: {
       value: {
         equals: normalized,
-        mode: "insensitive",
+        mode: "insensitive", // "cny" / "CNY" / "Cny" all match
       },
     },
     orderBy: { keywordid: "asc" },

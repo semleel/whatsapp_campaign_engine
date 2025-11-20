@@ -1,3 +1,4 @@
+// src/routes/index.js
 import express from "express";
 
 import campaignRoutes from "./campaignRoutes.js";
