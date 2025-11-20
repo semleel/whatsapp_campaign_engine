@@ -9,6 +9,7 @@ interface Campaign {
   campaignid: number;
   campaignname: string;
   objective: string | null;
+  userflowname?: string | null;
   regionname?: string | null;
   currentstatus?: string | null;
   start_at?: string | null;
@@ -82,6 +83,7 @@ export default function ArchivedCampaignsPage() {
           <thead className="bg-muted/40">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
+              <th className="px-3 py-2 text-left font-medium">User flow</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Start</th>
@@ -92,7 +94,7 @@ export default function ArchivedCampaignsPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
                   Loading archived campaigns...
                 </td>
               </tr>
@@ -105,6 +107,7 @@ export default function ArchivedCampaignsPage() {
                       <div className="font-medium">{c.campaignname}</div>
                       <div className="text-xs text-muted-foreground">{c.objective || "—"}</div>
                     </td>
+                    <td className="px-3 py-2 text-muted-foreground">{c.userflowname || "N/A"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{c.regionname || "N/A"}</td>
                     <td className="px-3 py-2">
                       <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}>{c.currentstatus || "Archived"}</span>
@@ -124,7 +127,7 @@ export default function ArchivedCampaignsPage() {
               })
             ) : (
               <tr>
-                <td colSpan={6} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
                   No archived campaigns.
                 </td>
               </tr>

@@ -20,7 +20,7 @@ const parseNullableInt = (value) => {
 
 export async function createCampaign(req, res) {
   try {
-    const { campaignName, objective, targetRegionID, status, startAt, endAt } = req.body;
+    const { campaignName, objective, targetRegionID, userFlowID, status, startAt, endAt } = req.body;
 
     if (!campaignName) {
       return res.status(400).json({ error: "campaignName is required" });
@@ -30,6 +30,7 @@ export async function createCampaign(req, res) {
       campaignname: campaignName,
       objective: objective || null,
       targetregionid: parseNullableInt(targetRegionID),
+      userflowid: parseNullableInt(userFlowID),
       status: normalizeCampaignStatus(status, DEFAULT_STATUS),
       start_at: parseNullableDate(startAt),
       end_at: parseNullableDate(endAt),
@@ -49,6 +50,7 @@ export async function listCampaigns(_req, res) {
       where: { status: { not: "Archived" } },
       include: {
         targetregion: { select: { regionname: true } },
+        userflow: { select: { userflowname: true } },
       },
       orderBy: { campaignid: "desc" },
     });
@@ -58,6 +60,7 @@ export async function listCampaigns(_req, res) {
       campaignname: campaign.campaignname,
       objective: campaign.objective,
       regionname: campaign.targetregion?.regionname ?? "N/A",
+      userflowname: campaign.userflow?.userflowname ?? "N/A",
       currentstatus: campaign.status ?? "Unknown",
       status: campaign.status ?? "Unknown",
       camstatusid: statusToId(campaign.status),
@@ -78,6 +81,7 @@ export async function listArchivedCampaigns(_req, res) {
       where: { status: "Archived" },
       include: {
         targetregion: { select: { regionname: true } },
+        userflow: { select: { userflowname: true } },
       },
       orderBy: { campaignid: "desc" },
     });
@@ -87,6 +91,7 @@ export async function listArchivedCampaigns(_req, res) {
       campaignname: campaign.campaignname,
       objective: campaign.objective,
       regionname: campaign.targetregion?.regionname ?? "N/A",
+      userflowname: campaign.userflow?.userflowname ?? "N/A",
       currentstatus: campaign.status ?? "Archived",
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
@@ -111,6 +116,7 @@ export async function getCampaignById(req, res) {
       where: { campaignid: campaignID },
       include: {
         targetregion: true,
+        userflow: true,
       },
     });
 
@@ -139,6 +145,7 @@ export async function updateCampaign(req, res) {
       campaignName,
       objective,
       targetRegionID,
+      userFlowID,
       camStatusID,
       status,
       startAt,
@@ -184,6 +191,9 @@ export async function updateCampaign(req, res) {
     }
     if (typeof targetRegionID !== "undefined") {
       data.targetregionid = parseNullableInt(targetRegionID);
+    }
+    if (typeof userFlowID !== "undefined") {
+      data.userflowid = parseNullableInt(userFlowID);
     }
     if (typeof startAt !== "undefined") {
       data.start_at = parseNullableDate(startAt);
