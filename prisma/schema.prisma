@@ -104,7 +104,9 @@ model campaign {
   updatedat            DateTime?              @db.Timestamp(6)
   start_at             DateTime?              @db.Timestamp(6)
   end_at               DateTime?              @db.Timestamp(6)
+  contentkeyid         String?                @db.VarChar(100)
   api_log              api_log[]
+  keymapping           keymapping?            @relation(fields: [contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
   admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onDelete: NoAction, onUpdate: NoAction)
   targetregion         targetregion?          @relation(fields: [targetregionid], references: [regionid], onDelete: NoAction, onUpdate: NoAction)
   userflow             userflow?              @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
@@ -151,6 +153,8 @@ model contact {
   email           String?           @db.VarChar(255)
   regionid        Int?
   createdat       DateTime?         @default(now()) @db.Timestamp(6)
+  tos_accepted    Boolean?          @default(false)
+  lang            String?           @db.VarChar(5)
   api_log         api_log[]
   campaignsession campaignsession[]
   targetregion    targetregion?     @relation(fields: [regionid], references: [regionid], onDelete: NoAction, onUpdate: NoAction)
@@ -214,6 +218,7 @@ model keymapping {
   userflowid                                                                 Int?
   allowedinput                                                               allowedinput[]
   branchrule                                                                 branchrule[]
+  campaign                                                                   campaign[]
   campaign_api_mapping_campaign_api_mapping_contentkeyidTokeymapping         campaign_api_mapping[] @relation("campaign_api_mapping_contentkeyidTokeymapping")
   campaign_api_mapping_campaign_api_mapping_error_contentkeyidTokeymapping   campaign_api_mapping[] @relation("campaign_api_mapping_error_contentkeyidTokeymapping")
   campaign_api_mapping_campaign_api_mapping_success_contentkeyidTokeymapping campaign_api_mapping[] @relation("campaign_api_mapping_success_contentkeyidTokeymapping")
@@ -278,6 +283,9 @@ model sessiontoken {
 model tag {
   tagid      Int          @id @default(autoincrement())
   name       String       @unique @db.VarChar(50)
+  isdeleted  Boolean      @default(false)
+  createdat  DateTime     @default(now()) @db.Timestamptz(6)
+  updatedat  DateTime     @default(now()) @db.Timestamptz(6)
   contenttag contenttag[]
 }
 

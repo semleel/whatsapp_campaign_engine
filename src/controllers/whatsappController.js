@@ -1,3 +1,4 @@
+// src/controllers/whatsappController.js
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import prisma from "../config/prismaClient.js";
 import { log, error as logError } from "../utils/logger.js";
@@ -5,9 +6,11 @@ import { log, error as logError } from "../utils/logger.js";
 const describeMessage = (message) => {
   const contentType = message.type;
   if (contentType === "text") return message?.text?.body ?? "";
-  if (contentType === "image") return `[image] ${message?.image?.caption ?? ""}`.trim();
+  if (contentType === "image")
+    return `[image] ${message?.image?.caption ?? ""}`.trim();
   if (contentType === "sticker") return "[sticker]";
-  if (contentType === "interactive") return `[interactive:${message?.interactive?.type}]`;
+  if (contentType === "interactive")
+    return `[interactive:${message?.interactive?.type}]`;
   return `[${contentType}]`;
 };
 
@@ -15,7 +18,9 @@ export async function sendMessage(req, res) {
   const { to, message } = req.body;
 
   if (!to || !message || !message.type) {
-    return res.status(400).json({ error: "Missing or invalid 'to' or 'message' field" });
+    return res
+      .status(400)
+      .json({ error: "Missing or invalid 'to' or 'message' field" });
   }
 
   try {
@@ -45,7 +50,10 @@ export async function sendMessage(req, res) {
   } catch (err) {
     // Special case: account restricted
     if (err.name === "WhatsAppRestrictedError") {
-      logError("WhatsApp account is restricted, cannot send messages.", err.meta);
+      logError(
+        "WhatsApp account is restricted, cannot send messages.",
+        err.meta
+      );
       return res.status(503).json({
         error: "whatsapp_account_restricted",
         message:

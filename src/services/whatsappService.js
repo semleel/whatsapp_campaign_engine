@@ -1,3 +1,5 @@
+// src/services/whatsappService.js
+
 import axios from "axios";
 import config from "../config/index.js";
 import { log, error } from "../utils/logger.js";
@@ -8,8 +10,17 @@ export async function sendWhatsAppMessage(to, messageObj) {
 
     let normalized;
     if (typeof messageObj === "string") {
-      normalized = { type: "text", text: { body: messageObj } };
+      normalized = {
+        type: "text",
+        text: {
+          body: messageObj,
+          preview_url: true
+        }
+      };
     } else if (typeof messageObj === "object" && messageObj.type) {
+      if (messageObj.type === "text") {
+        messageObj.text.preview_url = messageObj.text.preview_url ?? true;
+      }
       normalized = messageObj;
     } else {
       throw new Error("Invalid message payload");

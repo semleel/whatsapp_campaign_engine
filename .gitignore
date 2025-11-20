@@ -23,7 +23,11 @@ yarn-error.log*
 .vscode/
 
 # logs
-/logs/*
+logs/*
 !logs/.gitkeep
-*.log
+logs/*.log
+logs/*.json
+logs/*.gz
+
+# prisma
 /src/generated/prisma
