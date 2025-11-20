@@ -1,5 +1,13 @@
 import prisma from "../config/prismaClient.js";
 
+export const SESSION_STATUS = {
+    ACTIVE: "ACTIVE",
+    PAUSED: "PAUSED",
+    COMPLETED: "COMPLETED",
+    EXPIRED: "EXPIRED",
+    CANCELLED: "CANCELLED",
+};
+
 /**
  * Find or create contact by phone number (phonenum should match DB format)
  */
@@ -53,6 +61,35 @@ async function getEntryContentKeyForCampaign(campaign) {
     return null;
 }
 
+export async function findCommandContentKeyForCampaign(campaign, command) {
+    if (!campaign?.userflowid || !command) return null;
+
+    const normalized = command.toLowerCase();
+
+    const keys = await prisma.keymapping.findMany({
+        where: { userflowid: campaign.userflowid },
+        include: { content: true },
+        orderBy: { contentkeyid: "asc" },
+        take: 100,
+    });
+
+    const match = keys.find((k) => {
+        const category = (k.content?.category || "").toLowerCase();
+        const title = (k.content?.title || "").toLowerCase();
+
+        return (
+            category === `command:${normalized}` ||
+            category === `command_${normalized}` ||
+            category === normalized ||
+            title === normalized ||
+            title === `command:${normalized}` ||
+            title === `command_${normalized}`
+        );
+    });
+
+    return match?.contentkeyid ?? null;
+}
+
 /**
  * Create or return existing campaign session for user + campaign.
  * Because of uniqueness on (contactid,campaignid) we provide upsert-like behaviour.
@@ -69,14 +106,18 @@ export async function findOrCreateSession(contactid, campaign) {
         orderBy: { createdat: "desc" },
     });
 
-    // If user previously cancelled, start a brand new session instance
-    if (existing && existing.sessionstatus === "CANCELLED") {
+    const needsNewInstance =
+        existing &&
+        [SESSION_STATUS.CANCELLED, SESSION_STATUS.COMPLETED].includes(existing.sessionstatus);
+
+    // Start a fresh session when user previously cancelled/completed
+    if (needsNewInstance) {
         return prisma.campaignsession.create({
             data: {
                 contactid: Number(contactid),
                 campaignid: Number(campaign.campaignid),
                 checkpoint: entryKey,
-                sessionstatus: "ACTIVE",
+                sessionstatus: SESSION_STATUS.ACTIVE,
                 lastactiveat: new Date(),
             },
         });
@@ -93,7 +134,7 @@ export async function findOrCreateSession(contactid, campaign) {
             contactid: Number(contactid),
             campaignid: Number(campaign.campaignid),
             checkpoint: entryKey,
-            sessionstatus: "ACTIVE",
+            sessionstatus: SESSION_STATUS.ACTIVE,
             lastactiveat: new Date(),
         },
     });
@@ -137,7 +178,7 @@ async function isTerminalNode(contentkeyid, userflowid) {
  * 5) update checkpoint
  *
  * Returns an object with:
- *  - action: "no_campaign" | "paused" | "completed" | "expired" | "moved"
+ *  - action: "no_campaign" | "paused" | "completed" | "moved"
  *  - reply?: string
  *  - reason?: string
  *  - sessionid?: number
@@ -152,45 +193,71 @@ export async function processIncomingMessage({ from, text }) {
     const contact = await findOrCreateContactByPhone(phonenum);
 
     // Check if message matches a campaign keyword
-    const campaign = await findCampaignByKeyword(messageText.toLowerCase());
+    let campaign = await findCampaignByKeyword(messageText.toLowerCase());
+    let session = null;
 
-    if (!campaign) {
-        return {
-            action: "no_campaign",
-            reply: null,
-            reason: "no keyword matched",
-        };
+    if (campaign) {
+        // find or create session for keyword-triggered campaign
+        session = await findOrCreateSession(contact.contactid, campaign);
+    } else {
+        // fallback: use most recent non-cancelled session
+        session = await prisma.campaignsession.findFirst({
+            where: {
+                contactid: Number(contact.contactid),
+                sessionstatus: { not: SESSION_STATUS.CANCELLED },
+            },
+            include: { campaign: true },
+            orderBy: [
+                { lastactiveat: "desc" },
+                { createdat: "desc" },
+            ],
+        });
+
+        if (!session || !session.campaign) {
+            return {
+                action: "no_campaign",
+                reply: null,
+                reason: "no keyword matched",
+            };
+        }
+
+        campaign = session.campaign;
     }
-
-    // find or create session
-    const session = await findOrCreateSession(contact.contactid, campaign);
 
     // ===== AUTO EXPIRY LOGIC (2 hours) =====
     const now = new Date();
     const lastActive = session.lastactiveat ? new Date(session.lastactiveat) : null;
 
     const EXPIRY_MS = 2 * 60 * 60 * 1000; // 2 hours
+    const shouldAutoExpire =
+        session.sessionstatus === SESSION_STATUS.ACTIVE &&
+        lastActive &&
+        now - lastActive > EXPIRY_MS;
 
-    if (lastActive && now - lastActive > EXPIRY_MS) {
-        // Mark expired
+    if (shouldAutoExpire) {
         await prisma.campaignsession.update({
             where: { campaignsessionid: session.campaignsessionid },
-            data: { sessionstatus: "EXPIRED" },
+            data: { sessionstatus: SESSION_STATUS.EXPIRED },
         });
-
-        return {
-            action: "expired",
-            reply:
-                "Hi! This chat session has ended.\n\nPlease reply with 'hi' to start a new conversation.",
-            sessionid: session.campaignsessionid,
-            campaignid: campaign.campaignid,
-            nextKey: null,
-        };
+        session.sessionstatus = SESSION_STATUS.EXPIRED;
     }
     // ===== END AUTO EXPIRY =====
 
-    // If paused — don't move forward
-    if (session.sessionstatus === "PAUSED") {
+    // If expired, automatically resume on inbound interaction
+    if (session.sessionstatus === SESSION_STATUS.EXPIRED) {
+        const resumed = await prisma.campaignsession.update({
+            where: { campaignsessionid: session.campaignsessionid },
+            data: {
+                sessionstatus: SESSION_STATUS.ACTIVE,
+                lastactiveat: new Date(),
+            },
+        });
+        session.sessionstatus = resumed.sessionstatus;
+        session.lastactiveat = resumed.lastactiveat;
+    }
+
+    // If paused – don't move forward
+    if (session.sessionstatus === SESSION_STATUS.PAUSED) {
         return {
             action: "paused",
             reply:
@@ -200,25 +267,13 @@ export async function processIncomingMessage({ from, text }) {
         };
     }
 
-    // If completed — don't move forward
-    if (session.sessionstatus === "COMPLETED") {
+    // If completed – don't move forward
+    if (session.sessionstatus === SESSION_STATUS.COMPLETED) {
         return {
             action: "completed",
             reply: "You have already completed this campaign.",
             sessionid: session.campaignsessionid,
             campaignid: campaign.campaignid,
-        };
-    }
-
-    // If already marked EXPIRED (e.g. by cron), also treat as expired
-    if (session.sessionstatus === "EXPIRED") {
-        return {
-            action: "expired",
-            reply:
-                "Hi! This chat session has ended.\n\nPlease reply with 'hi' to start a new conversation.",
-            sessionid: session.campaignsessionid,
-            campaignid: campaign.campaignid,
-            nextKey: null,
         };
     }
 
@@ -231,7 +286,10 @@ export async function processIncomingMessage({ from, text }) {
         const br = await prisma.branchrule.findFirst({
             where: {
                 triggerkey: checkpoint,
-                inputvalue: messageText,
+                inputvalue: {
+                    equals: messageText,
+                    mode: "insensitive",
+                },
                 userflowid: campaign.userflowid ?? undefined,
             },
             orderBy: { priority: "asc" },
@@ -267,7 +325,9 @@ export async function processIncomingMessage({ from, text }) {
             data: {
                 checkpoint: nextKey,
                 lastactiveat: new Date(),
-                sessionstatus: nextKeyIsTerminal ? "COMPLETED" : session.sessionstatus,
+                sessionstatus: nextKeyIsTerminal
+                    ? SESSION_STATUS.COMPLETED
+                    : session.sessionstatus,
             },
         });
     } else {
