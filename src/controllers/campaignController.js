@@ -51,6 +51,12 @@ export async function listCampaigns(_req, res) {
       include: {
         targetregion: { select: { regionname: true } },
         userflow: { select: { userflowname: true } },
+        keyword: { select: { keywordid: true } },
+        keymapping: {
+          select: {
+            content: { select: { contentid: true, isdeleted: true } },
+          },
+        },
       },
       orderBy: { campaignid: "desc" },
     });
@@ -66,6 +72,11 @@ export async function listCampaigns(_req, res) {
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
+      hasKeyword: (campaign.keyword?.length ?? 0) > 0,
+      hasTemplate:
+        Boolean(campaign.contentkeyid) &&
+        Boolean(campaign.keymapping?.content?.contentid) &&
+        !campaign.keymapping?.content?.isdeleted,
     }));
 
     return res.status(200).json(formatted);
