@@ -4,10 +4,8 @@ import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
 import {
-  processIncomingMessage, findOrCreateSession,
-  findOrCreateContactByPhone,
-  findCommandContentKeyForCampaign,
-  SESSION_STATUS,
+  processIncomingMessage,
+  findOrCreateSession,
 } from "../services/flowEngine.js";
 
 /**
@@ -17,8 +15,8 @@ const buildWhatsappMenuList = async () => {
   const campaigns = await prisma.campaign.findMany({
     where: {
       status: "Active",
-      keyword: { some: {} },         // at least 1 keyword
-      contentkeyid: { not: null },   // has an entry content key
+      keyword: { some: {} },       // at least 1 keyword
+      contentkeyid: { not: null }, // has an entry content key
     },
     select: {
       campaignid: true,
@@ -61,7 +59,7 @@ const buildWhatsappMenuList = async () => {
   }
 
   const rows = launchableCampaigns.map((c) => ({
-    id: `campaign_${c.campaignid}`,           // used in list_reply handler
+    id: `campaign_${c.campaignid}`, // used in list_reply handler
     title: c.campaignname.slice(0, 24),
   }));
 
@@ -109,95 +107,6 @@ export async function verifyWebhook(req, res) {
   }
   error("Webhook verification failed");
   return res.sendStatus(403);
-}
-
-async function handleJoinCommand(from) {
-  const phonenum = (from || "").trim();
-  if (!phonenum) {
-    const replyText = KEYWORD_FALLBACK_MESSAGE;
-    return {
-      replyText,
-      replyMessageObj: { type: "text", text: { body: replyText } },
-      sessionid: null,
-      campaignid: null,
-      contentkeyid: null,
-    };
-  }
-
-  const contact = await findOrCreateContactByPhone(phonenum);
-
-  const session = await prisma.campaignsession.findFirst({
-    where: {
-      contactid: Number(contact.contactid),
-      sessionstatus: { not: SESSION_STATUS.CANCELLED },
-    },
-    include: { campaign: true },
-    orderBy: [
-      { lastactiveat: "desc" },
-      { createdat: "desc" },
-    ],
-  });
-
-  if (!session) {
-    const replyText =
-      "We couldn't find an active campaign. Please send a campaign keyword to start first.";
-    return {
-      replyText,
-      replyMessageObj: { type: "text", text: { body: replyText } },
-      sessionid: null,
-      campaignid: null,
-      contentkeyid: null,
-    };
-  }
-
-  const joinKey = session.campaign
-    ? await findCommandContentKeyForCampaign(session.campaign, "join")
-    : null;
-
-  let replyText =
-    "You have successfully joined the campaign. Please wait for further updates.";
-  let replyMessageObj = { type: "text", text: { body: replyText } };
-  let contentkeyid = null;
-
-  if (joinKey) {
-    const km = await prisma.keymapping.findUnique({
-      where: { contentkeyid: joinKey },
-      include: { content: true },
-    });
-    if (km?.content) {
-      const built = buildWhatsappMessageFromContent(km.content);
-      replyText = built.replyText;
-      replyMessageObj = built.message;
-    }
-    contentkeyid = joinKey;
-  }
-
-  const updated = await prisma.campaignsession.update({
-    where: { campaignsessionid: session.campaignsessionid },
-    data: {
-      checkpoint: joinKey ?? session.checkpoint,
-      sessionstatus: SESSION_STATUS.ACTIVE,
-      lastactiveat: new Date(),
-    },
-  });
-
-  await prisma.sessionlog.create({
-    data: {
-      campaignsessionid: session.campaignsessionid,
-      contentkeyid: joinKey ?? session.checkpoint ?? null,
-      detail: joinKey
-        ? `JOIN command routed to ${joinKey}`
-        : "JOIN command received (no command key configured).",
-    },
-  });
-
-  return {
-    replyText,
-    replyMessageObj,
-    sessionid: updated.campaignsessionid,
-    campaignid: updated.campaignid,
-    contentkeyid,
-  };
 }
 
 /**
@@ -473,7 +382,7 @@ async function buildGlobalFallbackBundle(contact) {
 }
 
 /**
- * Map WA status callbacks (sent/delivered/read) onto your message table
+ * Map WA status callbacks (sent/delivered/read) onto your message & deliverlog tables
  */
 const upsertStatus = async (statusPayload) => {
   const providerId = statusPayload?.id || "";
@@ -1066,8 +975,10 @@ export async function webhookHandler(req, res) {
         extraReplies = extra || [];
         linkSessionId = sessionid || null;
         linkCampaignId = campaignid || null;
-      } else if (message.type === "interactive" && message.interactive?.type === "list_reply") {
-
+      } else if (
+        message.type === "interactive" &&
+        message.interactive?.type === "list_reply"
+      ) {
         const list = message.interactive.list_reply;
         const rowId = list?.id || "";
 
@@ -1148,8 +1059,10 @@ export async function webhookHandler(req, res) {
             }
           }
         }
-      }
-      else if (message.type === "interactive" && message.interactive?.type === "button_reply") {
+      } else if (
+        message.type === "interactive" &&
+        message.interactive?.type === "button_reply"
+      ) {
         const btn = message.interactive.button_reply;
         const btnId = btn?.id || "";
 
@@ -1255,5 +1168,102 @@ export async function webhookHandler(req, res) {
   } catch (err) {
     error("Error in webhook handler:", err);
     return res.sendStatus(500);
+  }
+}
+
+/**
+ * Admin helper: list campaigns with launchability info
+ *   - launchable: Active + has keyword + has entry content (via campaign.contentkeyid)
+ */
+export async function debugCampaignConfig(req, res) {
+  try {
+    const campaigns = await prisma.campaign.findMany({
+      select: {
+        campaignid: true,
+        campaignname: true,
+        status: true,
+        contentkeyid: true,
+        userflowid: true,
+        keyword: {
+          select: { value: true },
+        },
+        keymapping: {
+          select: {
+            content: {
+              select: {
+                contentid: true,
+                title: true,
+                status: true,
+                isdeleted: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { campaignid: "asc" },
+    });
+
+    const result = campaigns.map((c) => {
+      const content = c.keymapping?.content || null;
+      const issues = [];
+
+      if (!c.keyword || c.keyword.length === 0) {
+        issues.push("MISSING_KEYWORD");
+      }
+      if (!c.contentkeyid) {
+        issues.push("MISSING_ENTRY_KEY");
+      }
+      if (!content) {
+        issues.push("MISSING_ENTRY_CONTENT");
+      }
+      if (content?.isdeleted) {
+        issues.push("ENTRY_CONTENT_DELETED");
+      }
+
+      const contentStatus = (content?.status || "").toLowerCase();
+      if (contentStatus === "draft") {
+        issues.push("ENTRY_CONTENT_DRAFT");
+      }
+
+      const isLaunchable =
+        c.status === "Active" &&
+        (!issues.includes("MISSING_KEYWORD")) &&
+        (!issues.includes("MISSING_ENTRY_KEY")) &&
+        (!issues.includes("MISSING_ENTRY_CONTENT")) &&
+        (!issues.includes("ENTRY_CONTENT_DELETED"));
+
+      return {
+        id: c.campaignid,
+        name: c.campaignname,
+        status: c.status,
+        userflowid: c.userflowid,
+        contentkeyid: c.contentkeyid,
+        keywords: c.keyword.map((k) => k.value),
+        entryContent: content
+          ? {
+            contentid: content.contentid,
+            title: content.title,
+            status: content.status,
+            isdeleted: content.isdeleted,
+          }
+          : null,
+        launchable: isLaunchable,
+        issues,
+      };
+    });
+
+    const summary = {
+      total: result.length,
+      active: result.filter((c) => c.status === "Active").length,
+      launchable: result.filter((c) => c.launchable).length,
+      misconfigured: result.filter((c) => !c.launchable).length,
+    };
+
+    return res.status(200).json({ summary, campaigns: result });
+  } catch (err) {
+    error("debugCampaignConfig error:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to load campaign config for debug" });
   }
 }
