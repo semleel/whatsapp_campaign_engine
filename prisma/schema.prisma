@@ -82,14 +82,16 @@ model apiparameter {
 }
 
 model branchrule {
-  branchruleid Int        @id @default(autoincrement())
-  triggerkey   String     @db.VarChar(100)
-  inputvalue   String     @db.VarChar(100)
-  nextkey      String     @db.VarChar(100)
-  priority     Int?       @default(1)
-  userflowid   Int?
-  keymapping   keymapping @relation(fields: [triggerkey], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  userflow     userflow?  @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  branchruleid                                  Int        @id @default(autoincrement())
+  triggerkey                                    String     @db.VarChar(100)
+  inputvalue                                    String     @db.VarChar(100)
+  nextkey                                       String     @db.VarChar(100)
+  priority                                      Int?       @default(1)
+  userflowid                                    Int?
+  next_userflowid                               Int?
+  userflow_branchrule_next_userflowidTouserflow userflow?  @relation("branchrule_next_userflowidTouserflow", fields: [next_userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  keymapping                                    keymapping @relation(fields: [triggerkey], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
+  userflow                                      userflow?  @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model campaign {
@@ -132,20 +134,20 @@ model campaign_api_mapping {
 }
 
 model campaignsession {
-  campaignsessionid Int          @id @default(autoincrement())
-  contactid         Int
-  campaignid        Int
-  checkpoint        String?      @db.VarChar(100)
-  sessionstatus     String?      @default("ACTIVE") @db.VarChar(20)
-  createdat         DateTime?    @default(now()) @db.Timestamp(6)
-  lastactiveat      DateTime?    @db.Timestamp(6)
-  api_log           api_log[]
-  campaign          campaign     @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
-  contact           contact      @relation(fields: [contactid], references: [contactid], onDelete: NoAction, onUpdate: NoAction)
-  message           message[]
-  sessionlog        sessionlog[]
-
-  @@unique([contactid, campaignid], map: "unique_user_campaign")
+  campaignsessionid  Int          @id @default(autoincrement())
+  contactid          Int
+  campaignid         Int
+  checkpoint         String?      @db.VarChar(100)
+  sessionstatus      String?      @default("ACTIVE") @db.VarChar(20)
+  createdat          DateTime?    @default(now()) @db.Timestamp(6)
+  lastactiveat       DateTime?    @db.Timestamp(6)
+  current_userflowid Int?
+  api_log            api_log[]
+  campaign           campaign     @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
+  contact            contact      @relation(fields: [contactid], references: [contactid], onDelete: NoAction, onUpdate: NoAction)
+  userflow           userflow?    @relation(fields: [current_userflowid], references: [userflowid], onDelete: Restrict, onUpdate: NoAction)
+  message            message[]
+  sessionlog         sessionlog[]
 }
 
 model contact {
@@ -291,7 +293,6 @@ model tag {
   contenttag contenttag[]
 }
 
-
 model targetregion {
   regionid   Int        @id @default(autoincrement())
   regionname String     @db.VarChar(100)
@@ -311,13 +312,15 @@ model token_log {
 }
 
 model userflow {
-  userflowid   Int            @id @default(autoincrement())
-  userflowname String         @db.VarChar(100)
-  allowedinput allowedinput[]
-  branchrule   branchrule[]
-  campaign     campaign[]
-  fallback     fallback[]
-  keymapping   keymapping[]
+  userflowid                                      Int               @id @default(autoincrement())
+  userflowname                                    String            @db.VarChar(100)
+  allowedinput                                    allowedinput[]
+  branchrule_branchrule_next_userflowidTouserflow branchrule[]      @relation("branchrule_next_userflowidTouserflow")
+  branchrule                                      branchrule[]
+  campaign                                        campaign[]
+  campaignsession                                 campaignsession[]
+  fallback                                        fallback[]
+  keymapping                                      keymapping[]
 }
 
 model whatsapp_config {
