@@ -89,6 +89,18 @@ export interface ApiLogEntry {
     called_at: string;                 // ISO datetime string
 }
 
+// Delivery report row (message + latest deliverlog)
+export interface DeliveryReportRow {
+    messageid: number;
+    campaign: string | null;
+    contact: string | null;
+    status: string | null;
+    retrycount: number;
+    sentAt: string | null;
+    provider_msg_id: string | null;
+    error_message: string | null;
+}
+
 // =============================================
 // Flow / content side (if you want types for UI later)
 // (Optional – you can add more as needed)

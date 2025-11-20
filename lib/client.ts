@@ -66,6 +66,7 @@ import type {
   FlowUpdatePayload,
   CampaignSession
 } from "./types";
+import type { DeliveryReportRow } from "./types";
 
 // ------------------------------------------------------------------
 // API client
@@ -233,6 +234,12 @@ export const Api = {
 
   listLogs: (limit = 100) =>
     http<ApiLogEntry[]>(`/api/integration/logs?limit=${limit}`),
+
+  // =========================================================
+  // Reports
+  // =========================================================
+  listDeliveryReport: (limit = 200) =>
+    http<DeliveryReportRow[]>(`/api/report/delivery?limit=${limit}`),
 
   // =========================================================
   // System -> WhatsApp Integration (whatsapp_config)
