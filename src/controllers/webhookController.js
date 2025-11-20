@@ -2,7 +2,12 @@ import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
-import { processIncomingMessage } from "../services/flowEngine.js";
+import {
+  processIncomingMessage,
+  findOrCreateContactByPhone,
+  findCommandContentKeyForCampaign,
+  SESSION_STATUS,
+} from "../services/flowEngine.js";
 
 const KEYWORD_FALLBACK_MESSAGE =
   process.env.KEYWORD_FALLBACK_MESSAGE ||
@@ -77,6 +82,95 @@ export async function verifyWebhook(req, res) {
   }
   error("Webhook verification failed");
   return res.sendStatus(403);
+}
+
+async function handleJoinCommand(from) {
+  const phonenum = (from || "").trim();
+  if (!phonenum) {
+    const replyText = KEYWORD_FALLBACK_MESSAGE;
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  const contact = await findOrCreateContactByPhone(phonenum);
+
+  const session = await prisma.campaignsession.findFirst({
+    where: {
+      contactid: Number(contact.contactid),
+      sessionstatus: { not: SESSION_STATUS.CANCELLED },
+    },
+    include: { campaign: true },
+    orderBy: [
+      { lastactiveat: "desc" },
+      { createdat: "desc" },
+    ],
+  });
+
+  if (!session) {
+    const replyText =
+      "We couldn't find an active campaign. Please send a campaign keyword to start first.";
+    return {
+      replyText,
+      replyMessageObj: { type: "text", text: { body: replyText } },
+      sessionid: null,
+      campaignid: null,
+      contentkeyid: null,
+    };
+  }
+
+  const joinKey = session.campaign
+    ? await findCommandContentKeyForCampaign(session.campaign, "join")
+    : null;
+
+  let replyText =
+    "You have successfully joined the campaign. Please wait for further updates.";
+  let replyMessageObj = { type: "text", text: { body: replyText } };
+  let contentkeyid = null;
+
+  if (joinKey) {
+    const km = await prisma.keymapping.findUnique({
+      where: { contentkeyid: joinKey },
+      include: { content: true },
+    });
+    if (km?.content) {
+      const built = buildWhatsappMessageFromContent(km.content);
+      replyText = built.replyText;
+      replyMessageObj = built.message;
+    }
+    contentkeyid = joinKey;
+  }
+
+  const updated = await prisma.campaignsession.update({
+    where: { campaignsessionid: session.campaignsessionid },
+    data: {
+      checkpoint: joinKey ?? session.checkpoint,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      lastactiveat: new Date(),
+    },
+  });
+
+  await prisma.sessionlog.create({
+    data: {
+      campaignsessionid: session.campaignsessionid,
+      contentkeyid: joinKey ?? session.checkpoint ?? null,
+      detail: joinKey
+        ? `JOIN command routed to ${joinKey}`
+        : "JOIN command received (no command key configured).",
+    },
+  });
+
+  return {
+    replyText,
+    replyMessageObj,
+    sessionid: updated.campaignsessionid,
+    campaignid: updated.campaignid,
+    contentkeyid,
+  };
 }
 
 /**
@@ -254,13 +348,27 @@ const upsertStatus = async (statusPayload) => {
   const tsIso = statusPayload?.timestamp
     ? new Date(parseInt(statusPayload.timestamp, 10) * 1000)
     : new Date();
-  await prisma.message.updateMany({
-    where: { provider_msg_id: providerId },
-    data: {
-      message_status: (statusPayload?.status || "unknown").toLowerCase(),
-      timestamp: tsIso,
-    },
-  });
+  const status = (statusPayload?.status || "unknown").toLowerCase();
+  const errorMsg = statusPayload?.errors?.[0]?.title || null;
+
+  await Promise.all([
+    prisma.message.updateMany({
+      where: { provider_msg_id: providerId },
+      data: {
+        message_status: status,
+        timestamp: tsIso,
+        error_message: errorMsg,
+      },
+    }),
+    prisma.deliverlog.updateMany({
+      where: { provider_msg_id: providerId },
+      data: {
+        deliverstatus: status,
+        lastattemptat: tsIso,
+        error_message: errorMsg,
+      },
+    }),
+  ]);
 };
 
 /**
@@ -302,17 +410,8 @@ async function handleFlowOrKeyword({ from, text }) {
     };
   }
 
-  // Special command: JOIN (simple static response for now)
   if (normalizedLower === "join") {
-    const replyText =
-      "You have successfully joined the campaign. Please wait for further updates.";
-    return {
-      replyText,
-      replyMessageObj: { type: "text", text: { body: replyText } },
-      sessionid: null,
-      campaignid: null,
-      contentkeyid: null,
-    };
+    return handleJoinCommand(from);
   }
 
   // Hand off to flow engine
@@ -350,18 +449,6 @@ async function handleFlowOrKeyword({ from, text }) {
         replyMessageObj: { type: "text", text: { body: replyText } },
         sessionid: flow.sessionid || null,
         campaignid: flow.campaignid || null,
-        contentkeyid: null,
-      };
-    }
-
-    // Session expired (2h or cron)
-    if (flow.action === "expired") {
-      const replyText = flow.reply;
-      return {
-        replyText,
-        replyMessageObj: { type: "text", text: { body: replyText } },
-        sessionid: flow.sessionid,
-        campaignid: flow.campaignid,
         contentkeyid: null,
       };
     }
@@ -624,12 +711,29 @@ export async function webhookHandler(req, res) {
       }
 
       // -----------------------------
-      // Send reply via WhatsApp API
+      // Record outbound reply + send via WhatsApp API
       // -----------------------------
-      let providerId = null;
+      let outboundMessage = null;
       try {
-        const sendRes = await sendWhatsAppMessage(from, replyMessageObj);
-        providerId = sendRes?.messages?.[0]?.id ?? null;
+        outboundMessage = await prisma.message.create({
+          data: {
+            direction: "outbound",
+            content_type: replyMessageObj.type,
+            message_content: replyText ?? "[interactive message]",
+            senderid: waDisplayPhone,
+            receiverid: from,
+            provider_msg_id: null,
+            timestamp: new Date(),
+            message_status: "pending",
+            contactid: contact?.contactid ?? null,
+            campaignsessionid: linkSessionId,
+            campaignid: linkCampaignId,
+            contentkeyid: linkContentKeyId,
+            payload_json: JSON.stringify(replyMessageObj),
+          },
+        });
+
+        await sendWhatsAppMessage(from, replyMessageObj, outboundMessage);
         log(`Reply sent to: ${from}`);
       } catch (sendErr) {
         if (sendErr.name === "WhatsAppRestrictedError") {
@@ -641,26 +745,6 @@ export async function webhookHandler(req, res) {
           );
         }
       }
-
-      // -----------------------------
-      // Record outbound reply
-      // -----------------------------
-      await prisma.message.create({
-        data: {
-          direction: "outbound",
-          content_type: replyMessageObj.type,
-          message_content: replyText ?? "[interactive message]",
-          senderid: waDisplayPhone,
-          receiverid: from,
-          provider_msg_id: providerId,
-          timestamp: new Date(),
-          message_status: providerId ? "sent" : "error",
-          contactid: contact?.contactid ?? null,
-          campaignsessionid: linkSessionId,
-          campaignid: linkCampaignId,
-          contentkeyid: linkContentKeyId,
-        },
-      });
 
       log(`Reply recorded for: ${from}`);
     }

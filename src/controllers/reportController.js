@@ -1,6 +1,6 @@
 import prisma from "../config/prismaClient.js";
 
-// Return recent outbound messages + latest delivery attempt.
+// Return recent deliverylog entries (primary source), enriched with message/contact/campaign.
 export async function listDeliveryReport(req, res) {
   try {
     const limit = Math.min(
@@ -8,33 +8,32 @@ export async function listDeliveryReport(req, res) {
       500
     );
 
-    const rows = await prisma.message.findMany({
-      where: { direction: "outbound" },
-      orderBy: { timestamp: "desc" },
+    const rows = await prisma.deliverlog.findMany({
+      orderBy: { createdat: "desc" },
       take: limit,
       include: {
-        campaign: { select: { campaignname: true } },
-        contact: { select: { phonenum: true } },
-        deliverlog: {
-          orderBy: { createdat: "desc" },
-          take: 1,
+        message: {
+          select: {
+            messageid: true,
+            campaign: { select: { campaignname: true } },
+            contact: { select: { phonenum: true } },
+            provider_msg_id: true,
+            error_message: true,
+          },
         },
       },
     });
 
-    const data = rows.map((m) => {
-      const latest = (m.deliverlog || [])[0] || null;
-      return {
-        messageid: m.messageid,
-        campaign: m.campaign?.campaignname ?? null,
-        contact: m.contact?.phonenum ?? null,
-        status: latest?.deliverstatus ?? m.message_status ?? "pending",
-        retrycount: latest?.retrycount ?? 0,
-        sentAt: m.timestamp,
-        provider_msg_id: latest?.provider_msg_id ?? m.provider_msg_id ?? null,
-        error_message: latest?.error_message ?? m.error_message ?? null,
-      };
-    });
+    const data = rows.map((d) => ({
+      messageid: d.message?.messageid ?? d.messageid,
+      campaign: d.message?.campaign?.campaignname ?? null,
+      contact: d.message?.contact?.phonenum ?? null,
+      status: d.deliverstatus ?? "pending",
+      retrycount: d.retrycount ?? 0,
+      sentAt: d.lastattemptat ?? d.createdat ?? null,
+      provider_msg_id: d.provider_msg_id ?? d.message?.provider_msg_id ?? null,
+      error_message: d.error_message ?? d.message?.error_message ?? null,
+    }));
 
     return res.status(200).json(data);
   } catch (err) {

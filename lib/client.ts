@@ -66,7 +66,7 @@ import type {
   FlowUpdatePayload,
   CampaignSession
 } from "./types";
-import type { DeliveryReportRow } from "./types";
+import type { DeliveryReportRow, ConversationThread } from "./types";
 
 // ------------------------------------------------------------------
 // API client
@@ -240,6 +240,18 @@ export const Api = {
   // =========================================================
   listDeliveryReport: (limit = 200) =>
     http<DeliveryReportRow[]>(`/api/report/delivery?limit=${limit}`),
+
+  // Conversations
+  listConversations: (limit = 100) =>
+    http<ConversationThread[]>(`/api/conversation/list?limit=${limit}`),
+  sendConversationMessage: (to: string, text: string) =>
+    http("/api/wa/send", {
+      method: "POST",
+      body: JSON.stringify({
+        to,
+        message: { type: "text", text: { body: text } },
+      }),
+    }),
 
   // =========================================================
   // System -> WhatsApp Integration (whatsapp_config)

@@ -101,6 +101,33 @@ export interface DeliveryReportRow {
     error_message: string | null;
 }
 
+// Conversations (threads from message/history)
+export type ConversationStatus = "ACTIVE" | "PAUSED" | "COMPLETED" | "CANCELLED" | "EXPIRED";
+
+export interface ConversationMessage {
+    id: string | number;
+    author: "customer" | "agent";
+    text: string;
+    timestamp: string;
+}
+
+export interface ConversationThread {
+    contactId: number;
+    contactName: string;
+    phone: string;
+    status: ConversationStatus;
+    lastMessage: string;
+    updatedAt: string;
+    campaign?: string | null;
+    messages: ConversationMessage[];
+}
+
+export interface SendMessageResponse {
+    success: boolean;
+    provider_msg_id?: string | null;
+    details?: any;
+}
+
 // =============================================
 // Flow / content side (if you want types for UI later)
 // (Optional – you can add more as needed)
