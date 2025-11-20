@@ -225,7 +225,6 @@ export interface CampaignListItem {
     campaignname: string;
     objective: string | null;
     regionname: string;
-    userflowname: string;
     currentstatus: string;
     status: string;
     camstatusid: number | null;
@@ -238,7 +237,6 @@ export interface CampaignDetail {
     campaignname: string;
     objective: string | null;
     targetregionid: number | null;
-    userflowid: number | null;
     status: string | null;
     start_at: string | null;
     end_at: string | null;
@@ -251,7 +249,6 @@ export type CampaignCreatePayload = {
     campaignName: string;
     objective?: string | null;
     targetRegionID?: string | number | null;
-    userFlowID?: string | number | null;
     status?: string | null;
     startAt?: string | null;
     endAt?: string | null;
@@ -261,7 +258,6 @@ export type CampaignUpdatePayload = {
     campaignName?: string;
     objective?: string | null;
     targetRegionID?: string | number | null;
-    userFlowID?: string | number | null;
     camStatusID?: string | number | null;
     status?: string | null;
     startAt?: string | null;
