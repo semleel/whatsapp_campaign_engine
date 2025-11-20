@@ -171,26 +171,22 @@ export async function updateTemplate(req, res) {
   }
 }
 
-export async function deleteTemplate(req, res) {
+export async function softDeleteTemplate(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: "Invalid template id" });
     }
 
     await prisma.content.update({
       where: { contentid: id },
-      data: {
-        isdeleted: true,
-      },
+      data: { isdeleted: true, updatedat: new Date() },
     });
 
-    return res.status(200).json({ message: "Template deleted" });
+    return res.status(200).json({ message: "Template archived (soft deleted)" });
   } catch (err) {
-    console.error("Template delete error:", err);
-    if (err.code === "P2025") {
-      return res.status(404).json({ error: "Template not found" });
-    }
+    console.error("Soft delete error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

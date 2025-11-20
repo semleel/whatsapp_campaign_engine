@@ -1,10 +1,10 @@
 "use client";
 
+import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
 import { showCenteredAlert } from "@/lib/showAlert";
-import TagSelector from "@/components/TagSelector";
+import TagSelector from "../../../../components/TagSelector";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
@@ -68,7 +68,7 @@ type TemplateForm = {
   body: string;
   description: string;
   mediaurl: string; // URL only
-  tags: string[];   // now an array, same as edit page
+  tags: string[];
   expiresat: string;
 
   headerType: "none" | "text" | "media";
@@ -82,9 +82,6 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
-export default function ContentCreatePage() {
-  const router = useRouter();
-  const [form, setForm] = useState<TemplateForm>({
 // Initial form factory so we can reuse it
 function createEmptyForm(): TemplateForm {
   return {
@@ -109,7 +106,7 @@ function createEmptyForm(): TemplateForm {
 export default function ContentCreatePage() {
   const router = useRouter();
 
-  const [form, setForm] = useState<TemplateForm>(createEmptyForm);
+  const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -202,7 +199,7 @@ export default function ContentCreatePage() {
         placeholders: placeholderData,
       };
 
-      const res = await fetch("http://localhost:3000/api/template/create", {
+      const res = await fetch(`${API_BASE}/api/template/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -219,7 +216,7 @@ export default function ContentCreatePage() {
         // tags -> join table
         const tags = form.tags;
         if (contentId && tags.length) {
-          await fetch(`http://localhost:3000/api/template/${contentId}/tags`, {
+          await fetch(`${API_BASE}/api/template/${contentId}/tags`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ tags }),
@@ -229,51 +226,32 @@ export default function ContentCreatePage() {
         // expiry -> dedicated endpoint
         if (contentId && form.expiresat) {
           const iso = new Date(form.expiresat).toISOString();
-          await fetch(
-            `http://localhost:3000/api/template/${contentId}/expire`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ expiresAt: iso }),
-            }
-          );
+          await fetch(`${API_BASE}/api/template/${contentId}/expire`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ expiresAt: iso }),
+          });
         }
 
-        setForm({
-          title: "",
-          type: "message",
-          category: "",
-          status: "Draft",
-          lang: "en",
-          body: "",
-          description: "",
-          mediaurl: "",
-          tags: "",
-          expiresat: "",
-          headerType: "none",
-          headerMediaType: "image",
-          headerText: "",
-          footerText: "",
-          buttons: [],
-        });
-        setHeaderSampleFile(null);
-        setHeaderSamplePreview(null);
-        setHeaderFileError(null);
-        setHeaderInputKey((k) => k + 1); // reset file input after submit
-        router.push(
-          `/content/templates?notice=${encodeURIComponent("Template created successfully.")}`
-        );
-        setMessage(null);
+        // reset form
+        setForm(createEmptyForm());
         setShowSuccess(true);
+        setMessage(null);
+
+        // optional: auto-redirect handled by overlay button
+        router.push(
+          `/content/templates?notice=${encodeURIComponent(
+            "Template created successfully."
+          )}`
+        );
       } else {
         const msg =
           typeof data === "string"
             ? data
-            : (data as any)?.error || "Unknown error";
-        await showCenteredAlert(`Error: ${msg}`);
             : (data as any)?.error ||
             (data as any)?.message ||
             "Unknown error";
+        await showCenteredAlert(`Error: ${msg}`);
         console.error("Create template error:", msg, data);
         setMessage(`Error: ${msg}`);
       }
@@ -305,6 +283,10 @@ export default function ContentCreatePage() {
               <button
                 type="button"
                 className="flex-1 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+                onClick={() => {
+                  setShowSuccess(false);
+                  setForm(createEmptyForm());
+                }}
               >
                 Continue creating
               </button>
@@ -454,17 +436,17 @@ export default function ContentCreatePage() {
             </div>
           </div>
 
-          {/* TAGS – Wati-style picker (reuses edit-page design) */}
+          {/* TAGS – Wati-style picker */}
           <div className="border-t pt-4 space-y-2">
             <h4 className="font-semibold text-sm">Tags</h4>
             <p className="text-xs text-muted-foreground">
-              Use tags to group similar templates. Start typing to search and select
-              from your existing tags.
+              Use tags to group similar templates. Start typing to search and
+              select from your existing tags.
             </p>
 
             <TagSelector
               selected={form.tags}
-              onChange={(tags) =>
+              onChange={(tags: string[]) =>
                 setForm((prev) => ({
                   ...prev,
                   tags,
@@ -472,9 +454,10 @@ export default function ContentCreatePage() {
               }
               apiBase={API_BASE}
             />
+
           </div>
 
-          {/* EXPIRY – immediately under tags */}
+          {/* EXPIRY */}
           <div className="border-t pt-4 space-y-2">
             <h4 className="font-semibold text-sm">Expiry</h4>
             <input
