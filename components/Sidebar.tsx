@@ -1,25 +1,93 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import SidebarSection from "./SidebarSection";
 import { MENU } from "@/lib/menuConfig";
 import { getStoredAdmin } from "@/lib/auth";
+import { Api } from "@/lib/client";
 
 export default function Sidebar() {
   const pathname = usePathname() || "/";
+  const router = useRouter();
   const [role, setRole] = useState<string | null>(null);
+  const [allowedSections, setAllowedSections] = useState<Set<string>>(new Set());
+  const [accessReady, setAccessReady] = useState(false);
+
+  async function refreshAccess() {
+    const admin = getStoredAdmin();
+    setRole(admin?.role || null);
+    if (admin?.id) {
+      try {
+        const res = await Api.getPrivileges(admin.id);
+        const allowed = new Set<string>();
+        Object.entries(res.privileges || {}).forEach(([resource, flags]) => {
+          if (flags && (flags as any).view) {
+            allowed.add(resource);
+          }
+        });
+        setAllowedSections(allowed);
+      } catch {
+        setAllowedSections(new Set());
+      }
+    } else {
+      setAllowedSections(new Set());
+    }
+    setAccessReady(true);
+  }
 
   useEffect(() => {
-    const admin = getStoredAdmin();
-    if (admin?.role) setRole(admin.role);
+    refreshAccess();
+  }, [pathname]);
+
+  useEffect(() => {
+    const handleExternalChange = () => refreshAccess();
+    window.addEventListener("storage", handleExternalChange);
+    window.addEventListener("focus", handleExternalChange);
+    window.addEventListener("auth-changed", handleExternalChange as EventListener);
+    window.addEventListener("privileges-changed", handleExternalChange as EventListener);
+    return () => {
+      window.removeEventListener("storage", handleExternalChange);
+      window.removeEventListener("focus", handleExternalChange);
+      window.removeEventListener("auth-changed", handleExternalChange as EventListener);
+      window.removeEventListener("privileges-changed", handleExternalChange as EventListener);
+    };
   }, []);
 
   const isStaff = (role || "").toLowerCase() === "staff";
-  const filteredMenu = isStaff
-    ? MENU.filter((section) => section.id !== "system" && section.id !== "reports")
-    : MENU;
+  const filteredMenu = useMemo(() => {
+    if (!isStaff) return MENU;
+    if (!accessReady) return [];
+    return MENU.filter((section) => allowedSections.has(section.id));
+  }, [isStaff, accessReady, allowedSections]);
+
+  // Derive the section id for the current path
+  const currentSectionId = useMemo(() => {
+    const p = (pathname || "/").replace(/\/+$/, "");
+    for (const section of MENU) {
+      for (const item of section.items) {
+        const h = (item.href || "/").replace(/\/+$/, "");
+        const isMatch = item.exact
+          ? p === h
+          : p === h || p.startsWith(h + "/");
+        if (isMatch) return section.id;
+      }
+    }
+    return null;
+  }, [pathname]);
+
+  // Redirect staff away from disallowed sections
+  useEffect(() => {
+    if (!isStaff || !accessReady) return;
+    if (!currentSectionId) return;
+    if (allowedSections.has(currentSectionId)) return;
+
+    // Find first allowed entry to redirect
+    const firstAllowed = MENU.find((s) => allowedSections.has(s.id));
+    const fallbackHref = firstAllowed?.items[0]?.href || "/";
+    router.replace(fallbackHref);
+  }, [isStaff, accessReady, currentSectionId, allowedSections, router]);
 
   if (pathname === "/login") return null;
 
@@ -33,7 +101,11 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
         {filteredMenu.map((section) => (
-          <SidebarSection key={section.id} section={section} />
+          <SidebarSection
+            key={section.id}
+            section={section}
+            allowed={allowedSections.has(section.id)}
+          />
         ))}
       </nav>
 

@@ -9,26 +9,11 @@ function withBase(path: string) {
   return `${base}/${target}`;
 }
 
-const TOKEN_STORAGE_KEY = "auth_token";
-
-function getStoredToken(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const local = window.localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (local) return local;
-    const match = document.cookie
-      ?.split(";")
-      .map((s) => s.trim())
-      .find((s) => s.startsWith(`${TOKEN_STORAGE_KEY}=`));
-    return match ? decodeURIComponent(match.split("=")[1]) : null;
-  } catch {
-    return null;
-  }
-}
+import { getStoredToken } from "./auth";
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
-  const token = getStoredToken();
+  const token = typeof window !== "undefined" ? getStoredToken() : null;
   const res = await fetch(url, {
     ...init,
     headers: {
@@ -46,10 +31,14 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignore
     }
+    const defaultMessage =
+      res.status === 403
+        ? "You do not have permission to perform this action."
+        : `${res.status} ${res.statusText}`;
     const message =
       details?.error ||
       details?.message ||
-      `${res.status} ${res.statusText}`;
+      defaultMessage;
     throw new Error(message);
   }
 
@@ -158,6 +147,23 @@ export const Api = {
     http<{ message: string; deleted: number }>(`/api/campaign/archive/bulk-delete`, {
       method: "POST",
       body: JSON.stringify({ ids }),
+    }),
+
+  // =========================================================
+  // Privileges
+  // =========================================================
+  getPrivileges: (adminid: number | string) =>
+    http<{ adminid: number; privileges: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }> }>(
+      `/api/privilege/${adminid}`
+    ),
+
+  savePrivileges: (
+    adminid: number | string,
+    privileges: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }>
+  ) =>
+    http<{ success: boolean; count: number }>(`/api/privilege/${adminid}`, {
+      method: "PUT",
+      body: JSON.stringify({ privileges }),
     }),
 
   // =========================================================

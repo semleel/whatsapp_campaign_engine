@@ -2,7 +2,9 @@
 
 const TOKEN_STORAGE_KEY = "auth_token";
 const PROFILE_STORAGE_KEY = "auth_profile";
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
+// Default to backend on 3000; override with NEXT_PUBLIC_API_BASE_URL when front/back are split
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
 
 export type StoredAdmin = {
   id: number;
@@ -34,9 +36,11 @@ export function storeProfile(admin: StoredAdmin | null | undefined) {
   if (typeof window === "undefined") return;
   if (!admin) {
     localStorage.removeItem(PROFILE_STORAGE_KEY);
+    window.dispatchEvent(new Event("auth-changed"));
     return;
   }
   localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(admin));
+  window.dispatchEvent(new Event("auth-changed"));
 }
 
 export function getStoredAdmin(): StoredAdmin | null {
@@ -53,6 +57,9 @@ export function getStoredAdmin(): StoredAdmin | null {
 export function clearStoredSession() {
   clearStoredToken();
   storeProfile(null);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event("auth-changed"));
+  }
 }
 
 export async function requestLogin(email: string, password: string) {

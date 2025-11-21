@@ -1,11 +1,38 @@
+ "use client";
+
+import { useEffect, useState } from "react";
+import { getStoredAdmin } from "@/lib/auth";
+import { getPrivilegeFlags } from "@/lib/permissions";
+
 export default function Home() {
+  const [canCreateCampaign, setCanCreateCampaign] = useState(false);
+  const [canUpdateCampaign, setCanUpdateCampaign] = useState(false);
+  const [canCreateContent, setCanCreateContent] = useState(false);
+  const [canUpdateContent, setCanUpdateContent] = useState(false);
+  const [canCreateIntegration, setCanCreateIntegration] = useState(false);
+
+  useEffect(() => {
+    const admin = getStoredAdmin();
+    const campaign = getPrivilegeFlags(admin?.id ?? null, "campaigns");
+    const content = getPrivilegeFlags(admin?.id ?? null, "content");
+    const integration = getPrivilegeFlags(admin?.id ?? null, "integration");
+
+    setCanCreateCampaign(campaign.create);
+    setCanUpdateCampaign(campaign.update || campaign.archive);
+    setCanCreateContent(content.create);
+    setCanUpdateContent(content.update || content.archive);
+    setCanCreateIntegration(integration.create);
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-semibold tracking-tight">Overview</h2>
         <div className="flex gap-2">
           <button className="btn btn-ghost">Export</button>
-          <button className="btn btn-primary">Create Campaign</button>
+          {canCreateCampaign && (
+            <button className="btn btn-primary">Create Campaign</button>
+          )}
         </div>
       </div>
 
@@ -75,10 +102,12 @@ export default function Home() {
         <div className="card card-hover p-4 md:col-span-2">
           <div className="mb-3 font-semibold">Quick Actions</div>
           <div className="flex flex-wrap gap-2">
-            <button className="btn btn-primary">New Template</button>
-            <button className="btn btn-ghost">Validate Content</button>
-            <button className="btn btn-ghost">Schedule Campaign</button>
-            <button className="btn btn-ghost">Live API Test</button>
+            {canCreateContent && <button className="btn btn-primary">New Template</button>}
+            {canUpdateContent && <button className="btn btn-ghost">Validate Content</button>}
+            {canCreateCampaign && (
+              <button className="btn btn-ghost">Schedule Campaign</button>
+            )}
+            {canCreateIntegration && <button className="btn btn-ghost">Live API Test</button>}
           </div>
         </div>
       </div>

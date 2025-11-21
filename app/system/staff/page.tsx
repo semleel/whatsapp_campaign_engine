@@ -3,6 +3,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredAdmin, getStoredToken } from "@/lib/auth";
+import { loadPrivilegeStore } from "@/lib/permissions";
+import { Api } from "@/lib/client";
 
 type Staff = {
   adminid: number;
@@ -14,6 +16,24 @@ type Staff = {
   createdat?: string | null;
 };
 
+type PrivilegeAction = {
+  key: string;
+  label: string;
+};
+
+type PrivilegeItem = {
+  id: string;
+  label: string;
+  actions: PrivilegeAction[];
+};
+
+type PrivilegeGroup = {
+  id: string;
+  title: string;
+  accent: "amber" | "sky";
+  items: PrivilegeItem[];
+};
+
 const NEW_STAFF_DEFAULT = {
   name: "",
   email: "",
@@ -21,6 +41,144 @@ const NEW_STAFF_DEFAULT = {
   confirmPassword: "",
   phonenum: "",
 };
+
+const PRIVILEGE_CATALOG: PrivilegeGroup[] = [
+  {
+    id: "core-access",
+    title: "Workspace Access",
+    accent: "amber",
+    items: [
+      { id: "overview", label: "Overview", actions: buildCrudActions() },
+      { id: "campaigns", label: "Campaigns", actions: buildCrudActions() },
+      { id: "content", label: "Content", actions: buildCrudActions() },
+      { id: "flows", label: "Flows", actions: buildCrudActions() },
+      { id: "contacts", label: "Contacts", actions: buildCrudActions() },
+      { id: "integration", label: "Integrations", actions: buildCrudActions() },
+      { id: "reports", label: "Reports", actions: buildCrudActions() },
+      { id: "system", label: "System", actions: buildCrudActions() },
+      { id: "conversations", label: "Conversations", actions: buildCrudActions() },
+    ],
+  },
+];
+
+function buildCrudActions(): PrivilegeAction[] {
+  return [
+    { key: "view", label: "View" },
+    { key: "create", label: "Create" },
+    { key: "update", label: "Edit" },
+    { key: "archive", label: "Archive" },
+  ];
+}
+
+const DEFAULT_PRIVILEGE_KEYS = new Set<string>(
+  [
+    "overview",
+    "campaigns",
+    "content",
+    "flows",
+    "contacts",
+    "integration",
+    "reports",
+    "system",
+    "conversations",
+  ].map((id) => privilegeKey("core-access", id, "view"))
+);
+
+function privilegeKey(groupId: string, itemId: string, actionKey: string) {
+  return `${groupId}.${itemId}.${actionKey}`;
+}
+
+function buildPrivilegeState(withDefaults = false) {
+  const state: Record<string, boolean> = {};
+
+  for (const group of PRIVILEGE_CATALOG) {
+    for (const item of group.items) {
+      for (const action of item.actions) {
+        const key = privilegeKey(group.id, item.id, action.key);
+        state[key] = withDefaults ? DEFAULT_PRIVILEGE_KEYS.has(key) : false;
+      }
+    }
+  }
+
+  return state;
+}
+
+type PrivilegeState = Record<string, boolean>;
+
+type ToggleFn = (keys: string | string[], next?: boolean) => void;
+
+function PrivilegeGroupCard({
+  group,
+  state,
+  onToggle,
+  disabled,
+}: {
+  group: PrivilegeGroup;
+  state: PrivilegeState;
+  onToggle: ToggleFn;
+  disabled?: boolean;
+}) {
+  const accent =
+    group.accent === "amber"
+      ? { dot: "bg-amber-500", border: "border-amber-200", text: "text-amber-700", bg: "bg-amber-50" }
+      : { dot: "bg-sky-500", border: "border-sky-200", text: "text-sky-700", bg: "bg-sky-50" };
+
+  return (
+    <div className="space-y-3 rounded-xl border p-3 bg-gradient-to-b from-white to-slate-50/40">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <span className={`h-2.5 w-2.5 rounded-full ${accent.dot}`} />
+        <span>{group.title}</span>
+      </div>
+      <div className="space-y-2">
+        {group.items.map((item) => (
+          <div
+            key={item.id}
+            className="rounded-lg border bg-white/80 px-3 py-2 shadow-sm transition hover:border-primary/30"
+          >
+            <div className="grid items-center gap-3 md:grid-cols-[1fr_minmax(420px,1fr)]">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border"
+                  checked={item.actions.every((action) =>
+                    state[privilegeKey(group.id, item.id, action.key)]
+                  )}
+                  onChange={() => {
+                    const keys = item.actions.map((a) => privilegeKey(group.id, item.id, a.key));
+                    const allOn = keys.every((k) => state[k]);
+                    onToggle(keys, !allOn);
+                  }}
+                  disabled={disabled}
+                />
+                <span className="text-foreground">{item.label}</span>
+              </div>
+              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                {item.actions.map((action) => {
+                  const key = privilegeKey(group.id, item.id, action.key);
+                  return (
+                    <label
+                      key={action.key}
+                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border bg-white px-3 py-1.5 text-xs font-semibold shadow-sm ${disabled ? "opacity-50" : "hover:border-primary/30"}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border"
+                        checked={!!state[key]}
+                        onChange={() => onToggle(key)}
+                        disabled={disabled}
+                      />
+                      <span className="leading-none">{action.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function StaffPage() {
   const router = useRouter();
@@ -48,6 +206,12 @@ export default function StaffPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<"recent" | "oldest" | "name">("recent");
+  const [generalPrivileges, setGeneralPrivileges] = useState<PrivilegeState>(() =>
+    buildPrivilegeState(true)
+  );
+  const [staffPrivileges, setStaffPrivileges] = useState<Record<number, PrivilegeState>>({});
+  const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
+  const [savingPrivileges, setSavingPrivileges] = useState(false);
 
   function sanitizePayload(obj: Record<string, any>) {
     return Object.fromEntries(
@@ -110,7 +274,41 @@ export default function StaffPage() {
     if (admin?.id) setCurrentAdminId(admin.id);
     if (admin?.role) setCurrentAdminRole((admin.role as string).toLowerCase());
     loadStaff();
+
   }, []);
+
+  useEffect(() => {
+    if (selectedStaffId && !staff.find((s) => s.adminid === selectedStaffId)) {
+      setSelectedStaffId(staff[0]?.adminid ?? null);
+    } else if (!selectedStaffId && staff.length) {
+      setSelectedStaffId(staff[0].adminid);
+    }
+  }, [selectedStaffId, staff]);
+
+  useEffect(() => {
+    if (selectedStaffId) {
+      loadPrivilegesFromApi(selectedStaffId);
+    }
+  }, [selectedStaffId]);
+
+  const selectedPrivilegeState: PrivilegeState =
+    (selectedStaffId && staffPrivileges[selectedStaffId]) || generalPrivileges;
+
+  async function loadPrivilegesFromApi(adminid: number) {
+    try {
+      const res = await Api.getPrivileges(adminid);
+      const map: PrivilegeState = { ...buildPrivilegeState(false) };
+      Object.entries(res.privileges || {}).forEach(([resource, flags]) => {
+        map[`core-access.${resource}.view`] = !!flags.view;
+        map[`core-access.${resource}.create`] = !!flags.create;
+        map[`core-access.${resource}.update`] = !!flags.update;
+        map[`core-access.${resource}.archive`] = !!flags.archive;
+      });
+      setStaffPrivileges((prev) => ({ ...prev, [adminid]: map }));
+    } catch {
+      // ignore
+    }
+  }
 
   async function loadStaff() {
     try {
@@ -144,6 +342,88 @@ export default function StaffPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+function toggleGeneralPrivilege(keys: string | string[], next?: boolean) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  setGeneralPrivileges((prev) => {
+    const target = next !== undefined ? next : !prev[list[0]];
+    const updated = { ...prev };
+    list.forEach((k) => {
+      updated[k] = target;
+    });
+    return updated;
+  });
+}
+
+function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
+  if (!selectedStaffId) return;
+  const list = Array.isArray(keys) ? keys : [keys];
+  setStaffPrivileges((prev) => {
+    const base = prev[selectedStaffId] ? { ...prev[selectedStaffId] } : { ...generalPrivileges };
+    const target = next !== undefined ? next : !base[list[0]];
+    list.forEach((k) => {
+      base[k] = target;
+    });
+    return {
+      ...prev,
+      [selectedStaffId]: base,
+    };
+  });
+}
+
+  function applyGeneralToSelected() {
+    if (!selectedStaffId) return;
+    setStaffPrivileges((prev) => ({
+      ...prev,
+      [selectedStaffId]: { ...generalPrivileges },
+    }));
+  }
+
+  function clearSelectedOverride() {
+    if (!selectedStaffId) return;
+    setStaffPrivileges((prev) => {
+      const next = { ...prev };
+      delete next[selectedStaffId];
+      return next;
+    });
+  }
+
+  function normalizePrivilegesForApi(state: PrivilegeState) {
+    const output: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }> = {};
+    Object.entries(state).forEach(([key, value]) => {
+      const [group, resource, action] = key.split(".");
+      if (group !== "core-access") return;
+      if (!output[resource]) {
+        output[resource] = { view: false, create: false, update: false, archive: false };
+      }
+      if (action === "view" || action === "create" || action === "update" || action === "archive") {
+        output[resource][action] = !!value;
+      }
+    });
+    return output;
+  }
+
+  function handleSavePrivileges() {
+    if (!selectedStaffId) {
+      setError("Select a staff member first.");
+      return;
+    }
+    const confirmed = window.confirm("Save privilege changes?");
+    if (!confirmed) return;
+    setSavingPrivileges(true);
+    Api.savePrivileges(
+      selectedStaffId,
+      normalizePrivilegesForApi(staffPrivileges[selectedStaffId] || generalPrivileges)
+    )
+      .then(() => {
+        setMessage("Privileges saved to server");
+        window.dispatchEvent(new Event("privileges-changed"));
+      })
+      .catch((err) => {
+        setError(err.message || "Failed to save privileges");
+      })
+      .finally(() => setSavingPrivileges(false));
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -444,6 +724,128 @@ export default function StaffPage() {
           <p className="text-sm text-muted-foreground">
             Manage staff accounts (create, update details, activate/deactivate).
           </p>
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-xl border p-4">
+        <div className="flex flex-wrap justify-between gap-3">
+          <div>
+            <h4 className="text-base font-semibold">Access control</h4>
+            <p className="text-xs text-muted-foreground">
+              Set the default staff privilege baseline or override permissions for specific staff.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full bg-slate-100 px-2 py-1">General baseline</span>
+            <span className="rounded-full bg-slate-100 px-2 py-1">Per-staff override</span>
+            <button
+              type="button"
+              onClick={handleSavePrivileges}
+              className="rounded-full bg-primary px-3 py-1 text-primary-foreground shadow-sm"
+            >
+              Save changes
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  General staff privilege
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Baseline applied to all staff unless overridden.
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                Default
+              </span>
+            </div>
+            <div className="space-y-3">
+              {PRIVILEGE_CATALOG.map((group) => (
+                <PrivilegeGroupCard
+                  key={group.id}
+                  group={group}
+                  state={generalPrivileges}
+                  onToggle={toggleGeneralPrivilege}
+                />
+              ))}
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Changes here are saved locally now. Wire up to API to persist roles/permissions.
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Specific staff privilege
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Override the baseline for a single staff account.
+                </p>
+              </div>
+              {selectedStaffId && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={applyGeneralToSelected}
+                    className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 font-semibold text-sky-700"
+                  >
+                    Copy general defaults
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearSelectedOverride}
+                    className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700"
+                  >
+                    Remove override
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-muted-foreground">Select staff</label>
+              <select
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                value={selectedStaffId ?? ""}
+                onChange={(e) => setSelectedStaffId(Number(e.target.value) || null)}
+                disabled={!staff.length}
+              >
+                {!staff.length && <option value="">No staff available</option>}
+                {staff.map((member) => (
+                  <option key={member.adminid} value={member.adminid}>
+                    #{member.adminid} — {member.name || member.email}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedStaffId ? (
+              <div className="space-y-3">
+                {PRIVILEGE_CATALOG.map((group) => (
+                  <PrivilegeGroupCard
+                    key={group.id}
+                    group={group}
+                    state={selectedPrivilegeState}
+                    onToggle={toggleStaffPrivilege}
+                    disabled={!selectedStaffId}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                Add a staff member first to set specific overrides.
+              </div>
+            )}
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+              Changes here are saved locally now. Wire up to API to persist roles/permissions.
+            </div>
+          </div>
         </div>
       </div>
 
