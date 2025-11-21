@@ -393,3 +393,30 @@ export interface CampaignSession {
   createdAt?: string | null;
   lastActiveAt?: string | null;
 }
+
+export interface FlowStat {
+  campaignid: number | null;
+  name: string;
+  sessions: number;
+  completed: number;
+  completionRate: number; // percent (0-100)
+}
+
+export interface ReportSummary {
+  metrics: {
+    messagesLast24: number;
+    messagesTotal: number;
+    deliveryRate: number;
+    activeCampaigns: number;
+    deliveries: number;
+    deliveriesSuccess: number;
+    deliveriesFailed: number;
+  };
+  trending: Array<{
+    campaignid: number | null;
+    name: string;
+    sent: number;
+    delivered: number;
+    deliveredRate: number;
+  }>;
+}

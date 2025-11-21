@@ -9,12 +9,31 @@ function withBase(path: string) {
   return `${base}/${target}`;
 }
 
+const TOKEN_STORAGE_KEY = "auth_token";
+
+function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const local = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (local) return local;
+    const match = document.cookie
+      ?.split(";")
+      .map((s) => s.trim())
+      .find((s) => s.startsWith(`${TOKEN_STORAGE_KEY}=`));
+    return match ? decodeURIComponent(match.split("=")[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
+  const token = getStoredToken();
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
     cache: "no-store",
@@ -251,6 +270,8 @@ export const Api = {
   // =========================================================
   listDeliveryReport: (limit = 200) =>
     http<DeliveryReportRow[]>(`/api/report/delivery?limit=${limit}`),
+  listFlowStats: () => http<FlowStat[]>(`/api/report/flow`),
+  getReportSummary: () => http<ReportSummary>(`/api/report/summary`),
 
   // Conversations
   listConversations: (limit = 100) =>

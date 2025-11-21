@@ -99,6 +99,25 @@ export default function ArchivedCampaignsPage() {
     }
   };
 
+  const handleBulkRestore = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    const confirmed = await showCenteredConfirm(
+      `Restore ${ids.length} archived campaign(s)?`
+    );
+    if (!confirmed) return;
+    try {
+      await Promise.all(ids.map((id) => Api.restoreCampaign(id)));
+      setCampaigns((prev) => prev.filter((c) => !selectedIds.has(c.campaignid)));
+      setSelectedIds(new Set());
+      setMessage("Selected campaigns restored.");
+      await showCenteredAlert("Selected campaigns restored.");
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err?.message || "Failed to bulk restore campaigns.");
+    }
+  };
+
   const formatDateTime = (value?: string | null) => {
     if (!value) return "--";
     const date = new Date(value);
@@ -140,6 +159,22 @@ export default function ArchivedCampaignsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleBulkRestore}
+            disabled={!selectedIds.size}
+            className={`rounded border px-3 py-2 text-sm font-medium ${
+              selectedIds.size
+                ? "text-emerald-700 hover:bg-emerald-50 border-emerald-200"
+                : "text-muted-foreground border-border cursor-not-allowed opacity-60"
+            }`}
+            title={
+              selectedIds.size
+                ? "Restore selected archived campaigns"
+                : "Select archived campaigns to restore"
+            }
+          >
+            Restore selected
+          </button>
           <button
             onClick={handleBulkDelete}
             disabled={!selectedIds.size}
