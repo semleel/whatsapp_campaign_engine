@@ -99,7 +99,6 @@ model campaign {
   campaignname         String                 @db.VarChar(150)
   objective            String?                @db.VarChar(255)
   targetregionid       Int?
-  userflowid           Int?
   status               String?                @default("Draft") @db.VarChar(20)
   createdby_adminid    Int?
   createdat            DateTime?              @default(now()) @db.Timestamp(6)
@@ -111,7 +110,6 @@ model campaign {
   keymapping           keymapping?            @relation(fields: [contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
   admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onDelete: NoAction, onUpdate: NoAction)
   targetregion         targetregion?          @relation(fields: [targetregionid], references: [regionid], onDelete: NoAction, onUpdate: NoAction)
-  userflow             userflow?              @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
   campaign_api_mapping campaign_api_mapping[]
   campaignsession      campaignsession[]
   keyword              keyword[]
@@ -317,7 +315,6 @@ model userflow {
   allowedinput                                    allowedinput[]
   branchrule_branchrule_next_userflowidTouserflow branchrule[]      @relation("branchrule_next_userflowidTouserflow")
   branchrule                                      branchrule[]
-  campaign                                        campaign[]
   campaignsession                                 campaignsession[]
   fallback                                        fallback[]
   keymapping                                      keymapping[]

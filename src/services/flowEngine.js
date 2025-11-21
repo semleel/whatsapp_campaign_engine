@@ -33,7 +33,7 @@ export async function findCampaignByKeyword(text) {
     where: {
       value: {
         equals: normalized,
-        mode: "insensitive",
+        mode: "insensitive", // "cny" / "CNY" / "Cny" all match
       },
     },
     orderBy: { keywordid: "asc" },
@@ -49,67 +49,72 @@ export async function findCampaignByKeyword(text) {
 }
 
 /**
- * Get the entry content key for a given campaign's userflow.
+ * Get the entry content key for a given campaign.
  * Behaviour:
- *   0) If no userflowid, try CAMPAIGN_<id>_INTRO
- *   1) Prefer fallback(scope='FLOW', value='ENTRY')
- *   2) Fallback to heuristic on keymapping/content
+ *   0) If campaign.contentkeyid exists and maps to content, use it
+ *   1) Try CAMPAIGN_<id>_INTRO
+ *   2) Fallback to heuristic on CAMPAIGN_<id>_* keymapping/content
  */
 async function getEntryContentKeyForCampaign(campaign) {
   if (!campaign) return null;
 
-  // 0) No userflow → try CAMPAIGN_<id>_INTRO
-  if (!campaign.userflowid) {
-    const introKey = `CAMPAIGN_${campaign.campaignid}_INTRO`;
-    const km = await prisma.keymapping.findUnique({
-      where: { contentkeyid: introKey },
+  // 0) Explicit entry key configured on campaign
+  if (campaign.contentkeyid) {
+    const mapped = await prisma.keymapping.findUnique({
+      where: { contentkeyid: campaign.contentkeyid },
     });
-    if (km) return introKey;
-    return null;
+    if (mapped) return campaign.contentkeyid;
   }
 
-  // 1) FLOW-level ENTRY config
-  const flowEntry = await prisma.fallback.findFirst({
-    where: {
-      userflowid: campaign.userflowid,
-      scope: "FLOW",
-      value: "ENTRY",
-    },
+  // 1) No explicit key → try CAMPAIGN_<id>_INTRO convention
+  const introKey = `CAMPAIGN_${campaign.campaignid}_INTRO`;
+  const introMapping = await prisma.keymapping.findUnique({
+    where: { contentkeyid: introKey },
   });
+  if (introMapping) return introKey;
 
-  if (flowEntry?.contentkeyid) {
-    return flowEntry.contentkeyid;
-  }
-
-  // 2) Heuristic on content.category/title
-  const allKeys = await prisma.keymapping.findMany({
-    where: { userflowid: campaign.userflowid },
+  // 2) Heuristic on CAMPAIGN_<id>_* contentkeyid and content metadata
+  const prefixedKeys = await prisma.keymapping.findMany({
+    where: { contentkeyid: { startsWith: `CAMPAIGN_${campaign.campaignid}_` } },
     include: { content: true },
     orderBy: { contentkeyid: "asc" },
     take: 50,
   });
 
-  const entry = allKeys.find(
+  const entry = prefixedKeys.find(
     (k) =>
       (k.content?.category || "").toLowerCase() === "entry" ||
       (k.content?.title || "").toLowerCase().includes("entry")
   );
   if (entry) return entry.contentkeyid;
-  if (allKeys.length) return allKeys[0].contentkeyid;
+  if (prefixedKeys.length) return prefixedKeys[0].contentkeyid;
   return null;
 }
 
 export async function findCommandContentKeyForCampaign(campaign, command) {
-  if (!campaign?.userflowid || !command) return null;
+  if (!command) return null;
 
   const normalized = command.toLowerCase();
 
-  const keys = await prisma.keymapping.findMany({
-    where: { userflowid: campaign.userflowid },
+  const prefixFilter =
+    campaign?.campaignid != null
+      ? { contentkeyid: { startsWith: `CAMPAIGN_${campaign.campaignid}_` } }
+      : undefined;
+
+  let keys = await prisma.keymapping.findMany({
+    where: prefixFilter,
     include: { content: true },
     orderBy: { contentkeyid: "asc" },
     take: 100,
   });
+
+  if (!keys.length) {
+    keys = await prisma.keymapping.findMany({
+      include: { content: true },
+      orderBy: { contentkeyid: "asc" },
+      take: 100,
+    });
+  }
 
   const match = keys.find((k) => {
     const category = (k.content?.category || "").toLowerCase();
@@ -293,6 +298,8 @@ export async function processIncomingMessage({ from, text }) {
     // first step: go to entry node for this campaign
     nextKey = await getEntryContentKeyForCampaign(campaign);
   } else {
+    const flowScope = undefined;
+
     const br = await prisma.branchrule.findFirst({
       where: {
         triggerkey: checkpoint,
@@ -300,7 +307,7 @@ export async function processIncomingMessage({ from, text }) {
           equals: messageText,
           mode: "insensitive",
         },
-        userflowid: campaign.userflowid ?? undefined,
+        userflowid: flowScope,
       },
       orderBy: { priority: "asc" },
     });
@@ -311,7 +318,7 @@ export async function processIncomingMessage({ from, text }) {
       const fb = await prisma.fallback.findFirst({
         where: {
           contentkeyid: checkpoint,
-          userflowid: campaign.userflowid ?? undefined,
+          userflowid: flowScope,
         },
       });
       nextKey = fb?.value ?? null;
@@ -320,7 +327,7 @@ export async function processIncomingMessage({ from, text }) {
 
   // 6) Determine if upcoming node is terminal
   if (nextKey) {
-    nextKeyIsTerminal = await isTerminalNode(nextKey, campaign.userflowid);
+    nextKeyIsTerminal = await isTerminalNode(nextKey, undefined);
   }
 
   // 7) Update session checkpoint & lastactive
