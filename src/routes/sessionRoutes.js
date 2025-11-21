@@ -6,11 +6,13 @@ import {
     pauseSession,
     resumeSession,
     cancelSession,
+    listSessionsByContact,
 } from "../controllers/sessionController.js";
 
 const router = express.Router();
 
 router.get("/list", listSessions);
+router.get("/by-contact/:contactId", listSessionsByContact);
 router.get("/:id", getSession);
 router.post("/create", createSession);
 router.post("/:id/pause", pauseSession);

@@ -26,7 +26,7 @@ const STATUS_STYLES: Record<string, string> = {
   inactive: "bg-slate-100 text-slate-700",
 };
 
-// ⬇️ only block editing when Active
+// Only block editing when the campaign is Active
 const canEditCampaign = (status: string | undefined | null) =>
   (status || "").toLowerCase() !== "active";
 
@@ -56,6 +56,17 @@ export default function CampaignsPage() {
     })();
   }, []);
 
+  useEffect(() => {
+    const handleClickAway = (event: MouseEvent) => {
+      if (!openWarningId) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".warning-popover")) return;
+      setOpenWarningId(null);
+    };
+    document.addEventListener("mousedown", handleClickAway);
+    return () => document.removeEventListener("mousedown", handleClickAway);
+  }, [openWarningId]);
+
   const handleEdit = (id: number) => router.push(`/campaign/${id}`);
 
   const handleArchive = async (id: number) => {
@@ -73,20 +84,17 @@ export default function CampaignsPage() {
     }
   };
 
-  // ⬇️ Pause: only used when currentstatus is Active
   const handlePause = async (id: number) => {
-    const confirmed = await showCenteredConfirm("Pause this campaign so you can edit the schedule?");
+    const confirmed = await showCenteredConfirm(
+      "Pause this campaign so you can edit the schedule?"
+    );
     if (!confirmed) return;
     try {
-      // Call your backend to set status = "Paused"
       await Api.updateCampaign(id, { status: "Paused" });
 
-      // Optimistically update UI
       setCampaigns((prev) =>
         prev.map((c) =>
-          c.campaignid === id
-            ? { ...c, currentstatus: "Paused" }
-            : c
+          c.campaignid === id ? { ...c, currentstatus: "Paused" } : c
         )
       );
       await showCenteredAlert("Campaign paused. You can now edit the schedule.");
@@ -204,7 +212,7 @@ export default function CampaignsPage() {
                   missingTemplate ? "Missing template" : null,
                 ]
                   .filter(Boolean)
-                  .join(" • ");
+                  .join(" | ");
 
                 return (
                   <tr key={c.campaignid} className="border-t">
@@ -212,7 +220,7 @@ export default function CampaignsPage() {
                       <div className="flex items-center gap-2">
                         <span>{c.campaignname}</span>
                         {hasWarning && (
-                          <div className="relative inline-flex">
+                          <div className="relative inline-flex warning-popover">
                             <button
                               type="button"
                               className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-100 text-rose-700 text-xs font-bold"
@@ -226,7 +234,11 @@ export default function CampaignsPage() {
                               !
                             </button>
                             <div
-                              className={`absolute left-0 top-6 z-10 ${openWarningId === c.campaignid ? "block" : "hidden"} w-56 max-h-48 overflow-y-auto rounded-lg border border-rose-200 bg-white p-3 text-xs text-rose-700 shadow-lg`}
+                              className={`absolute left-0 top-6 z-10 ${
+                                openWarningId === c.campaignid
+                                  ? "block"
+                                  : "hidden"
+                              } w-56 max-h-48 overflow-y-auto rounded-lg border border-rose-200 bg-white p-3 text-xs text-rose-700 shadow-lg`}
                             >
                               <div className="font-semibold text-rose-700 mb-2">
                                 {warningText || "Missing configuration"}
@@ -242,7 +254,7 @@ export default function CampaignsPage() {
                                 )}
                                 {missingTemplate && (
                                   <Link
-                                    href="/content"
+                                    href="/content/templates/create"
                                     className="rounded border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
                                   >
                                     Create template
@@ -309,7 +321,7 @@ export default function CampaignsPage() {
               })
             ) : (
               <tr>
-                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={6} className="px-3 py-4 text-muted-foreground">
                   No campaigns yet. Create one to get started.
                 </td>
               </tr>
@@ -324,4 +336,3 @@ export default function CampaignsPage() {
     </div>
   );
 }
-

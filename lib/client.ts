@@ -130,6 +130,17 @@ export const Api = {
       method: "PUT",
     }),
 
+  deleteArchivedCampaign: (id: number | string) =>
+    http<{ message: string }>(`/api/campaign/archive/${id}`, {
+      method: "DELETE",
+    }),
+
+  deleteArchivedCampaigns: (ids: Array<number | string>) =>
+    http<{ message: string; deleted: number }>(`/api/campaign/archive/bulk-delete`, {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+
   // =========================================================
   // Keywords (keyword table)
   // =========================================================
@@ -244,14 +255,19 @@ export const Api = {
   // Conversations
   listConversations: (limit = 100) =>
     http<ConversationThread[]>(`/api/conversation/list?limit=${limit}`),
-  sendConversationMessage: (to: string, text: string) =>
-    http("/api/wa/send", {
-      method: "POST",
-      body: JSON.stringify({
-        to,
-        message: { type: "text", text: { body: text } },
-      }),
-    }),
+  sendConversationMessage: (contactId: number | string, text: string) =>
+    http<{ success: boolean; provider_msg_id?: string | null }>(
+      `/api/conversation/${contactId}/send`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text,
+        }),
+      }
+    ),
+
+  listSessionsByContact: (contactId: number | string) =>
+    http<CampaignSession[]>(`/api/session/by-contact/${contactId}`),
 
   // =========================================================
   // System -> WhatsApp Integration (whatsapp_config)

@@ -3,7 +3,10 @@ import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
-import { findOrCreateSession } from "../services/flowEngine.js";
+import {
+  findOrCreateSession,
+  getEntryContentKeyForCampaign,
+} from "../services/flowEngine.js";
 import { upsertStatus } from "../services/whatsappStatusService.js";
 import {
   handleFlowOrKeyword,
@@ -225,7 +228,17 @@ export async function webhookHandler(req, res) {
             );
 
             // Use the session checkpoint if it exists, otherwise fall back to campaign.contentkeyid
-            const entryKey = session.checkpoint || campaign.contentkeyid;
+            let entryKey =
+              session.checkpoint ||
+              campaign.contentkeyid ||
+              (await getEntryContentKeyForCampaign(campaign));
+
+            if (entryKey && entryKey !== session.checkpoint) {
+              await prisma.campaignsession.update({
+                where: { campaignsessionid: session.campaignsessionid },
+                data: { checkpoint: entryKey, lastactiveat: new Date() },
+              });
+            }
 
             const km = await prisma.keymapping.findUnique({
               where: { contentkeyid: entryKey },

@@ -1,4 +1,6 @@
 import prisma from "../config/prismaClient.js";
+import { sendWhatsAppMessage } from "../services/whatsappService.js";
+import { log, error as logError } from "../utils/logger.js";
 
 const SESSION_STATUS = {
   ACTIVE: "ACTIVE",
@@ -86,5 +88,71 @@ export async function listConversations(req, res) {
   } catch (err) {
     console.error("listConversations error:", err);
     return res.status(500).json({ error: err.message || "Failed to load conversations" });
+  }
+}
+
+export async function sendConversationMessage(req, res) {
+  const contactIdRaw = req.params.id || req.body?.contactId;
+  const text = (req.body?.text || "").toString().trim();
+
+  const contactId = parseInt(contactIdRaw, 10);
+
+  if (!contactId || Number.isNaN(contactId)) {
+    return res.status(400).json({ error: "Invalid contact id" });
+  }
+
+  if (!text) {
+    return res.status(400).json({ error: "Message text is required" });
+  }
+
+  try {
+    const contact = await prisma.contact.findUnique({
+      where: { contactid: contactId },
+      select: { contactid: true, phonenum: true, name: true },
+    });
+
+    if (!contact?.phonenum) {
+      return res.status(404).json({ error: "Contact not found or missing phone number" });
+    }
+
+    const msgRecord = await prisma.message.create({
+      data: {
+        direction: "outbound",
+        content_type: "text",
+        message_content: text,
+        senderid: "agent-ui",
+        receiverid: contact.phonenum,
+        provider_msg_id: null,
+        timestamp: new Date(),
+        message_status: "pending",
+        payload_json: JSON.stringify({ type: "text", text: { body: text } }),
+        contactid: contact.contactid,
+      },
+    });
+
+    const response = await sendWhatsAppMessage(
+      contact.phonenum,
+      { type: "text", text: { body: text } },
+      msgRecord
+    );
+
+    const providerId = response?.messages?.[0]?.id ?? null;
+    if (providerId) {
+      await prisma.message.update({
+        where: { messageid: msgRecord.messageid },
+        data: { provider_msg_id: providerId },
+      });
+    }
+
+    log(`Conversation reply sent to ${contact.phonenum} | provider_id=${providerId}`);
+    return res.status(200).json({
+      success: true,
+      provider_msg_id: providerId,
+      contactId: contact.contactid,
+    });
+  } catch (err) {
+    const details = err?.response?.data ?? err?.message ?? err;
+    logError("sendConversationMessage error:", details);
+    return res.status(500).json({ error: "Failed to send message" });
   }
 }

@@ -49,7 +49,6 @@ export async function listCampaigns(_req, res) {
       where: { status: { not: "Archived" } },
       include: {
         targetregion: { select: { regionname: true } },
-        userflow: { select: { userflowname: true } },
         keyword: { select: { keywordid: true } },
         keymapping: {
           select: {
@@ -285,6 +284,64 @@ export async function restoreCampaign(req, res) {
     if (err.code === "P2025") {
       return res.status(404).json({ error: "Campaign not found" });
     }
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function hardDeleteArchivedCampaign(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { campaignid: campaignID },
+      select: { status: true },
+    });
+
+    if (!campaign) {
+      return res.status(404).json({ error: "Campaign not found" });
+    }
+
+    if (campaign.status !== "Archived") {
+      return res
+        .status(400)
+        .json({ error: "Only archived campaigns can be permanently deleted." });
+    }
+
+    await prisma.campaign.delete({ where: { campaignid: campaignID } });
+
+    return res
+      .status(200)
+      .json({ message: "Campaign permanently deleted." });
+  } catch (err) {
+    console.error("Hard delete campaign error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function hardDeleteArchivedCampaigns(req, res) {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const parsedIds = ids
+      .map((id) => parseInt(id, 10))
+      .filter((id) => !Number.isNaN(id));
+
+    if (!parsedIds.length) {
+      return res.status(400).json({ error: "No campaign ids provided." });
+    }
+
+    const result = await prisma.campaign.deleteMany({
+      where: { campaignid: { in: parsedIds }, status: "Archived" },
+    });
+
+    return res.status(200).json({
+      message: "Archived campaigns permanently deleted.",
+      deleted: result.count,
+    });
+  } catch (err) {
+    console.error("Bulk hard delete campaign error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
