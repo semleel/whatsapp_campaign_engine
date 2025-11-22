@@ -23,7 +23,9 @@ export async function listConversations(req, res) {
       take: limit * 10, // capture more messages than conversations
       include: {
         contact: { select: { contactid: true, name: true, phonenum: true } },
-        campaign: { select: { campaignname: true } },
+        campaignsession: {
+          select: { campaign: { select: { campaignname: true } } },
+        },
       },
     });
 
@@ -56,7 +58,10 @@ export async function listConversations(req, res) {
           status: session?.sessionstatus || SESSION_STATUS.ACTIVE,
           lastMessage: msg.message_content || "",
           updatedAt: msg.timestamp || msg.createdat || new Date(),
-          campaign: session?.campaign?.campaignname || msg.campaign?.campaignname || null,
+          campaign:
+            session?.campaign?.campaignname ||
+            msg.campaignsession?.campaign?.campaignname ||
+            null,
           messages: [],
         });
       }

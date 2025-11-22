@@ -123,6 +123,7 @@ model campaign {
   end_at               DateTime?              @db.Timestamp(6)
   contentkeyid         String?                @db.VarChar(100)
   userflowid           Int?
+  userflow             userflow?              @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
   api_log              api_log[]
   keymapping           keymapping?            @relation(fields: [contentkeyid, userflowid], references: [contentkeyid, userflowid], onUpdate: NoAction, map: "campaign_contentkeyid_fkey")
   admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onDelete: NoAction, onUpdate: NoAction)

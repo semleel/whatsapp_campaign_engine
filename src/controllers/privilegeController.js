@@ -1,6 +1,7 @@
 // /src/controllers/privilegeController.js
 
 import prisma from "../config/prismaClient.js";
+import { Prisma } from "@prisma/client";
 
 /**
  * GET /api/privilege/:adminid
@@ -11,21 +12,22 @@ import prisma from "../config/prismaClient.js";
  * }
  */
 export async function getPrivileges(req, res) {
-  const adminid = parseInt(req.params.adminid);
-
+  const adminid = Number(req.params.adminid);
+  if (!adminid) return res.status(400).json({ error: "adminid is required" });
   try {
-    const rows = await prisma.staff_privilege.findMany({
-      where: { adminid }
-    });
+    const rows = await prisma.$queryRaw`
+      SELECT resource, "view", "create", "update", archive
+      FROM staff_privilege
+      WHERE adminid = ${adminid}
+    `;
 
     const map = {};
-
-    rows.forEach(r => {
+    rows.forEach((r) => {
       map[r.resource] = {
-        view: r.view,
-        create: r.create,
-        update: r.update,
-        archive: r.archive
+        view: !!r.view,
+        create: !!r.create,
+        update: !!r.update,
+        archive: !!r.archive,
       };
     });
 
@@ -41,29 +43,31 @@ export async function getPrivileges(req, res) {
  * Replace all privileges for a staff record
  */
 export async function upsertPrivileges(req, res) {
-  const adminid = parseInt(req.params.adminid);
+  const adminid = Number(req.params.adminid);
+  if (!adminid) return res.status(400).json({ error: "adminid is required" });
   const privileges = req.body.privileges || {};
 
   try {
     // Remove previous privileges
-    await prisma.staff_privilege.deleteMany({ where: { adminid } });
+    await prisma.$executeRaw`DELETE FROM staff_privilege WHERE adminid = ${adminid}`;
 
     // Insert new privileges
-    const inserts = Object.entries(privileges).map(
-      ([resource, actions]) => ({
-        adminid,
-        resource,
-        view: !!actions.view,
-        create: !!actions.create,
-        update: !!actions.update,
-        archive: !!actions.archive
-      })
-    );
+    const inserts = Object.entries(privileges).map(([resource, actions]) => ({
+      adminid,
+      resource,
+      view: !!actions.view,
+      create: !!actions.create,
+      update: !!actions.update,
+      archive: !!actions.archive,
+    }));
 
     if (inserts.length > 0) {
-      await prisma.staff_privilege.createMany({
-        data: inserts
-      });
+      const values = Prisma.join(
+        inserts.map((i) =>
+          Prisma.sql`(${i.adminid}, ${i.resource}, ${i.view}, ${i.create}, ${i.update}, ${i.archive})`
+        )
+      );
+      await prisma.$executeRaw`INSERT INTO staff_privilege (adminid, resource, "view", "create", "update", archive) VALUES ${values}`;
     }
 
     res.json({ success: true, count: inserts.length });

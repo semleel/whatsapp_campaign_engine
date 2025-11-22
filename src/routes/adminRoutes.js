@@ -14,8 +14,9 @@ router.use(authMiddleware);
 
 // Only allow non-staff roles to manage staff. Staff accounts cannot CRUD others.
 router.use((req, res, next) => {
+  const role = (req.role || "").toLowerCase();
   // Permit the primary admin (id=1) even if role is missing/mis-set.
-  if (req.role === "staff" && req.adminId !== 1) {
+  if (role === "staff" && req.adminId !== 1) {
     return res.status(403).json({ error: "Admin permission required" });
   }
   next();

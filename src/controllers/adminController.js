@@ -2,11 +2,19 @@ import bcrypt from "bcrypt";
 import prisma from "../config/prismaClient.js";
 
 const SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS || 10);
+const ALLOWED_ROLES = ["Admin", "Super", "Staff"];
+
 const toTitle = (role) => {
   if (!role) return null;
   const r = String(role).trim();
   if (!r) return null;
   return r.charAt(0).toUpperCase() + r.slice(1).toLowerCase();
+};
+
+const normalizeRole = (role, fallback = null) => {
+  const normalized = toTitle(role);
+  if (!normalized) return fallback;
+  return ALLOWED_ROLES.includes(normalized) ? normalized : null;
 };
 
 export async function listAdmins(req, res) {
@@ -45,11 +53,14 @@ export async function getAdmin(req, res) {
 }
 
 export async function createAdmin(req, res) {
-  const { name, email, password, phonenum } = req.body || {};
+  const { name, email, password, phonenum, role } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "email and password are required" });
 
   const existing = await prisma.admin.findUnique({ where: { email } });
   if (existing) return res.status(400).json({ error: "Email already in use" });
+
+  const normalizedRole = normalizeRole(role, "Staff");
+  if (!normalizedRole) return res.status(400).json({ error: "Invalid role" });
 
   const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
   const admin = await prisma.admin.create({
@@ -57,7 +68,7 @@ export async function createAdmin(req, res) {
       name: name || null,
       email,
       password_hash,
-      role: "Staff",
+      role: normalizedRole,
       phonenum: phonenum || null,
       is_active: true,
     },
@@ -77,13 +88,13 @@ export async function updateAdmin(req, res) {
   const id = Number(req.params.id);
   const { name, email, role, phonenum, is_active, password } = req.body || {};
 
-  const normalizedRole = role === undefined ? undefined : toTitle(role) || "Staff";
-  if (role && normalizedRole !== "Staff") {
-    return res.status(400).json({ error: "Role is fixed to Staff" });
+  const normalizedRole = role === undefined ? undefined : normalizeRole(role);
+  if (role !== undefined && !normalizedRole) {
+    return res.status(400).json({ error: "Invalid role" });
   }
 
   const data = { name, email, phonenum, is_active };
-  if (normalizedRole) data.role = normalizedRole;
+  if (role !== undefined) data.role = normalizedRole;
   if (password) data.password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
   try {
