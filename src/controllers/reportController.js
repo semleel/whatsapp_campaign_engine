@@ -15,7 +15,12 @@ export async function listDeliveryReport(req, res) {
         message: {
           select: {
             messageid: true,
-            campaign: { select: { campaignname: true } },
+            campaignsession: {
+              select: {
+                campaignid: true,
+                campaign: { select: { campaignname: true } },
+              },
+            },
             contact: { select: { phonenum: true } },
             provider_msg_id: true,
             error_message: true,
@@ -26,7 +31,8 @@ export async function listDeliveryReport(req, res) {
 
     const data = rows.map((d) => ({
       messageid: d.message?.messageid ?? d.messageid,
-      campaign: d.message?.campaign?.campaignname ?? null,
+      campaign:
+        d.message?.campaignsession?.campaign?.campaignname ?? null,
       contact: d.message?.contact?.phonenum ?? null,
       status: d.deliverstatus ?? "pending",
       retrycount: d.retrycount ?? 0,
@@ -104,8 +110,12 @@ export async function reportSummary(_req, res) {
           deliverstatus: true,
           message: {
             select: {
-              campaignid: true,
-              campaign: { select: { campaignname: true } },
+              campaignsession: {
+                select: {
+                  campaignid: true,
+                  campaign: { select: { campaignname: true } },
+                },
+              },
             },
           },
         },
@@ -127,11 +137,11 @@ export async function reportSummary(_req, res) {
 
     const trendingMap = new Map();
     for (const d of deliveries) {
-      const key = d.message?.campaignid ?? 0;
+      const key = d.message?.campaignsession?.campaignid ?? 0;
       if (!trendingMap.has(key)) {
         trendingMap.set(key, {
-          campaignid: d.message?.campaignid ?? null,
-          name: d.message?.campaign?.campaignname || "Unknown campaign",
+          campaignid: d.message?.campaignsession?.campaignid ?? null,
+          name: d.message?.campaignsession?.campaign?.campaignname || "Unknown campaign",
           sent: 0,
           delivered: 0,
         });
