@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 
 type TemplateSummary = {
   contentid: number;
@@ -53,28 +55,24 @@ export default function TemplateLibraryPage() {
 
   // view mode toggle
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const { canView, canCreate, canUpdate, loading: privLoading } = usePrivilege("content");
 
   useEffect(() => {
     const load = async () => {
       try {
+        if (privLoading) return;
+        if (!canView) {
+          setError("You do not have permission to view templates.");
+          setLoading(false);
+          return;
+        }
         setLoading(true);
         setError(null);
 
         // includeDeleted=true so we can show Archived
-        const listRes = await fetch(
-          "http://localhost:3000/api/template/list?includeDeleted=true"
-        );
-        const listCt = listRes.headers.get("content-type") || "";
-        if (!listRes.ok) {
-          const txt = await listRes.text();
-          throw new Error(txt || `HTTP ${listRes.status}`);
-        }
-
-        const rawSummaries: TemplateSummary[] = listCt.includes(
-          "application/json"
-        )
-          ? await listRes.json()
-          : JSON.parse(await listRes.text());
+        const rawSummaries: TemplateSummary[] = await Api.listTemplates({
+          includeDeleted: true,
+        });
 
         const summaries = rawSummaries.map((item) => ({
           contentid: item.contentid,
@@ -94,14 +92,7 @@ export default function TemplateLibraryPage() {
         const detailed: TemplateWithPreview[] = await Promise.all(
           summaries.map(async (t) => {
             try {
-              const res = await fetch(
-                `http://localhost:3000/api/template/${t.contentid}`
-              );
-              const ct = res.headers.get("content-type") || "";
-              if (!res.ok) throw new Error();
-              const data = ct.includes("application/json")
-                ? await res.json()
-                : JSON.parse(await res.text());
+              const data = await Api.getTemplate(t.contentid);
 
               const placeholders =
                 (data.placeholders as Record<string, unknown> | null) || null;
@@ -150,7 +141,8 @@ export default function TemplateLibraryPage() {
                 buttons,
                 isdeleted,
               };
-            } catch {
+            } catch (err) {
+              console.error("Template detail fetch failed:", err);
               return { ...t };
             }
           })
@@ -165,7 +157,7 @@ export default function TemplateLibraryPage() {
     };
 
     load();
-  }, []);
+  }, [canView, privLoading]);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -251,6 +243,14 @@ export default function TemplateLibraryPage() {
     }
   };
 
+  if (!privLoading && !canView) {
+    return (
+      <div className="p-6 text-sm text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+        You do not have permission to view templates.
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="p-6 text-sm text-muted-foreground">
@@ -279,12 +279,14 @@ export default function TemplateLibraryPage() {
             every WhatsApp asset.
           </p>
         </div>
-        <Link
-          className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-          href="/content/templates/create"
-        >
-          New Template
-        </Link>
+        {canCreate && (
+          <Link
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            href="/content/templates/create"
+          >
+            New Template
+          </Link>
+        )}
       </div>
 
       {/* Filters + view toggle */}
@@ -518,12 +520,16 @@ export default function TemplateLibraryPage() {
                         {formatUpdated(t)}
                       </td>
                       <td className="px-3 py-2 text-sm">
-                        <Link
-                          href={`/content/templates/${t.contentid}`}
-                          className="text-primary hover:underline"
-                        >
-                          Edit
-                        </Link>
+                        {canUpdate ? (
+                          <Link
+                            href={`/content/templates/${t.contentid}`}
+                            className="text-primary hover:underline"
+                          >
+                            Edit
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">View only</span>
+                        )}
                       </td>
                     </tr>
                   ))}

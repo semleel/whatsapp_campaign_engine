@@ -15,11 +15,7 @@ export async function listTags(req, res) {
   try {
     const includeDeleted = req.query.includeDeleted === "true";
 
-    const where = includeDeleted
-      ? {}
-      : {
-          OR: [{ isdeleted: false }, { isdeleted: null }],
-        };
+    const where = includeDeleted ? {} : { isdeleted: false };
 
     const tags = await prisma.tag.findMany({
       where,

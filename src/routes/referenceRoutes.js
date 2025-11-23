@@ -6,10 +6,10 @@ import { requirePrivilege } from "../middleware/permission.js";
 const router = express.Router();
 
 router.use(authMiddleware);
-router.get("/regions", requirePrivilege("system", "view"), getRegions);
+router.get("/regions", requirePrivilege("campaigns", "view"), getRegions);
 router.get("/userflows", requirePrivilege("flows", "view"), getUserFlows);
 router.get("/campaignstatus", requirePrivilege("campaigns", "view"), getCampaignStatuses);
-router.post("/regions", requirePrivilege("system", "create"), createRegion);
+router.post("/regions", requirePrivilege("campaigns", "create"), createRegion);
 router.post("/userflows", requirePrivilege("flows", "create"), createUserFlow);
 
 export default router;

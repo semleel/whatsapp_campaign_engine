@@ -1,28 +1,30 @@
- "use client";
+"use client";
 
-import { useEffect, useState } from "react";
-import { getStoredAdmin } from "@/lib/auth";
-import { getPrivilegeFlags } from "@/lib/permissions";
+import { usePrivilege } from "@/lib/permissions";
 
 export default function Home() {
-  const [canCreateCampaign, setCanCreateCampaign] = useState(false);
-  const [canUpdateCampaign, setCanUpdateCampaign] = useState(false);
-  const [canCreateContent, setCanCreateContent] = useState(false);
-  const [canUpdateContent, setCanUpdateContent] = useState(false);
-  const [canCreateIntegration, setCanCreateIntegration] = useState(false);
+  const {
+    canView,
+    canCreate: canCreateCampaign,
+    canUpdate: canUpdateCampaign,
+    loading: campaignLoading,
+  } = usePrivilege("campaigns");
+  const {
+    canCreate: canCreateContent,
+    canUpdate: canUpdateContent,
+    loading: contentLoading,
+  } = usePrivilege("content");
+  const {
+    canCreate: canCreateIntegration,
+  } = usePrivilege("integration");
 
-  useEffect(() => {
-    const admin = getStoredAdmin();
-    const campaign = getPrivilegeFlags(admin?.id ?? null, "campaigns");
-    const content = getPrivilegeFlags(admin?.id ?? null, "content");
-    const integration = getPrivilegeFlags(admin?.id ?? null, "integration");
-
-    setCanCreateCampaign(campaign.create);
-    setCanUpdateCampaign(campaign.update || campaign.archive);
-    setCanCreateContent(content.create);
-    setCanUpdateContent(content.update || content.archive);
-    setCanCreateIntegration(integration.create);
-  }, []);
+  if (!campaignLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view the overview.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

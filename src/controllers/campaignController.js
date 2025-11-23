@@ -33,6 +33,7 @@ export async function createCampaign(req, res) {
       status: normalizeCampaignStatus(status, DEFAULT_STATUS),
       start_at: parseNullableDate(startAt),
       end_at: parseNullableDate(endAt),
+      createdby_adminid: req.adminId || null,
     };
 
     const campaign = await prisma.campaign.create({ data });

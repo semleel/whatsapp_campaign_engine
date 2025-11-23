@@ -3,6 +3,41 @@
 import prisma from "../config/prismaClient.js";
 import { Prisma } from "@prisma/client";
 
+const DEFAULT_BASELINE_PRIVILEGES = [
+  "overview",
+  "campaigns",
+  "content",
+  "flows",
+  "contacts",
+  "integration",
+  "reports",
+  "system",
+  "conversations",
+].map((resource) => ({
+  resource,
+  view: true,
+  create: false,
+  update: false,
+  archive: false,
+}));
+
+const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
+
+async function ensureBaselinePrivileges() {
+  let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  if (!baseline.length) {
+    await prisma.staff_privilege.createMany({
+      data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
+        ...row,
+        adminid: BASELINE_ADMIN_ID,
+      })),
+      skipDuplicates: true,
+    });
+    baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  }
+  return baseline;
+}
+
 /**
  * GET /api/privilege/:adminid
  * Return privileges in correct frontend shape:
@@ -15,11 +50,14 @@ export async function getPrivileges(req, res) {
   const adminid = Number(req.params.adminid);
   if (!adminid) return res.status(400).json({ error: "adminid is required" });
   try {
-    const rows = await prisma.$queryRaw`
-      SELECT resource, "view", "create", "update", archive
-      FROM staff_privilege
-      WHERE adminid = ${adminid}
-    `;
+    let rows = await prisma.staff_privilege.findMany({
+      where: { adminid }
+    });
+
+    // Fallback to general baseline (adminid = 0) when no rows for this user
+    if (!rows.length && adminid !== BASELINE_ADMIN_ID) {
+      rows = await ensureBaselinePrivileges();
+    }
 
     const map = {};
     rows.forEach((r) => {

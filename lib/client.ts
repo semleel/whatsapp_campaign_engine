@@ -279,6 +279,21 @@ export const Api = {
   listFlowStats: () => http<FlowStat[]>(`/api/report/flow`),
   getReportSummary: () => http<ReportSummary>(`/api/report/summary`),
 
+  // Admin/staff
+  listAdmins: () =>
+    http<
+      {
+        adminid: number;
+        name: string | null;
+        email: string;
+        role: string | null;
+        phonenum?: string | null;
+        is_active?: boolean | null;
+        createdat?: string | null;
+        has_privileges?: boolean;
+      }[]
+    >("/api/admin"),
+
   // Conversations
   listConversations: (limit = 100) =>
     http<ConversationThread[]>(`/api/conversation/list?limit=${limit}`),
@@ -313,8 +328,10 @@ export const Api = {
   // Templates (content)
   // =========================================================
 
-  listTemplates: () =>
-    http<TemplateListItem[]>("/api/template/list"),
+  listTemplates: (opts: { includeDeleted?: boolean } = {}) =>
+    http<TemplateListItem[]>(
+      `/api/template/list${opts.includeDeleted ? "?includeDeleted=true" : ""}`
+    ),
 
   getTemplate: (id: number | string) =>
     http<TemplateDetail>(`/api/template/${id}`),
@@ -333,6 +350,28 @@ export const Api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  softDeleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}/delete`, {
+      method: "POST",
+    }),
+
+  attachTagsToTemplate: (id: number | string, tags: string[]) =>
+    http<{ message: string; tagIds: number[] }>(`/api/template/${id}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tags }),
+    }),
+
+  setTemplateExpiry: (id: number | string, expiresAt: string) =>
+    http<{ message: string }>(`/api/template/${id}/expire`, {
+      method: "POST",
+      body: JSON.stringify({ expiresAt }),
+    }),
+
+  listTags: (includeDeleted = false) =>
+    http<{ tagid: number; name: string; isdeleted?: boolean | null }[]>(
+      `/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`
+    ),
 
   deleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}`, {

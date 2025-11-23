@@ -1,3 +1,7 @@
+"use client";
+
+import { usePrivilege } from "@/lib/permissions";
+
 const cards = [
   { title: "Admin users", description: "Manage entries in the admin table.", href: "/system/admins" },
   { title: "API tokens", description: "Monitor sessiontoken issuance.", href: "/system/tokens" },
@@ -6,6 +10,16 @@ const cards = [
 ];
 
 export default function SystemOverviewPage() {
+  const { canView, loading } = usePrivilege("system");
+
+  if (!loading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view system settings.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>

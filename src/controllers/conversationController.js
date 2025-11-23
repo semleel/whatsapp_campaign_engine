@@ -24,7 +24,10 @@ export async function listConversations(req, res) {
       include: {
         contact: { select: { contactid: true, name: true, phonenum: true } },
         campaignsession: {
-          select: { campaign: { select: { campaignname: true } } },
+          select: {
+            sessionstatus: true,
+            campaign: { select: { campaignname: true } },
+          },
         },
       },
     });
@@ -55,7 +58,10 @@ export async function listConversations(req, res) {
           contactId: cid,
           contactName: msg.contact?.name || msg.contact?.phonenum || "Unknown",
           phone: msg.contact?.phonenum || "Unknown",
-          status: session?.sessionstatus || SESSION_STATUS.ACTIVE,
+          status:
+            session?.sessionstatus ||
+            msg.campaignsession?.sessionstatus ||
+            SESSION_STATUS.ACTIVE,
           lastMessage: msg.message_content || "",
           updatedAt: msg.timestamp || msg.createdat || new Date(),
           campaign:

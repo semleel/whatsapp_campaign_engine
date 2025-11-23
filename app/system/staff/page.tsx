@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredAdmin, getStoredToken } from "@/lib/auth";
-import { loadPrivilegeStore } from "@/lib/permissions";
+import { usePrivilege } from "@/lib/permissions";
 import { Api } from "@/lib/client";
 
 type Staff = {
@@ -14,6 +14,7 @@ type Staff = {
   phonenum?: string | null;
   is_active?: boolean | null;
   createdat?: string | null;
+  has_privileges?: boolean;
 };
 
 type PrivilegeAction = {
@@ -105,6 +106,56 @@ function buildPrivilegeState(withDefaults = false) {
 
 type PrivilegeState = Record<string, boolean>;
 
+const GENERAL_PRIV_STORAGE_KEY = "general_staff_privileges_v1";
+const MANUAL_OVERRIDE_STORAGE_KEY = "staff_manual_overrides_v1";
+const BASELINE_ADMIN_ID = Number(process.env.NEXT_PUBLIC_BASELINE_ADMIN_ID || 1);
+
+function loadStoredGeneralPrivileges(): PrivilegeState {
+  if (typeof window === "undefined") return buildPrivilegeState(true);
+  try {
+    const raw = localStorage.getItem(GENERAL_PRIV_STORAGE_KEY);
+    if (!raw) return buildPrivilegeState(true);
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return { ...buildPrivilegeState(false), ...parsed };
+    }
+  } catch {
+    // fall through to defaults
+  }
+  return buildPrivilegeState(true);
+}
+
+function persistGeneralPrivileges(state: PrivilegeState) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(GENERAL_PRIV_STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadManualOverrideIds(): Set<number> {
+  if (typeof window === "undefined") return new Set<number>();
+  try {
+    const raw = localStorage.getItem(MANUAL_OVERRIDE_STORAGE_KEY);
+    if (!raw) return new Set<number>();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const nums = parsed
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n));
+      return new Set<number>(nums);
+    }
+  } catch {
+    // ignore
+  }
+  return new Set<number>();
+}
+
+function persistManualOverrideIds(ids: Set<number>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(
+    MANUAL_OVERRIDE_STORAGE_KEY,
+    JSON.stringify(Array.from(ids))
+  );
+}
+
 type ToggleFn = (keys: string | string[], next?: boolean) => void;
 
 function PrivilegeGroupCard({
@@ -182,9 +233,11 @@ function PrivilegeGroupCard({
 
 export default function StaffPage() {
   const router = useRouter();
+  const { canView, canCreate, canUpdate, canArchive, loading: privLoading } = usePrivilege("system");
   const [staff, setStaff] = useState<Staff[]>([]);
   const [currentAdminId, setCurrentAdminId] = useState<number | null>(null);
   const [currentAdminRole, setCurrentAdminRole] = useState<string | null>(null);
+  const [staffOnlyList, setStaffOnlyList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -207,11 +260,14 @@ export default function StaffPage() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<"recent" | "oldest" | "name">("recent");
   const [generalPrivileges, setGeneralPrivileges] = useState<PrivilegeState>(() =>
-    buildPrivilegeState(true)
+    loadStoredGeneralPrivileges()
   );
   const [staffPrivileges, setStaffPrivileges] = useState<Record<number, PrivilegeState>>({});
   const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
   const [savingPrivileges, setSavingPrivileges] = useState(false);
+  const [manualOverrideIds, setManualOverrideIds] = useState<Set<number>>(() =>
+    loadManualOverrideIds()
+  );
 
   function sanitizePayload(obj: Record<string, any>) {
     return Object.fromEntries(
@@ -273,23 +329,35 @@ export default function StaffPage() {
     const admin = getStoredAdmin();
     if (admin?.id) setCurrentAdminId(admin.id);
     if (admin?.role) setCurrentAdminRole((admin.role as string).toLowerCase());
-    loadStaff();
-
   }, []);
 
+  // Load staff only after privilege state is known (covers initial mount).
   useEffect(() => {
-    if (selectedStaffId && !staff.find((s) => s.adminid === selectedStaffId)) {
-      setSelectedStaffId(staff[0]?.adminid ?? null);
-    } else if (!selectedStaffId && staff.length) {
-      setSelectedStaffId(staff[0].adminid);
+    if (privLoading) return;
+    loadStaff();
+  }, [privLoading, canView]);
+
+  useEffect(() => {
+    if (selectedStaffId && !staffOnlyList.find((s) => s.adminid === selectedStaffId)) {
+      setSelectedStaffId(staffOnlyList[0]?.adminid ?? null);
+    } else if (!selectedStaffId && staffOnlyList.length) {
+      setSelectedStaffId(staffOnlyList[0].adminid);
     }
-  }, [selectedStaffId, staff]);
+  }, [selectedStaffId, staffOnlyList]);
 
   useEffect(() => {
     if (selectedStaffId) {
       loadPrivilegesFromApi(selectedStaffId);
     }
   }, [selectedStaffId]);
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view staff.
+      </div>
+    );
+  }
 
   const selectedPrivilegeState: PrivilegeState =
     (selectedStaffId && staffPrivileges[selectedStaffId]) || generalPrivileges;
@@ -312,31 +380,45 @@ export default function StaffPage() {
 
   async function loadStaff() {
     try {
+      const self = getStoredAdmin();
+      const isLocalAdmin =
+        (self?.role || "").toLowerCase() === "admin" || (self?.id ?? 0) === 1;
+      const allowView = canView || isLocalAdmin;
+
+      if (privLoading) return;
+      if (!allowView) {
+        setError("You do not have permission to view staff.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
-      const token = getStoredToken();
-      if (!token) {
-        router.replace("/login");
-        return;
-      }
 
-      const res = await fetch(`${API_BASE_URL}/api/admin`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const data = await Api.listAdmins();
+      const normalized =
+        Array.isArray(data) && data.length
+          ? data.map((row: any) => ({
+              ...row,
+              has_privileges: Boolean(row?.has_privileges),
+            }))
+          : [];
+      setStaff(normalized);
+      const staffOnly = normalized.filter((row) => (row.role || "").toLowerCase() !== "admin");
+      setStaffOnlyList(staffOnly);
+
+      // Clean up manual override ids that no longer have custom privileges
+      setManualOverrideIds((prev) => {
+        const next = new Set<number>();
+        normalized.forEach((row: any) => {
+          if (row?.has_privileges && prev.has(row.adminid)) {
+            next.add(row.adminid);
+          }
+        });
+        if (next.size !== prev.size) {
+          persistManualOverrideIds(next);
+        }
+        return next;
       });
-
-      if (res.status === 401) {
-        clearStoredSession();
-        router.replace("/login");
-        return;
-      }
-      if (res.status === 403) {
-        setError("You need admin permissions to manage staff.");
-        return;
-      }
-      if (!res.ok) throw new Error(`Failed to load staff (${res.status})`);
-
-      const data = await res.json();
-      setStaff(Array.isArray(data) ? data : []);
     } catch (err: any) {
       setError(err.message || "Failed to load staff");
     } finally {
@@ -380,13 +462,34 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
     }));
   }
 
-  function clearSelectedOverride() {
+  async function clearSelectedOverride() {
     if (!selectedStaffId) return;
-    setStaffPrivileges((prev) => {
-      const next = { ...prev };
-      delete next[selectedStaffId];
-      return next;
-    });
+    try {
+      setSavingPrivileges(true);
+      setError(null);
+      await Api.savePrivileges(selectedStaffId, {}); // delete per-staff rows so baseline applies
+      setStaffPrivileges((prev) => {
+        const next = { ...prev };
+        delete next[selectedStaffId];
+        return next;
+      });
+      setManualOverrideIds((prev) => {
+        const next = new Set(prev);
+        next.delete(selectedStaffId);
+        persistManualOverrideIds(next);
+        return next;
+      });
+      setStaff((list) =>
+        list.map((row) =>
+          row.adminid === selectedStaffId ? { ...row, has_privileges: false } : row
+        )
+      );
+      setMessage("Override removed; baseline will apply.");
+    } catch (err: any) {
+      setError(err.message || "Failed to remove override");
+    } finally {
+      setSavingPrivileges(false);
+    }
   }
 
   function normalizePrivilegesForApi(state: PrivilegeState) {
@@ -405,19 +508,68 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   function handleSavePrivileges() {
-    if (!selectedStaffId) {
-      setError("Select a staff member first.");
+    if (!canUpdate) {
+      setError("You do not have permission to update staff privileges.");
       return;
     }
-    const confirmed = window.confirm("Save privilege changes?");
+    const manualIds = new Set(manualOverrideIds);
+    const targets = selectedStaffId
+      ? [selectedStaffId]
+      : staffOnlyList
+          .map((s) => s.adminid)
+          .filter((id) => !manualIds.has(id));
+
+    if (!targets.length) {
+      setError("No eligible staff to save privileges (manual overrides are skipped).");
+      return;
+    }
+    const confirmed = window.confirm(
+      selectedStaffId
+        ? "Save privilege changes for this staff member?"
+        : "Save the current baseline to all staff without manual overrides?"
+    );
     if (!confirmed) return;
     setSavingPrivileges(true);
-    Api.savePrivileges(
-      selectedStaffId,
-      normalizePrivilegesForApi(staffPrivileges[selectedStaffId] || generalPrivileges)
-    )
+    // Always persist the general baseline (adminid = 0) so non-overridden staff inherit it.
+    const baselinePromise = Api.savePrivileges(
+      BASELINE_ADMIN_ID,
+      normalizePrivilegesForApi(generalPrivileges)
+    );
+
+    Promise.all([
+      baselinePromise,
+      ...targets.map((adminid) =>
+        Api.savePrivileges(
+          adminid,
+          normalizePrivilegesForApi(
+            selectedStaffId
+              ? staffPrivileges[adminid] || generalPrivileges
+              : generalPrivileges
+          )
+        )
+      ),
+    ])
       .then(() => {
-        setMessage("Privileges saved to server");
+        if (selectedStaffId) {
+          setManualOverrideIds((prev) => {
+            const next = new Set(prev);
+            next.add(selectedStaffId);
+            persistManualOverrideIds(next);
+            return next;
+          });
+          // Ensure staff entry reflects manual override
+          setStaff((list) =>
+            list.map((row) =>
+              row.adminid === selectedStaffId ? { ...row, has_privileges: true } : row
+            )
+          );
+        }
+        persistGeneralPrivileges(generalPrivileges);
+        setMessage(
+          selectedStaffId
+            ? "Privileges saved to server"
+            : `Baseline applied to ${targets.length} staff`
+        );
         window.dispatchEvent(new Event("privileges-changed"));
       })
       .catch((err) => {
@@ -430,6 +582,10 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
     e.preventDefault();
     setMessage(null);
     setError(null);
+    if (!canCreate) {
+      setError("You do not have permission to create staff.");
+      return;
+    }
     try {
       setCreating(true);
       const token = getStoredToken();
@@ -487,8 +643,10 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   function startEdit(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot edit admin information.");
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot edit another admin.");
       return;
     }
     setMessage(null);
@@ -520,8 +678,10 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   function toggleEdit(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot edit admin information.");
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot edit another admin.");
       return;
     }
     if (editId === member.adminid) {
@@ -550,6 +710,14 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   async function saveEdit(id: number | null) {
+    if (!canUpdate) {
+      setError("You do not have permission to update staff.");
+      return;
+    }
+    if (editOriginal?.role?.toLowerCase() === "admin" && currentAdminId !== editOriginal.adminid) {
+      setError("You cannot edit another admin.");
+      return;
+    }
     if (!id) return;
     const passwordProvided = !!(editData.password || editData.confirmPassword);
     if (passwordProvided) {
@@ -618,8 +786,14 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   async function toggleActive(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot change admin status.");
+    if (!canUpdate) {
+      setError("You do not have permission to change staff status.");
+      return;
+    }
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot change another admin's status.");
       return;
     }
     if (currentAdminId && member.adminid === currentAdminId) {
@@ -674,6 +848,10 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
   }
 
   async function deleteStaff(member: Staff) {
+    if (!canArchive) {
+      setError("You do not have permission to disable staff.");
+      return;
+    }
     if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
       setError("Staff cannot disable admin accounts.");
       return;
@@ -734,6 +912,9 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
             <p className="text-xs text-muted-foreground">
               Set the default staff privilege baseline or override permissions for specific staff.
             </p>
+            <p className="text-xs text-muted-foreground">
+              New staff automatically inherit the general baseline. Create overrides here only when a specific staff member needs different access.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="rounded-full bg-slate-100 px-2 py-1">General baseline</span>
@@ -773,9 +954,6 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                 />
               ))}
             </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-              Changes here are saved locally now. Wire up to API to persist roles/permissions.
-            </div>
           </div>
 
           <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
@@ -788,41 +966,43 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                   Override the baseline for a single staff account.
                 </p>
               </div>
-              {selectedStaffId && (
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={applyGeneralToSelected}
-                    className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 font-semibold text-sky-700"
-                  >
-                    Copy general defaults
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearSelectedOverride}
-                    className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700"
-                  >
-                    Remove override
-                  </button>
-                </div>
-              )}
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {selectedStaffId && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={applyGeneralToSelected}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 font-semibold text-sky-700"
+                    >
+                      Copy general defaults
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSelectedOverride}
+                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700"
+                    >
+                      Remove override
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-muted-foreground">Select staff</label>
-              <select
-                className="w-full rounded-md border px-3 py-2 text-sm"
-                value={selectedStaffId ?? ""}
-                onChange={(e) => setSelectedStaffId(Number(e.target.value) || null)}
-                disabled={!staff.length}
-              >
-                {!staff.length && <option value="">No staff available</option>}
-                {staff.map((member) => (
-                  <option key={member.adminid} value={member.adminid}>
-                    #{member.adminid} — {member.name || member.email}
-                  </option>
-                ))}
-              </select>
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-muted-foreground">Select staff</label>
+        <select
+          className="w-full rounded-md border px-3 py-2 text-sm"
+          value={selectedStaffId ?? ""}
+          onChange={(e) => setSelectedStaffId(Number(e.target.value) || null)}
+          disabled={!staffOnlyList.length}
+        >
+          {!staffOnlyList.length && <option value="">No staff available</option>}
+          {staffOnlyList.map((member) => (
+            <option key={member.adminid} value={member.adminid}>
+              #{member.adminid} — {member.name || member.email}
+            </option>
+          ))}
+        </select>
             </div>
 
             {selectedStaffId ? (
@@ -842,9 +1022,6 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                 Add a staff member first to set specific overrides.
               </div>
             )}
-            <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
-              Changes here are saved locally now. Wire up to API to persist roles/permissions.
-            </div>
           </div>
         </div>
       </div>
@@ -959,9 +1136,13 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                 </tr>
               </thead>
               <tbody>
-              {displayedStaff.map((member) => (
-                <Fragment key={member.adminid}>
-                  <tr className="border-t align-middle">
+              {displayedStaff.map((member) => {
+                const isAdminRow = (member.role || "").toLowerCase() === "admin";
+                const isSelf = currentAdminId === member.adminid;
+                const adminLocked = isAdminRow && !isSelf;
+                return (
+                  <Fragment key={member.adminid}>
+                    <tr className="border-t align-middle">
                       <td className="px-3 py-2">{member.name || "-"}</td>
                       <td className="px-3 py-2">{member.email}</td>
                       <td className="px-3 py-2">{formatRole(member.role)}</td>
@@ -983,9 +1164,10 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
                           <button
-                            className={`btn flex items-center gap-1 ${member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin" ? "opacity-60 cursor-not-allowed border border-sky-100" : "border border-sky-200 bg-sky-50 text-sky-700"}`}
+                            className={`btn flex items-center gap-1 ${adminLocked ? "opacity-60 cursor-not-allowed border border-sky-100" : "border border-sky-200 bg-sky-50 text-sky-700"}`}
                             onClick={() => toggleEdit(member)}
-                            disabled={member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin"}
+                            disabled={adminLocked}
+                            title={adminLocked ? "You cannot edit another admin." : undefined}
                           >
                             <span>Edit</span>
                             <svg
@@ -997,16 +1179,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                               <path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.17l3.71-2.94a.75.75 0 0 1 .94 1.17l-4.19 3.33a.75.75 0 0 1-.94 0l-4.19-3.33a.75.75 0 0 1-.02-1.06z" />
                             </svg>
                           </button>
-                          {currentAdminId === member.adminid ? (
-                            <>
-                              <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
-                                Deactivate
-                              </button>
-                              <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
-                                Disable
-                              </button>
-                            </>
-                          ) : member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin" ? (
+                          {adminLocked || currentAdminId === member.adminid ? (
                             <>
                               <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
                                 Deactivate
@@ -1142,7 +1315,8 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                       </tr>
                     )}
                   </Fragment>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

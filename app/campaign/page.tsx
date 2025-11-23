@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
+import { usePrivilege } from "@/lib/permissions";
 
 interface Campaign {
   campaignid: number;
@@ -37,9 +38,18 @@ export default function CampaignsPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [openWarningId, setOpenWarningId] = useState<number | null>(null);
+  const { loading: privLoading, canView, canCreate, canUpdate, canArchive } = usePrivilege(
+    "campaigns"
+  );
 
   useEffect(() => {
     (async () => {
+      if (privLoading) return;
+      if (!canView) {
+        setErrorMessage("You do not have permission to view campaigns.");
+        setLoading(false);
+        return;
+      }
       try {
         const data = await Api.listCampaigns();
         setCampaigns(data);
@@ -54,7 +64,7 @@ export default function CampaignsPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [canView, privLoading]);
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
@@ -67,9 +77,27 @@ export default function CampaignsPage() {
     return () => document.removeEventListener("mousedown", handleClickAway);
   }, [openWarningId]);
 
-  const handleEdit = (id: number) => router.push(`/campaign/${id}`);
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view campaigns.
+      </div>
+    );
+  }
+
+  const handleEdit = (id: number) => {
+    if (!canUpdate) {
+      setErrorMessage("You do not have permission to edit campaigns.");
+      return;
+    }
+    router.push(`/campaign/${id}`);
+  };
 
   const handleArchive = async (id: number) => {
+    if (!canArchive) {
+      setErrorMessage("You do not have permission to archive campaigns.");
+      return;
+    }
     const confirmed = await showCenteredConfirm("Archive this campaign?");
     if (!confirmed) return;
     try {
@@ -85,6 +113,10 @@ export default function CampaignsPage() {
   };
 
   const handlePause = async (id: number) => {
+    if (!canUpdate) {
+      setErrorMessage("You do not have permission to update campaigns.");
+      return;
+    }
     const confirmed = await showCenteredConfirm(
       "Pause this campaign so you can edit the schedule?"
     );
@@ -167,12 +199,14 @@ export default function CampaignsPage() {
           >
             Archived Campaigns
           </Link>
-          <Link
-            href="/campaign/create"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-          >
-            New Campaign
-          </Link>
+          {canCreate && (
+            <Link
+              href="/campaign/create"
+              className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            >
+              New Campaign
+            </Link>
+          )}
         </div>
       </div>
 
@@ -204,6 +238,9 @@ export default function CampaignsPage() {
                 const isActive =
                   (c.currentstatus || "").toLowerCase() === "active";
                 const editable = canEditCampaign(c.currentstatus);
+                const allowPause = canUpdate && isActive;
+                const allowEdit = canUpdate && editable;
+                const allowArchive = canArchive;
                 const missingKeyword = c.hasKeyword === false;
                 const missingTemplate = c.hasTemplate === false;
                 const hasWarning = missingKeyword || missingTemplate;
@@ -283,7 +320,7 @@ export default function CampaignsPage() {
                       {formatDateTime(c.end_at)}
                     </td>
                     <td className="px-3 py-2 text-right space-x-2">
-                      {isActive ? (
+                      {allowPause ? (
                         <button
                           onClick={() => handlePause(c.campaignid)}
                           className="rounded border px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
@@ -291,30 +328,35 @@ export default function CampaignsPage() {
                         >
                           Pause
                         </button>
-                      ) : (
+                      ) : allowEdit ? (
                         <button
-                          onClick={() => editable && handleEdit(c.campaignid)}
-                          disabled={!editable}
+                          onClick={() => allowEdit && handleEdit(c.campaignid)}
+                          disabled={!allowEdit}
                           title={
-                            editable
+                            allowEdit
                               ? "Edit campaign & schedule"
                               : "Cannot edit this campaign."
                           }
                           className={`rounded border px-2 py-1 text-xs font-medium hover:bg-muted ${
-                            !editable
+                            !allowEdit
                               ? "cursor-not-allowed opacity-50 hover:bg-transparent"
                               : ""
                           }`}
                         >
                           Edit
                         </button>
+                      ) : null}
+                      {allowArchive ? (
+                        <button
+                          onClick={() => handleArchive(c.campaignid)}
+                          className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                        >
+                          Archive
+                        </button>
+                      ) : null}
+                      {!allowPause && !allowEdit && !allowArchive && (
+                        <span className="text-xs text-muted-foreground">No actions</span>
                       )}
-                      <button
-                        onClick={() => handleArchive(c.campaignid)}
-                        className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                      >
-                        Archive
-                      </button>
                     </td>
                   </tr>
                 );

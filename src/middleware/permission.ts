@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
 
 export function requirePrivilege(
   resource: string,
@@ -35,10 +36,31 @@ export function requirePrivilege(
         },
       });
 
-      if (!priv?.[action]) {
+      let effectivePriv = priv;
+
+      // Fallback to general baseline (adminid = BASELINE_ADMIN_ID) when no per-user privileges exist
+      if (!effectivePriv) {
+        effectivePriv = await prisma.staff_privilege.findUnique({
+          where: {
+            adminid_resource: {
+              adminid: BASELINE_ADMIN_ID,
+              resource,
+            },
+          },
+          select: {
+            view: true,
+            create: true,
+            update: true,
+            archive: true,
+          },
+        });
+      }
+
+      if (!effectivePriv?.[action]) {
         return res.status(403).json({
-          error: `Permission denied: missing ${action} access for ${resource}`,
+          error: `You do not have permission to ${action} ${resource}. Please contact an admin to request access.`,
           code: "FORBIDDEN_PRIVILEGE",
+          details: { resource, action, role },
         });
       }
 
