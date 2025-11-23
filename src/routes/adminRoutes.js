@@ -7,25 +7,19 @@ import {
   deleteAdmin,
 } from "../controllers/adminController.js";
 import authMiddleware from "../middleware/auth.js";
+import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
 router.use(authMiddleware);
 
-// Only allow non-staff roles to manage staff. Staff accounts cannot CRUD others.
-router.use((req, res, next) => {
-  const role = (req.role || "").toLowerCase();
-  // Permit the primary admin (id=1) even if role is missing/mis-set.
-  if (role === "staff" && req.adminId !== 1) {
-    return res.status(403).json({ error: "Admin permission required" });
-  }
-  next();
-});
+// View staff list / details
+router.get("/", requirePrivilege("system", "view"), listAdmins);
+router.get("/:id", requirePrivilege("system", "view"), getAdmin);
 
-router.get("/", listAdmins);
-router.get("/:id", getAdmin);
-router.post("/", createAdmin);
-router.put("/:id", updateAdmin);
-router.delete("/:id", deleteAdmin);
+// Create / update / disable staff
+router.post("/", requirePrivilege("system", "create"), createAdmin);
+router.put("/:id", requirePrivilege("system", "update"), updateAdmin);
+router.delete("/:id", requirePrivilege("system", "archive"), deleteAdmin);
 
 export default router;

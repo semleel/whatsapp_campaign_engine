@@ -16,10 +16,7 @@ export async function listDeliveryReport(req, res) {
           select: {
             messageid: true,
             campaignsession: {
-              select: {
-                campaignid: true,
-                campaign: { select: { campaignname: true } },
-              },
+              select: { campaign: { select: { campaignname: true } }, campaignid: true },
             },
             contact: { select: { phonenum: true } },
             provider_msg_id: true,
@@ -32,7 +29,8 @@ export async function listDeliveryReport(req, res) {
     const data = rows.map((d) => ({
       messageid: d.message?.messageid ?? d.messageid,
       campaign:
-        d.message?.campaignsession?.campaign?.campaignname ?? null,
+        d.message?.campaignsession?.campaign?.campaignname ??
+        null,
       contact: d.message?.contact?.phonenum ?? null,
       status: d.deliverstatus ?? "pending",
       retrycount: d.retrycount ?? 0,
@@ -111,10 +109,7 @@ export async function reportSummary(_req, res) {
           message: {
             select: {
               campaignsession: {
-                select: {
-                  campaignid: true,
-                  campaign: { select: { campaignname: true } },
-                },
+                select: { campaignid: true, campaign: { select: { campaignname: true } } },
               },
             },
           },

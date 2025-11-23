@@ -28,14 +28,6 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       return;
     }
 
-    // block staff from system/reports routes
-    const lowerRole = (admin?.role || "").toLowerCase();
-    const isStaff = lowerRole === "staff";
-    if (isStaff && (pathname.startsWith("/system") || pathname.startsWith("/reports"))) {
-      router.replace("/");
-      return;
-    }
-
     setChecked(true);
   }, [pathname, router]);
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Api } from "@/lib/client";
 import type { FlowNodePayload, FlowCreatePayload } from "@/lib/types";
+import { usePrivilege } from "@/lib/permissions";
 
 const STEP_TYPES = ["message", "question", "api", "decision"] as const;
 type StepType = (typeof STEP_TYPES)[number];
@@ -24,6 +25,7 @@ type FlowNode = FlowNodePayload & {
 };
 
 export default function FlowCreatePage() {
+  const { canCreate, loading: privLoading } = usePrivilege("flows");
   const [form, setForm] = useState({
     userflowname: "",
     entryKey: "START",
@@ -135,6 +137,10 @@ export default function FlowCreatePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      setMessage("You do not have permission to create flows.");
+      return;
+    }
     setMessage("");
     setErrors([]);
 
@@ -204,6 +210,11 @@ export default function FlowCreatePage() {
 
   return (
     <div className="space-y-6">
+      {!privLoading && !canCreate && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          You do not have permission to create flows.
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold">Create flow</h3>

@@ -9,6 +9,7 @@ import type {
   FlowUpdatePayload,
   FlowBranchRule,
 } from "@/lib/types";
+import { usePrivilege } from "@/lib/permissions";
 
 const STEP_TYPES = ["message", "question", "api", "decision"] as const;
 type StepType = (typeof STEP_TYPES)[number];
@@ -70,6 +71,7 @@ function simulateNextStep(
 
 export default function FlowDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { canView, canUpdate, loading: privLoading } = usePrivilege("flows");
 
   // flow meta (name / entry / fallback)
   const [meta, setMeta] = useState({
@@ -99,6 +101,12 @@ export default function FlowDetailPage() {
   // Load existing flow from backend
   useEffect(() => {
     if (!id) return;
+    if (privLoading) return;
+    if (!canView) {
+      setError("You do not have permission to view flows.");
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -132,7 +140,7 @@ export default function FlowDetailPage() {
         );
       })
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, canView, privLoading]);
 
   // Helpers for labels / tooltips
   const getNodeLabel = (type: StepType | string) => {
@@ -227,6 +235,10 @@ export default function FlowDetailPage() {
   };
 
   const handleSave = async () => {
+    if (!canUpdate) {
+      setError("You do not have permission to update flows.");
+      return;
+    }
     if (!id) return;
 
     setSaveMessage("");
@@ -294,6 +306,16 @@ export default function FlowDetailPage() {
     const result = simulateNextStep(virtualFlow, simNodeKey, simInput);
     setSimResult(result);
   };
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-amber-700 border border-amber-200 bg-amber-50 rounded-lg px-3 py-2">
+          You do not have permission to view flows.
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -762,14 +784,18 @@ export default function FlowDetailPage() {
             <p className="text-xs text-emerald-700">{saveMessage}</p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
-        >
-          {saving ? "Saving..." : "Save changes"}
-        </button>
+        {canUpdate ? (
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+          >
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">View only</span>
+        )}
       </div>
 
       {/* Global simulator (based on current UI state) */}

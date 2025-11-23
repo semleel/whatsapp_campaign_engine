@@ -27,7 +27,10 @@ export async function login(req, res) {
   const ok = await bcrypt.compare(password, admin.password_hash);
   if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
-  const roleOut = toTitle(admin.role || DEFAULT_ROLE);
+  const roleOut =
+    admin.adminid === 1
+      ? "Admin"
+      : toTitle(admin.role || DEFAULT_ROLE);
   const token = jwt.sign({ sub: admin.adminid, role: roleOut }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
   const expiryDate = expiryFromToken(token);

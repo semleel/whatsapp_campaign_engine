@@ -7,6 +7,7 @@ import SidebarSection from "./SidebarSection";
 import { MENU } from "@/lib/menuConfig";
 import { getStoredAdmin } from "@/lib/auth";
 import { Api } from "@/lib/client";
+import { persistPrivilegesForUser } from "@/lib/permissions";
 
 export default function Sidebar() {
   const pathname = usePathname() || "/";
@@ -21,6 +22,7 @@ export default function Sidebar() {
     if (admin?.id) {
       try {
         const res = await Api.getPrivileges(admin.id);
+        persistPrivilegesForUser(admin.id, res.privileges || {});
         const allowed = new Set<string>();
         Object.entries(res.privileges || {}).forEach(([resource, flags]) => {
           if (flags && (flags as any).view) {

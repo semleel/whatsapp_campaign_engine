@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { showCenteredAlert } from "@/lib/showAlert";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 
 // ------------------------------
 // Types
@@ -116,6 +115,7 @@ export default function EditTemplatePage() {
     () => (params?.id ? Number(params.id) : NaN),
     [params]
   );
+  const { canView, canUpdate, canArchive, loading: privLoading } = usePrivilege("content");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -204,11 +204,14 @@ export default function EditTemplatePage() {
 
     const load = async () => {
       try {
+        if (privLoading) return;
+        if (!canView) {
+          setError("You do not have permission to view templates.");
+          setLoading(false);
+          return;
+        }
         setLoading(true);
-        const res = await fetch(`${API_BASE}/api/template/${templateId}`);
-        if (!res.ok) throw new Error("Failed to load template");
-
-        const data = await res.json();
+        const data = await Api.getTemplate(templateId);
 
         const isdeleted: boolean | null = data.isdeleted ?? null;
         const placeholders =
@@ -267,7 +270,7 @@ export default function EditTemplatePage() {
     };
 
     load();
-  }, [templateId]);
+  }, [templateId, canView, privLoading]);
 
   // ------------------------------
   // Buttons helpers
@@ -340,6 +343,10 @@ export default function EditTemplatePage() {
   // ------------------------------
 
   const doSave = async () => {
+    if (!canUpdate) {
+      await showCenteredAlert("You do not have permission to update templates.");
+      return;
+    }
     if (!form.title.trim()) {
       await showCenteredAlert("Title is required");
       openFeedback({
@@ -370,31 +377,24 @@ export default function EditTemplatePage() {
       };
 
       const payload = {
-        ...form,
+        title: form.title,
+        type: form.type,
+        category: form.category || null,
         status: form.status,
+        defaultLang: form.lang,
         lang: form.lang,
-        body: form.body,
         description: form.description || form.body || null,
-        mediaurl: finalMediaUrl,
-        expiresat: expiresAtIso,
-        footerText: placeholderData.footerText,
-        headerText: placeholderData.headerText,
-        headerType: placeholderData.headerType,
-        headerMediaType: placeholderData.headerMediaType,
-        buttons: placeholderData.buttons,
+        mediaUrl: finalMediaUrl,
+        body: form.body,
         placeholders: {
           ...(form.placeholders || {}),
           ...placeholderData,
         },
+        isdeleted: form.isdeleted,
+        expiresAt: expiresAtIso || undefined,
       };
 
-      const res = await fetch(`${API_BASE}/api/template/${form.contentid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) throw new Error("Failed to update template");
+      await Api.updateTemplate(form.contentid, payload as any);
 
       await showCenteredAlert("Template updated successfully!");
       openFeedback({
@@ -427,27 +427,17 @@ export default function EditTemplatePage() {
     setSaving(true);
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/template/${form.contentid}/delete`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-
-      const bodyText = await res.text();
-
-      if (!res.ok) {
+      if (!canArchive) {
         openFeedback({
-          title: "Delete failed",
-          message:
-            `Server response: ${res.status} ${res.statusText}\n` +
-            (bodyText || ""),
+          title: "Not allowed",
+          message: "You do not have permission to archive templates.",
           variant: "error",
           primaryLabel: "Close",
         });
         return;
       }
+
+      await Api.softDeleteTemplate(form.contentid);
 
       setForm((prev) => ({ ...prev, isdeleted: true }));
 
@@ -475,16 +465,17 @@ export default function EditTemplatePage() {
   const doRecover = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/api/template/${form.contentid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isdeleted: false }),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to recover template");
+      if (!canUpdate) {
+        openFeedback({
+          title: "Not allowed",
+          message: "You do not have permission to update templates.",
+          variant: "error",
+          primaryLabel: "Close",
+        });
+        return;
       }
+
+      await Api.updateTemplate(form.contentid, { isdeleted: false } as any);
 
       setForm((prev) => ({ ...prev, isdeleted: false }));
 
@@ -568,6 +559,13 @@ export default function EditTemplatePage() {
   // ------------------------------
   // UI: loading / error
   // ------------------------------
+
+  if (!privLoading && !canView)
+    return (
+      <div className="p-6 text-center text-sm text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+        You do not have permission to view templates.
+      </div>
+    );
 
   if (loading)
     return <div className="p-6 text-center text-sm">Loading...</div>;

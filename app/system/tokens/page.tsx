@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredToken } from "@/lib/auth";
+import { usePrivilege } from "@/lib/permissions";
 
 type TokenRow = {
   tokenid: number;
@@ -23,6 +24,7 @@ export default function TokensPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<"recent" | "oldest">("recent");
+  const { canView, loading: privLoading } = usePrivilege("system");
 
   function formatRole(role: string | null | undefined) {
     const r = (role || "").trim();
@@ -32,10 +34,16 @@ export default function TokensPage() {
 
   useEffect(() => {
     loadTokens();
-  }, []);
+  }, [canView, privLoading]);
 
   async function loadTokens() {
     try {
+      if (privLoading) return;
+      if (!canView) {
+        setError("You do not have permission to view tokens.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       const token = getStoredToken();
@@ -71,6 +79,14 @@ export default function TokensPage() {
   function parseDate(value: string | null) {
     const t = value ? Date.parse(value) : NaN;
     return Number.isNaN(t) ? 0 : t;
+  }
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view tokens.
+      </div>
+    );
   }
 
   const displayed = useMemo(() => {

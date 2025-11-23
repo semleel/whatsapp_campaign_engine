@@ -5,9 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { showCenteredAlert } from "@/lib/showAlert";
 import TagSelector from "../../../../components/TagSelector";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
@@ -105,6 +104,7 @@ function createEmptyForm(): TemplateForm {
 
 export default function ContentCreatePage() {
   const router = useRouter();
+  const { canCreate, loading: privLoading } = usePrivilege("content");
 
   const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
   const [message, setMessage] = useState<string | null>(null);
@@ -166,6 +166,10 @@ export default function ContentCreatePage() {
   // -----------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      setMessage("You do not have permission to create templates.");
+      return;
+    }
     setSubmitting(true);
 
     try {
@@ -199,62 +203,32 @@ export default function ContentCreatePage() {
         placeholders: placeholderData,
       };
 
-      const res = await fetch(`${API_BASE}/api/template/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const created = await Api.createTemplate(payload);
+      const contentId: number | undefined = created.data?.contentid;
 
-      const ct = res.headers.get("content-type") || "";
-      const isJson = ct.includes("application/json");
-      const data = isJson ? await res.json() : await res.text();
-
-      if (res.ok && isJson) {
-        const created = (data as any)?.data;
-        const contentId: number | undefined = created?.contentid;
-
-        // tags -> join table
-        const tags = form.tags;
-        if (contentId && tags.length) {
-          await fetch(`${API_BASE}/api/template/${contentId}/tags`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tags }),
-          });
-        }
-
-        // expiry -> dedicated endpoint
-        if (contentId && form.expiresat) {
-          const iso = new Date(form.expiresat).toISOString();
-          await fetch(`${API_BASE}/api/template/${contentId}/expire`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ expiresAt: iso }),
-          });
-        }
-
-        // reset form
-        setForm(createEmptyForm());
-        setShowSuccess(true);
-        setMessage(null);
-
-        // optional: auto-redirect handled by overlay button
-        router.push(
-          `/content/templates?notice=${encodeURIComponent(
-            "Template created successfully."
-          )}`
-        );
-      } else {
-        const msg =
-          typeof data === "string"
-            ? data
-            : (data as any)?.error ||
-            (data as any)?.message ||
-            "Unknown error";
-        await showCenteredAlert(`Error: ${msg}`);
-        console.error("Create template error:", msg, data);
-        setMessage(`Error: ${msg}`);
+      // tags -> join table
+      const tags = form.tags;
+      if (contentId && tags.length) {
+        await Api.attachTagsToTemplate(contentId, tags);
       }
+
+      // expiry -> dedicated endpoint
+      if (contentId && form.expiresat) {
+        const iso = new Date(form.expiresat).toISOString();
+        await Api.setTemplateExpiry(contentId, iso);
+      }
+
+      // reset form
+      setForm(createEmptyForm());
+      setShowSuccess(true);
+      setMessage(null);
+
+      // optional: auto-redirect handled by overlay button
+      router.push(
+        `/content/templates?notice=${encodeURIComponent(
+          "Template created successfully."
+        )}`
+      );
     } catch (err: any) {
       console.error(err);
       await showCenteredAlert("Network error.");
@@ -268,8 +242,16 @@ export default function ContentCreatePage() {
   const previewFooter =
     form.footerText.trim() || "Sent via Campaign Engine";
 
+  const permissionBanner =
+    !privLoading && !canCreate ? (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to create templates.
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-6 relative">
+      {permissionBanner}
       {/* Success overlay */}
       {showSuccess && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -452,7 +434,7 @@ export default function ContentCreatePage() {
                   tags,
                 }))
               }
-              apiBase={API_BASE}
+              apiBase="/api"
             />
 
           </div>

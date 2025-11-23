@@ -21,5 +21,10 @@ router.post("/create", requirePrivilege("campaigns", "create"), createSession);
 router.post("/:id/pause", requirePrivilege("campaigns", "update"), pauseSession);
 router.post("/:id/resume", requirePrivilege("campaigns", "update"), resumeSession);
 router.post("/:id/cancel", requirePrivilege("campaigns", "archive"), cancelSession);
+router.get(
+  "/by-contact/:contactId",
+  requirePrivilege("campaigns", "view"),
+  listSessionsByContact
+);
 
 export default router;

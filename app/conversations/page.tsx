@@ -8,6 +8,7 @@ import type {
   ConversationMessage,
   CampaignSession,
 } from "@/lib/types";
+import { usePrivilege } from "@/lib/permissions";
 
 function statusPill(status: ConversationThread["status"]) {
   const base = "pill";
@@ -36,9 +37,15 @@ export default function ConversationsPage() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const { canView, canUpdate, loading: privLoading } = usePrivilege("conversations");
 
   useEffect(() => {
     const load = async () => {
+      if (privLoading) return;
+      if (!canView) {
+        setError("You do not have permission to view conversations.");
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -52,7 +59,7 @@ export default function ConversationsPage() {
       }
     };
     load();
-  }, []);
+  }, [canView, privLoading]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -95,6 +102,10 @@ export default function ConversationsPage() {
   }, [selectedThread?.contactId]);
 
   const handleSend = async () => {
+    if (!canUpdate) {
+      setSendError("You do not have permission to send messages.");
+      return;
+    }
     if (!selectedThread || !draft.trim()) return;
 
     const nextMessage: ConversationMessage = {
@@ -131,6 +142,14 @@ export default function ConversationsPage() {
     }
   };
 
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view conversations.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -140,14 +159,16 @@ export default function ConversationsPage() {
         </div>
         <div className="flex gap-2">
           <button className="btn btn-ghost">Export</button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setShowComposer(true);
-            }}
-          >
-            Send message to user
-          </button>
+          {canUpdate && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShowComposer(true);
+              }}
+            >
+              Send message to user
+            </button>
+          )}
         </div>
       </div>
 
@@ -271,35 +292,37 @@ export default function ConversationsPage() {
                 ))}
               </div>
 
-              <div className="pt-3 border-t">
-                {showComposer ? (
-                  <>
-                    <div className="flex items-center gap-2 max-w-2xl">
-                      <textarea
-                        rows={2}
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        placeholder="Type a reply..."
-                        className="w-full max-w-xl resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                      />
-                      <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
-                        {sending ? "Sending..." : "Send"}
-                      </button>
-                    </div>
-                    {sendError ? (
-                      <div className="mt-2 text-xs text-rose-700">{sendError}</div>
-                    ) : null}
-                    <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
-                      <span className="pill">WhatsApp</span>
-                      <span className="pill">Callbell</span>
-                    </div>
-                  </>
-                ) : (
-                  <button className="btn btn-primary" onClick={() => setShowComposer(true)}>
-                    Send message to user
-                  </button>
-                )}
-              </div>
+              {canUpdate && (
+                <div className="pt-3 border-t">
+                  {showComposer ? (
+                    <>
+                      <div className="flex items-center gap-2 max-w-2xl">
+                        <textarea
+                          rows={2}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          placeholder="Type a reply..."
+                          className="w-full max-w-xl resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                        <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
+                          {sending ? "Sending..." : "Send"}
+                        </button>
+                      </div>
+                      {sendError ? (
+                        <div className="mt-2 text-xs text-rose-700">{sendError}</div>
+                      ) : null}
+                      <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
+                        <span className="pill">WhatsApp</span>
+                        <span className="pill">Callbell</span>
+                      </div>
+                    </>
+                  ) : (
+                    <button className="btn btn-primary" onClick={() => setShowComposer(true)}>
+                      Send message to user
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">

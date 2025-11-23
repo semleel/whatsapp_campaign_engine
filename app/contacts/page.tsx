@@ -1,3 +1,8 @@
+"use client";
+
+import { useMemo } from "react";
+import { usePrivilege } from "@/lib/permissions";
+
 const contacts = [
   {
     contactid: 101,
@@ -18,6 +23,18 @@ const contacts = [
 ];
 
 export default function ContactsPage() {
+  const { canView, canUpdate, loading } = usePrivilege("contacts");
+
+  const rows = useMemo(() => contacts, []);
+
+  if (!loading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view contacts.
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -42,7 +59,7 @@ export default function ContactsPage() {
             </tr>
           </thead>
           <tbody>
-            {contacts.map((contact) => (
+            {rows.map((contact) => (
               <tr key={contact.contactid} className="border-t">
                 <td className="px-3 py-2">
                   <div className="font-medium">{contact.name}</div>
@@ -53,9 +70,13 @@ export default function ContactsPage() {
                 <td className="px-3 py-2 text-muted-foreground">{contact.campaign}</td>
                 <td className="px-3 py-2 text-muted-foreground">{contact.lastSession}</td>
                 <td className="px-3 py-2 text-right">
-                  <a href={`/contacts/${contact.contactid}`} className="rounded border px-3 py-1">
-                    View
-                  </a>
+                  {canUpdate ? (
+                    <a href={`/contacts/${contact.contactid}`} className="rounded border px-3 py-1">
+                      View / Edit
+                    </a>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">View only</span>
+                  )}
                 </td>
               </tr>
             ))}

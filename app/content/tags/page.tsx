@@ -1,10 +1,11 @@
-"use client";
+ "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
 
 type Tag = {
   tagid: number;
@@ -29,6 +30,8 @@ export default function TagsPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { canView, canCreate, canUpdate, canArchive, loading: privLoading } =
+    usePrivilege("content");
 
   const [filter, setFilter] = useState<FilterStatus>("All");
 
@@ -71,14 +74,15 @@ export default function TagsPage() {
 
   const loadTags = async () => {
     try {
+      if (privLoading) return;
+      if (!canView) {
+        setError("You do not have permission to view tags.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
-      const res = await fetch(`${API_BASE}/api/tags?includeDeleted=true`);
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
-      const data: Tag[] = await res.json();
+      const data: Tag[] = await Api.listTags(true);
       setTags(data);
     } catch (e: any) {
       console.error(e);
@@ -91,7 +95,7 @@ export default function TagsPage() {
   useEffect(() => {
     void loadTags();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canView, privLoading]);
 
   const showMsg = (msg: string) => {
     setMessage(msg);
@@ -110,6 +114,10 @@ export default function TagsPage() {
 
   const createTag = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      showMsg("You do not have permission to create tags.");
+      return;
+    }
     if (!newName.trim()) {
       showMsg("Tag name is required");
       return;
@@ -121,32 +129,26 @@ export default function TagsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newName.trim() }),
       });
-
-      const ct = res.headers.get("content-type") || "";
-      const data = ct.includes("application/json")
-        ? await res.json()
-        : await res.text();
-
       if (!res.ok) {
-        const errMsg =
-          typeof data === "string"
-            ? data
-            : data?.error || data?.message || "Failed to create tag";
-        throw new Error(errMsg);
+        const txt = await res.text();
+        throw new Error(txt || `HTTP ${res.status}`);
       }
-
       setNewName("");
       showMsg("Tag created");
       await loadTags();
-    } catch (e: any) {
-      console.error(e);
-      showMsg(e?.message || "Failed to create tag");
+    } catch (err: any) {
+      console.error(err);
+      showMsg(err?.message || "Failed to create tag");
     } finally {
       setCreating(false);
     }
   };
 
   const startEdit = (tag: Tag) => {
+    if (!canUpdate) {
+      showMsg("You do not have permission to edit tags.");
+      return;
+    }
     setEditingId(tag.tagid);
     setEditName(tag.name);
   };
@@ -156,348 +158,259 @@ export default function TagsPage() {
     setEditName("");
   };
 
-  const saveEdit = async (tagid: number) => {
-    if (!editName.trim()) {
-      showMsg("Tag name cannot be empty");
+  const saveEdit = async () => {
+    if (!editingId) return;
+    if (!canUpdate) {
+      showMsg("You do not have permission to edit tags.");
+      return;
+    }
+    const name = editName.trim();
+    if (!name) {
+      showMsg("Name is required");
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/tags/${tagid}`, {
+      const res = await fetch(`${API_BASE}/api/tags/${editingId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName.trim() }),
+        body: JSON.stringify({ name }),
       });
-
-      const ct = res.headers.get("content-type") || "";
-      const data = ct.includes("application/json")
-        ? await res.json()
-        : await res.text();
-
       if (!res.ok) {
-        const errMsg =
-          typeof data === "string"
-            ? data
-            : data?.error || data?.message || "Failed to update tag";
-        throw new Error(errMsg);
+        const txt = await res.text();
+        throw new Error(txt || `HTTP ${res.status}`);
       }
-
       showMsg("Tag updated");
       setEditingId(null);
       setEditName("");
       await loadTags();
-    } catch (e: any) {
-      console.error(e);
-      showMsg(e?.message || "Failed to update tag");
+    } catch (err: any) {
+      console.error(err);
+      showMsg(err?.message || "Failed to update tag");
     }
   };
 
-  // actual archive call
-  const performArchive = async (tag: Tag) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/tags/${tag.tagid}/archive`, {
-        method: "POST",
-      });
-      const txt = await res.text();
-      if (!res.ok) {
-        throw new Error(txt || "Failed to archive tag");
-      }
-      showMsg("Tag archived");
-      await loadTags();
-    } catch (e: any) {
-      console.error(e);
-      showMsg(e?.message || "Failed to archive tag");
+  const handleArchive = (tag: Tag) => {
+    if (!canArchive) {
+      showMsg("You do not have permission to archive tags.");
+      return;
     }
-  };
-
-  // actual recover call
-  const performRecover = async (tag: Tag) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/tags/${tag.tagid}/recover`, {
-        method: "POST",
-      });
-      const txt = await res.text();
-      if (!res.ok) {
-        throw new Error(txt || "Failed to recover tag");
-      }
-      showMsg("Tag recovered");
-      await loadTags();
-    } catch (e: any) {
-      console.error(e);
-      showMsg(e?.message || "Failed to recover tag");
-    }
-  };
-
-  // open confirm modals (same UX as template page)
-  const archiveTag = (tag: Tag) => {
     openConfirm({
       title: "Archive tag?",
-      message: `This will archive the tag "${tag.name}" so it no longer appears in the active list.`,
+      message: `Archive tag "${tag.name}"?`,
       confirmLabel: "Archive",
-      cancelLabel: "Cancel",
-      onConfirm: () => {
-        closeConfirm();
-        void performArchive(tag);
-      },
+      onConfirm: () => doArchive(tag.tagid),
     });
   };
 
-  const recoverTag = (tag: Tag) => {
+  const handleRecover = (tag: Tag) => {
+    if (!canUpdate) {
+      showMsg("You do not have permission to update tags.");
+      return;
+    }
     openConfirm({
       title: "Recover tag?",
-      message: `This will restore the tag "${tag.name}" so it appears again in the list.`,
+      message: `Recover tag "${tag.name}"?`,
       confirmLabel: "Recover",
-      cancelLabel: "Cancel",
-      onConfirm: () => {
-        closeConfirm();
-        void performRecover(tag);
-      },
+      onConfirm: () => doRecover(tag.tagid),
     });
   };
 
-  const formatDate = (value?: string | null) => {
-    if (!value) return "-";
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
+  const doArchive = async (id: number) => {
+    const res = await fetch(`/api/tags/${id}/archive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showMsg("Tag archived.");
+    await loadTags();
   };
+
+  const doRecover = async (id: number) => {
+    const res = await fetch(`/api/tags/${id}/recover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error(await res.text());
+    showMsg("Tag recovered.");
+    await loadTags();
+  };
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view tags.
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="p-6 text-sm text-muted-foreground">Loading tags...</div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 text-sm text-red-600">{error}</div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold">Tags</h3>
+          <h3 className="text-lg font-semibold">Content Tags</h3>
           <p className="text-sm text-muted-foreground">
-            Define reusable tags to classify templates, similar to genres on
-            Steam.
+            Organize templates with reusable tags. Archived tags remain linked to history.
           </p>
         </div>
-        <Link
-          href="/content/templates"
-          className="text-sm text-primary hover:underline"
-        >
-          Back to Template Library
-        </Link>
-      </div>
-
-      {/* Info / message row */}
-      {message && (
-        <div className="rounded-md border bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-          {message}
-        </div>
-      )}
-      {error && (
-        <div className="rounded-md border bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error}
-        </div>
-      )}
-
-      {/* Create new tag */}
-      <form
-        onSubmit={createTag}
-        className="rounded-xl border bg-card p-4 flex flex-wrap items-center gap-3"
-      >
-        <div className="flex-1 min-w-[220px]">
-          <label className="block text-xs font-medium text-muted-foreground mb-1">
-            New tag name
-          </label>
-          <input
-            type="text"
-            className="w-full rounded-md border px-3 py-2 text-sm"
-            placeholder="e.g. Open World, Promotions, OTP"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={creating}
-          className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-50"
-        >
-          {creating ? "Creating..." : "Add Tag"}
-        </button>
-      </form>
-
-      {/* List + filters */}
-      <div className="rounded-xl border bg-card p-4 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h4 className="text-sm font-semibold">Tag list</h4>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-muted-foreground">Filter:</span>
-            <div className="inline-flex rounded-md border bg-background p-1">
-              {(["All", "Active", "Archived"] as FilterStatus[]).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => setFilter(f)}
-                  className={`px-3 py-1 rounded-md ${
-                    filter === f
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {f}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {loading ? (
-          <p className="text-xs text-muted-foreground">Loading tags...</p>
-        ) : filteredTags.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            No tags found. Try changing the filter or create your first tag
-            above.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    ID
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    Name
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    Status
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    Created
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    Updated
-                  </th>
-                  <th className="px-3 py-2 text-left font-medium text-xs">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTags.map((tag) => {
-                  const archived = !!tag.isdeleted;
-                  const isEditing = editingId === tag.tagid;
-
-                  return (
-                    <tr key={tag.tagid} className="border-t">
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {tag.tagid}
-                      </td>
-                      <td className="px-3 py-2 text-sm">
-                        {isEditing ? (
-                          <input
-                            className="w-full rounded-md border px-2 py-1 text-sm"
-                            value={editName}
-                            onChange={(e) => setEditName(e.target.value)}
-                          />
-                        ) : (
-                          tag.name
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        <span
-                          className={`inline-flex rounded-full border px-2 py-0.5 ${
-                            archived
-                              ? "bg-slate-100 text-slate-600 border-slate-300"
-                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          }`}
-                        >
-                          {archived ? "Archived" : "Active"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {formatDate(tag.createdat)}
-                      </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {formatDate(tag.updatedat)}
-                      </td>
-                      <td className="px-3 py-2 text-xs">
-                        {isEditing ? (
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="rounded-md border px-2 py-1"
-                              onClick={() => saveEdit(tag.tagid)}
-                            >
-                              Save
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-md border px-2 py-1 text-muted-foreground"
-                              onClick={cancelEdit}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="text-primary hover:underline"
-                              onClick={() => startEdit(tag)}
-                            >
-                              Edit
-                            </button>
-                            {!archived ? (
-                              <button
-                                type="button"
-                                className="text-red-500 hover:underline"
-                                onClick={() => archiveTag(tag)}
-                              >
-                                Archive
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="text-emerald-600 hover:underline"
-                                onClick={() => recoverTag(tag)}
-                              >
-                                Recover
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        {canCreate && (
+          <Link
+            href="/content/tags/create"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm hover:opacity-90"
+          >
+            New Tag
+          </Link>
         )}
       </div>
 
-      {/* Confirm Modal – same style as template page */}
-      {confirm.open && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="w-full max-w-sm rounded-lg bg-card p-4 shadow-lg">
-            <h3 className="text-sm font-semibold mb-2">{confirm.title}</h3>
-            <p className="text-xs text-muted-foreground mb-4">
-              {confirm.message}
-            </p>
-            <div className="flex justify-end gap-2 text-xs">
-              <button
-                type="button"
-                className="px-3 py-1 rounded border"
-                onClick={closeConfirm}
-              >
-                {confirm.cancelLabel || "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="px-3 py-1 rounded bg-primary text-primary-foreground"
-                onClick={() => confirm.onConfirm && confirm.onConfirm()}
-              >
-                {confirm.confirmLabel || "Confirm"}
-              </button>
-            </div>
-          </div>
+      {message && (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+          {message}
         </div>
       )}
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          className="rounded-md border px-3 py-2 text-sm"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as FilterStatus)}
+        >
+          <option value="All">All</option>
+          <option value="Active">Active</option>
+          <option value="Archived">Archived</option>
+        </select>
+        <span className="text-xs text-muted-foreground">{tags.length} tags</span>
+      </div>
+
+      {/* Create form */}
+      {canCreate && (
+        <form onSubmit={createTag} className="flex flex-wrap items-center gap-2">
+          <input
+            className="w-full max-w-xs rounded-md border px-3 py-2 text-sm"
+            placeholder="New tag name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button
+            type="submit"
+            className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60"
+            disabled={creating}
+          >
+            {creating ? "Creating..." : "Create"}
+          </button>
+        </form>
+      )}
+
+      {/* Tag table */}
+      <div className="rounded-xl border overflow-x-auto bg-card">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium">Name</th>
+              <th className="px-3 py-2 text-left font-medium">Status</th>
+              <th className="px-3 py-2 text-left font-medium">Updated</th>
+              <th className="px-3 py-2 text-right font-medium">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredTags.map((tag) => {
+              const isArchived = !!tag.isdeleted;
+              const active = !isArchived;
+              return (
+                <tr key={tag.tagid} className="border-t">
+                  <td className="px-3 py-2">
+                    {editingId === tag.tagid ? (
+                      <input
+                        className="rounded-md border px-2 py-1 text-sm"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                      />
+                    ) : (
+                      <span className="font-medium">{tag.name}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {active ? (
+                      <span className="pill bg-emerald-100 text-emerald-700">Active</span>
+                    ) : (
+                      <span className="pill bg-slate-100 text-slate-700">Archived</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {tag.updatedat ? new Date(tag.updatedat).toLocaleString() : "-"}
+                  </td>
+                  <td className="px-3 py-2 text-right space-x-2">
+                    {editingId === tag.tagid ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={saveEdit}
+                          className="rounded-md border px-2 py-1 text-xs"
+                          disabled={!canUpdate}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="rounded-md border px-2 py-1 text-xs"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {canUpdate && active && (
+                          <button
+                            type="button"
+                            onClick={() => startEdit(tag)}
+                            className="rounded-md border px-2 py-1 text-xs"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        {active && canArchive && (
+                          <button
+                            type="button"
+                            onClick={() => handleArchive(tag)}
+                            className="rounded-md border px-2 py-1 text-xs text-rose-700 border-rose-200"
+                          >
+                            Archive
+                          </button>
+                        )}
+                        {!active && canUpdate && (
+                          <button
+                            type="button"
+                            onClick={() => handleRecover(tag)}
+                            className="rounded-md border px-2 py-1 text-xs"
+                          >
+                            Recover
+                          </button>
+                        )}
+                        {!canUpdate && !canArchive && (
+                          <span className="text-xs text-muted-foreground">View only</span>
+                        )}
+                      </>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

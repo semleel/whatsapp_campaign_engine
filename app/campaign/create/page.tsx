@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
 import type { CampaignCreatePayload } from "@/lib/types";
 import { showCenteredAlert } from "@/lib/showAlert";
+import { usePrivilege } from "@/lib/permissions";
 
 type SelectOption = { id: string; name: string; code?: string };
 
 export default function CampaignCreatePage() {
   const router = useRouter();
+  const { canCreate, loading: privLoading } = usePrivilege("campaigns");
   const [formData, setFormData] = useState({
     campaignName: "",
     objective: "",
@@ -29,6 +31,7 @@ export default function CampaignCreatePage() {
 
   useEffect(() => {
     (async () => {
+      if (privLoading || !canCreate) return;
       try {
         const regionData = await Api.listRegions();
         setRegions(
@@ -42,7 +45,7 @@ export default function CampaignCreatePage() {
         console.error("Error fetching regions:", err);
       }
     })();
-  }, []);
+  }, [privLoading, canCreate]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -86,6 +89,10 @@ export default function CampaignCreatePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      setKeywordMessage("You do not have permission to create campaigns.");
+      return;
+    }
     setSubmitting(true);
     setKeywordMessage("");
 
@@ -163,6 +170,14 @@ export default function CampaignCreatePage() {
       setSubmitting(false);
     }
   };
+
+  if (!privLoading && !canCreate) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to create campaigns.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

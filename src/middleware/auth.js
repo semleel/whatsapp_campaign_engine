@@ -24,7 +24,10 @@ export default async function authMiddleware(req, res, next) {
     }
 
     req.adminId = decoded.sub;
-    req.role = decoded.role;
+    const rawRole = decoded.role || tokenRow?.roletype || "";
+    const normalizedRole =
+      req.adminId === 1 ? "admin" : (rawRole || "").toString().toLowerCase();
+    req.role = normalizedRole;
     req.tokenRow = tokenRow;
 
     prisma.sessiontoken

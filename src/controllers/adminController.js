@@ -4,6 +4,7 @@ import prisma from "../config/prismaClient.js";
 const SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS || 10);
 const ALLOWED_ROLES = ["Admin", "Super", "Staff"];
 
+const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
 const toTitle = (role) => {
   if (!role) return null;
   const r = String(role).trim();
@@ -16,6 +17,23 @@ const normalizeRole = (role, fallback = null) => {
   if (!normalized) return fallback;
   return ALLOWED_ROLES.includes(normalized) ? normalized : null;
 };
+const DEFAULT_BASELINE_PRIVILEGES = [
+  "overview",
+  "campaigns",
+  "content",
+  "flows",
+  "contacts",
+  "integration",
+  "reports",
+  "system",
+  "conversations",
+].map((resource) => ({
+  resource,
+  view: true,
+  create: false,
+  update: false,
+  archive: false,
+}));
 
 export async function listAdmins(req, res) {
   const rows = await prisma.admin.findMany({
@@ -27,10 +45,18 @@ export async function listAdmins(req, res) {
       phonenum: true,
       is_active: true,
       createdat: true,
+      _count: { select: { staff_privilege: true } },
     },
     orderBy: { adminid: "asc" },
   });
-  const normalized = rows.map((r) => ({ ...r, role: toTitle(r.role) }));
+  const normalized = rows.map((r) => {
+    const { _count, ...rest } = r;
+    return {
+      ...rest,
+      role: toTitle(r.role),
+      has_privileges: (_count?.staff_privilege || 0) > 0,
+    };
+  });
   return res.json(normalized);
 }
 
@@ -46,10 +72,16 @@ export async function getAdmin(req, res) {
       phonenum: true,
       is_active: true,
       createdat: true,
+      _count: { select: { staff_privilege: true } },
     },
   });
   if (!admin) return res.status(404).json({ error: "Admin not found" });
-  return res.json({ ...admin, role: toTitle(admin.role) });
+  const { _count, ...rest } = admin;
+  return res.json({
+    ...rest,
+    role: toTitle(admin.role),
+    has_privileges: (_count?.staff_privilege || 0) > 0,
+  });
 }
 
 export async function createAdmin(req, res) {
@@ -74,6 +106,42 @@ export async function createAdmin(req, res) {
     },
   });
 
+  // Apply general baseline privileges (adminid = 0) to new staff by default
+  let appliedBaseline = false;
+  try {
+    let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+
+    // If no baseline exists yet, seed it with the default workspace access (view-only)
+    if (!baseline.length) {
+      await prisma.staff_privilege.createMany({
+        data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
+          ...row,
+          adminid: BASELINE_ADMIN_ID,
+        })),
+        skipDuplicates: true,
+      });
+      baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+    }
+
+    if (baseline.length) {
+      await prisma.staff_privilege.createMany({
+        data: baseline.map((row) => ({
+          adminid: admin.adminid,
+          resource: row.resource,
+          view: row.view,
+          create: row.create,
+          update: row.update,
+          archive: row.archive,
+        })),
+        skipDuplicates: true,
+      });
+      appliedBaseline = true;
+    }
+  } catch (err) {
+    // Do not fail staff creation if baseline copy fails
+    console.error("Failed to apply baseline privileges to new staff:", err);
+  }
+
   return res.status(201).json({
     adminid: admin.adminid,
     name: admin.name,
@@ -81,6 +149,7 @@ export async function createAdmin(req, res) {
     role: admin.role,
     phonenum: admin.phonenum,
     is_active: admin.is_active,
+    has_privileges: appliedBaseline,
   });
 }
 
