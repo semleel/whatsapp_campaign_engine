@@ -1,19 +1,16 @@
 "use client";
 
+import type React from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
+import { Api } from "@/lib/client";
+import type { TemplateDetail, TemplateListItem } from "@/lib/types";
 
-type TemplateSummary = {
-  contentid: number;
-  title: string;
-  type: string | null;
-  status: string | null;
+type TemplateSummary = TemplateListItem & {
   lang?: string | null;
-  category: string | null;
-  updatedat?: string | null;
   createdat?: string | null;
   expiresat?: string | null;
   mediaurl?: string | null;
@@ -35,10 +32,79 @@ type TemplateWithPreview = TemplateSummary & {
   headerText?: string | null;
   headerMediaType?: "image" | "video" | "document" | string | null;
   buttons?: ButtonItem[];
+  tags?: string[];
 };
 
 const STATUS_OPTIONS = ["All", "Draft", "Active", "Archived", "approved"];
 const PAGE_SIZE_OPTIONS = [8, 12, 20];
+
+const INLINE_FORMATTERS = [
+  {
+    regex: /\*\*(.+?)\*\*/g,
+    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
+  },
+  {
+    regex: /\*(.+?)\*/g,
+    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
+  },
+  {
+    regex: /~~(.+?)~~/g,
+    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
+  },
+  {
+    regex: /`([^`]+)`/g,
+    wrap: (content: string, key: string) => (
+      <code key={key} className="bg-muted px-1 rounded text-[11px]">
+        {content}
+      </code>
+    ),
+  },
+];
+
+function formatWhatsAppLine(line: string, keyPrefix: string) {
+  let segments: React.ReactNode[] = [line];
+
+  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
+    const next: React.ReactNode[] = [];
+
+    segments.forEach((seg, segIdx) => {
+      if (typeof seg !== "string") {
+        next.push(seg);
+        return;
+      }
+
+      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(seg)) !== null) {
+        if (match.index > lastIndex) {
+          next.push(seg.slice(lastIndex, match.index));
+        }
+
+        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < seg.length) {
+        next.push(seg.slice(lastIndex));
+      }
+    });
+
+    segments = next;
+  });
+
+  return segments;
+}
+
+function renderFormattedLines(text: string, placeholder: string) {
+  const lines = text ? text.split("\n") : [placeholder];
+
+  return lines.map((line, idx) => {
+    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
+    return <p key={`line-${idx}`}>{content}</p>;
+  });
+}
 
 export default function TemplateLibraryPage() {
   const [items, setItems] = useState<TemplateWithPreview[]>([]);
@@ -48,6 +114,7 @@ export default function TemplateLibraryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
+  const [tagFilter, setTagFilter] = useState<string>("All");
 
   // pagination
   const [pageSize, setPageSize] = useState<number>(12);
@@ -69,10 +136,7 @@ export default function TemplateLibraryPage() {
         setLoading(true);
         setError(null);
 
-        // includeDeleted=true so we can show Archived
-        const rawSummaries: TemplateSummary[] = await Api.listTemplates({
-          includeDeleted: true,
-        });
+        const rawSummaries: TemplateSummary[] = await Api.listTemplates(true);
 
         const summaries = rawSummaries.map((item) => ({
           contentid: item.contentid,
@@ -80,8 +144,8 @@ export default function TemplateLibraryPage() {
           type: item.type || "message",
           status: item.status || "Draft",
           category: item.category ?? null,
-          lang: (item as any).lang ?? (item as any).defaultlang ?? "",
-          updatedat: item.updatedat ?? (item as any).lastupdated ?? null,
+          lang: item.lang ?? item.defaultlang ?? "",
+          updatedat: item.updatedat ?? item.lastupdated ?? null,
           createdat: item.createdat ?? null,
           expiresat: item.expiresat ?? null,
           mediaurl: item.mediaurl ?? null,
@@ -115,6 +179,7 @@ export default function TemplateLibraryPage() {
                 data.footertext ??
                 (placeholders?.footerText as string | null) ??
                 null;
+              const tags = (data as TemplateDetail).tags ?? [];
 
               const isdeleted: boolean | null =
                 data.isdeleted ?? t.isdeleted ?? null;
@@ -140,6 +205,7 @@ export default function TemplateLibraryPage() {
                 headerMediaType,
                 buttons,
                 isdeleted,
+                tags,
               };
             } catch (err) {
               console.error("Template detail fetch failed:", err);
@@ -167,6 +233,16 @@ export default function TemplateLibraryPage() {
     return Array.from(set);
   }, [items]);
 
+  const tagOptions = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((i) => {
+      (i.tags || []).forEach((tag) => {
+        if (tag && tag.trim()) set.add(tag);
+      });
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [items]);
+
   const filteredItems = useMemo(() => {
     return items.filter((t) => {
       const matchesSearch =
@@ -191,14 +267,19 @@ export default function TemplateLibraryPage() {
         categoryFilter === "All" ||
         (t.category || "").toLowerCase() === categoryFilter.toLowerCase();
 
-      return matchesSearch && matchesStatus && matchesCategory;
+      const hasTag = (t.tags || []).some(
+        (tg) => tg.toLowerCase() === tagFilter.toLowerCase()
+      );
+      const matchesTag = tagFilter === "All" || hasTag;
+
+      return matchesSearch && matchesStatus && matchesCategory && matchesTag;
     });
-  }, [items, search, statusFilter, categoryFilter]);
+  }, [items, search, statusFilter, categoryFilter, tagFilter]);
 
   // reset page when filter/search/pageSize change
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, categoryFilter, pageSize]);
+  }, [search, statusFilter, categoryFilter, tagFilter, pageSize]);
 
   const totalItems = filteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -328,6 +409,19 @@ export default function TemplateLibraryPage() {
 
           <select
             className="rounded-md border px-3 py-2 text-sm"
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.target.value)}
+          >
+            <option value="All">Tag: All</option>
+            {tagOptions.map((tag) => (
+              <option key={tag} value={tag}>
+                Tag: {tag}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-md border px-3 py-2 text-sm"
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
           >
@@ -434,9 +528,10 @@ export default function TemplateLibraryPage() {
                         )}
 
                         <div className="rounded-lg bg-background px-3 py-2 text-[11px] leading-relaxed shadow-sm">
-                          {shortBody.split("\n").map((line, idx) => (
-                            <p key={idx}>{line}</p>
-                          ))}
+                          {renderFormattedLines(
+                            shortBody,
+                            "Body text here. Message body and personalization notes."
+                          )}
                         </div>
 
                         {t.footerText && (

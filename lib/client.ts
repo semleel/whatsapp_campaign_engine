@@ -72,7 +72,8 @@ import type {
   FlowCreatePayload,
   FlowDefinition,
   FlowUpdatePayload,
-  CampaignSession
+  CampaignSession,
+  TagItem
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -328,9 +329,9 @@ export const Api = {
   // Templates (content)
   // =========================================================
 
-  listTemplates: (opts: { includeDeleted?: boolean } = {}) =>
+  listTemplates: (includeDeleted = false) =>
     http<TemplateListItem[]>(
-      `/api/template/list${opts.includeDeleted ? "?includeDeleted=true" : ""}`
+      `/api/template/list${includeDeleted ? "?includeDeleted=true" : ""}`
     ),
 
   getTemplate: (id: number | string) =>
@@ -375,6 +376,68 @@ export const Api = {
 
   deleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}`, {
+      method: "DELETE",
+    }),
+
+
+  attachTags: (templateId: number, tags: string[]) =>
+    http(`/api/template/${templateId}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tags }),
+    }),
+
+  setTemplateExpiry: (templateId: number, expiresAt: string) =>
+    http(`/api/template/${templateId}/expire`, {
+      method: "POST",
+      body: JSON.stringify({ expiresAt }),
+    }),
+
+  softDeleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}/delete`, {
+      method: "POST",
+    }),
+
+  recoverTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ isdeleted: false }),
+    }),
+
+  // =========================================================
+  // Tags
+  // =========================================================
+  listTags: (includeDeleted = false) =>
+    http<TagItem[]>(`/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`),
+
+  getTag: (id: number | string) => http<TagItem>(`/api/tags/${id}`),
+
+  createTag: (name: string) =>
+    http<{ message: string; data: TagItem }>("/api/tags", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  updateTag: (
+    id: number | string,
+    payload: { name?: string; isdeleted?: boolean }
+  ) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  archiveTag: (id: number | string) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}/archive`, {
+      method: "POST",
+    }),
+
+  recoverTag: (id: number | string) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}/recover`, {
+      method: "POST",
+    }),
+
+  deleteTag: (id: number | string) =>
+    http<{ message: string }>(`/api/tags/${id}`, {
       method: "DELETE",
     }),
 

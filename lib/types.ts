@@ -289,6 +289,17 @@ export interface KeywordCheckResponse {
 }
 
 // =============================================
+// Tag types
+// =============================================
+export interface TagItem {
+    tagid: number;
+    name: string;
+    isdeleted?: boolean | null;
+    createdat?: string | null;
+    updatedat?: string | null;
+}
+
+// =============================================
 // Template types
 // =============================================
 export interface TemplateListItem {
@@ -301,12 +312,14 @@ export interface TemplateListItem {
     currentversion: number | null;
     updatedat?: string | null;
     lastupdated?: string | null;
+    isdeleted?: boolean | null;
 }
 
 export interface TemplateDetail extends TemplateListItem {
     description?: string | null;
     mediaurl?: string | null;
     body?: string | null;
+    tags?: string[];
 }
 
 export type TemplatePayload = {

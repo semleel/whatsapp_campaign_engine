@@ -6,6 +6,7 @@ import {
   updateTag,
   archiveTag,
   recoverTag,
+  deleteTag,
 } from "../controllers/tagController.js";
 
 const router = express.Router();
@@ -18,6 +19,9 @@ router.get("/:id", getTag);
 
 // POST /api/tags
 router.post("/", createTag);
+
+// DELETE /api/tags/:id
+router.delete("/:id", deleteTag);
 
 // PUT /api/tags/:id  (rename or toggle isdeleted)
 router.put("/:id", updateTag);

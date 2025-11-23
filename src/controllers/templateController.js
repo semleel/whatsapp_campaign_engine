@@ -91,6 +91,7 @@ export async function listTemplates(req, res) {
   }
 }
 
+// src/controllers/templateController.js
 export async function getTemplate(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -100,12 +101,29 @@ export async function getTemplate(req, res) {
 
     const content = await prisma.content.findUnique({
       where: { contentid: id },
+      include: {
+        contenttag: {
+          include: {
+            tag: true,
+          },
+        },
+      },
     });
+
     if (!content) {
       return res.status(404).json({ error: "Template not found" });
     }
 
-    return res.status(200).json(mapContentToResponse(content));
+    // only keep non-deleted tags
+    const tags =
+      content.contenttag
+        ?.filter((ct) => !ct.tag?.isdeleted)
+        .map((ct) => ct.tag.name) ?? [];
+
+    return res.status(200).json({
+      ...mapContentToResponse(content),
+      tags,
+    });
   } catch (err) {
     console.error("Template get error:", err);
     return res.status(500).json({ error: err.message });
@@ -187,6 +205,39 @@ export async function softDeleteTemplate(req, res) {
     return res.status(200).json({ message: "Template archived (soft deleted)" });
   } catch (err) {
     console.error("Soft delete error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function deleteTemplate(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+
+    if (Number.isNaN(id)) {
+      return res.status(400).json({ error: "Invalid template id" });
+    }
+
+    // Remove dependent records (e.g., tags, key mappings) before deleting the template.
+    await prisma.$transaction([
+      prisma.contenttag.deleteMany({ where: { contentid: id } }),
+      prisma.keymapping.deleteMany({ where: { contentid: id } }),
+      prisma.content.delete({ where: { contentid: id } }),
+    ]);
+
+    return res
+      .status(200)
+      .json({ message: "Template deleted permanently" });
+  } catch (err) {
+    console.error("Hard delete error:", err);
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Template not found" });
+    }
+    if (err.code === "P2003") {
+      return res.status(409).json({
+        error:
+          "Unable to delete template due to existing references. Please detach any linked records and try again.",
+      });
+    }
     return res.status(500).json({ error: err.message });
   }
 }
