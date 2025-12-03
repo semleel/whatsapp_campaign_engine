@@ -22,7 +22,7 @@ function withBase(path: string) {
   return `${base}/${target}`;
 }
 
-import { getStoredToken } from "./auth";
+import { getStoredToken, clearStoredSession } from "./auth";
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
@@ -43,6 +43,18 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
       details = await res.json();
     } catch {
       // ignore
+    }
+    if (res.status === 401) {
+      // Token missing/expired/revoked; reset client session so the user can log back in cleanly.
+      if (typeof window !== "undefined") {
+        clearStoredSession();
+        // Optional navigation hint; we avoid throwing if push fails.
+        try {
+          window.location.href = "/login";
+        } catch {
+          // ignore navigation errors
+        }
+      }
     }
     const defaultMessage =
       res.status === 403

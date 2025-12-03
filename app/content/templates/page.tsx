@@ -32,9 +32,30 @@ type TemplateWithPreview = TemplateSummary & {
   headerMediaType?: "image" | "video" | "document" | string | null;
   buttons?: ButtonItem[];
   tags?: string[];
+  interactiveType?: "buttons" | "menu";
+  menu?: TemplateMenu | null;
 };
 
-const STATUS_OPTIONS = ["All", "Draft", "Active", "Archived", "approved"];
+type TemplateInteractiveType = "buttons" | "menu";
+
+type TemplateMenuOption = {
+  id: string;
+  title: string;
+  description?: string;
+};
+
+type TemplateMenuSection = {
+  id: string;
+  title?: string;
+  options: TemplateMenuOption[];
+};
+
+type TemplateMenu = {
+  buttonLabel: string;
+  sections: TemplateMenuSection[];
+};
+
+const STATUS_OPTIONS = ["All", "Active", "Archived"];
 const PAGE_SIZE_OPTIONS = [8, 12, 20];
 
 const INLINE_FORMATTERS = [
@@ -59,6 +80,57 @@ const INLINE_FORMATTERS = [
     ),
   },
 ];
+
+const normalizeStatus = (status?: string | null) => {
+  const value = (status || "").trim();
+  if (!value) return "Active";
+  const lower = value.toLowerCase();
+  if (lower === "archived") return "Archived";
+  if (lower === "draft" || lower === "approved") return "Active";
+  return value;
+};
+
+function ensureMenu(existing: any): TemplateMenu | null {
+  if (!existing) return null;
+
+  const normalizeOption = (opt: any): TemplateMenuOption => ({
+    id: opt?.id || Math.random().toString(36).slice(2, 10),
+    title: (opt?.title || "").toString(),
+    description: (opt?.description || "").toString(),
+  });
+
+  const normalizeSections = (sections?: any[]): TemplateMenuSection[] =>
+    (sections || []).map((sec) => ({
+      id: sec?.id || Math.random().toString(36).slice(2, 10),
+      title: sec?.title || "",
+      options: Array.isArray(sec?.options)
+        ? sec.options.map((opt: any) => normalizeOption(opt))
+        : [],
+    }));
+
+  const legacyOptions = Array.isArray((existing as any)?.options)
+    ? (existing.options as any[]).map((opt) => normalizeOption(opt))
+    : [];
+
+  let sections = normalizeSections(existing.sections);
+
+  if (!sections.length && legacyOptions.length) {
+    sections = [
+      {
+        id: Math.random().toString(36).slice(2, 10),
+        title: "",
+        options: legacyOptions,
+      },
+    ];
+  }
+
+  if (!sections.length) return null;
+
+  return {
+    buttonLabel: (existing.buttonLabel || "Main Menu").toString(),
+    sections,
+  };
+}
 
 function formatWhatsAppLine(line: string, keyPrefix: string) {
   let segments: React.ReactNode[] = [line];
@@ -141,7 +213,7 @@ export default function TemplateLibraryPage() {
           contentid: item.contentid,
           title: item.title || `Template ${item.contentid}`,
           type: item.type || "message",
-          status: item.status || "Draft",
+          status: normalizeStatus(item.status),
           category: item.category ?? null,
           lang: item.lang ?? item.defaultlang ?? "",
           updatedat: item.updatedat ?? item.lastupdated ?? null,
@@ -171,9 +243,19 @@ export default function TemplateLibraryPage() {
                 data.headerMediaType ??
                 (placeholders?.headerMediaType as string | null) ??
                 "image";
+              const interactiveType: TemplateInteractiveType =
+                data.interactiveType === "menu" || placeholders?.menu
+                  ? "menu"
+                  : "buttons";
+              const menu =
+                interactiveType === "menu"
+                  ? ensureMenu((data as any).menu ?? placeholders?.menu)
+                  : null;
               const buttons =
-                data.buttons ??
-                ((placeholders?.buttons as ButtonItem[] | undefined) ?? []);
+                interactiveType === "buttons"
+                  ? data.buttons ??
+                    ((placeholders?.buttons as ButtonItem[] | undefined) ?? [])
+                  : [];
               const footerText =
                 data.footertext ??
                 (placeholders?.footerText as string | null) ??
@@ -188,7 +270,9 @@ export default function TemplateLibraryPage() {
                 title: data.title ?? t.title,
                 type: data.type ?? t.type,
                 // show "Archived" in UI if soft-deleted
-                status: isdeleted ? "Archived" : data.status ?? t.status,
+                status: isdeleted
+                  ? "Archived"
+                  : normalizeStatus(data.status ?? t.status),
                 category: data.category ?? t.category ?? null,
                 lang: data.lang ?? data.defaultlang ?? t.lang ?? "",
                 description: data.description ?? null,
@@ -203,6 +287,8 @@ export default function TemplateLibraryPage() {
                 headerText,
                 headerMediaType,
                 buttons,
+                interactiveType,
+                menu,
                 isdeleted,
                 tags,
               };
@@ -251,15 +337,16 @@ export default function TemplateLibraryPage() {
 
       // status logic respects soft delete
       let matchesStatus = true;
-      const statusNorm = (t.status || "").toLowerCase();
-      const filterNorm = statusFilter.toLowerCase();
+      const statusNorm = (t.status || "").trim().toLowerCase();
+      const filterNorm = statusFilter.trim().toLowerCase();
+      const isArchived = !!t.isdeleted || statusNorm === "archived";
 
       if (statusFilter === "All") {
-        matchesStatus = !t.isdeleted; // hide archived from "All"
+        matchesStatus = !isArchived; // hide archived from "All"
       } else if (statusFilter === "Archived") {
-        matchesStatus = !!t.isdeleted; // only archived
+        matchesStatus = isArchived; // include soft-deleted or status=Archived
       } else {
-        matchesStatus = !t.isdeleted && statusNorm === filterNorm;
+        matchesStatus = !isArchived && statusNorm === filterNorm;
       }
 
       const matchesCategory =
@@ -289,9 +376,9 @@ export default function TemplateLibraryPage() {
   const pageItems = filteredItems.slice(startIndex, endIndex);
 
   const renderStatusPill = (t: TemplateWithPreview) => {
-    const normalized = t.isdeleted
-      ? "archived"
-      : (t.status || "").toLowerCase();
+    const statusNorm = (t.status || "").trim().toLowerCase();
+    const isArchived = !!t.isdeleted || statusNorm === "archived";
+    const normalized = isArchived ? "archived" : statusNorm;
 
     let styles =
       "bg-slate-100 text-slate-700 border border-slate-200 text-xs rounded-full px-2 py-0.5";
@@ -304,12 +391,8 @@ export default function TemplateLibraryPage() {
     } else if (normalized === "archived") {
       styles =
         "bg-slate-200 text-slate-700 border border-slate-300 text-xs rounded-full px-2 py-0.5";
-    } else if (normalized === "approved") {
-      styles =
-        "bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs rounded-full px-2 py-0.5";
     }
-
-    const label = t.isdeleted ? "Archived" : t.status || "Unknown";
+    const label = isArchived ? "Archived" : t.status || "Unknown";
     return <span className={styles}>{label}</span>;
   };
 
@@ -539,7 +622,7 @@ export default function TemplateLibraryPage() {
                           </p>
                         )}
 
-                        {t.buttons && t.buttons.length > 0 && (
+                        {t.interactiveType === "buttons" && t.buttons && t.buttons.length > 0 && (
                           <div className="mt-2 border-t pt-2 space-y-1">
                             {t.buttons.map((btn, i) => (
                               <button
@@ -552,7 +635,48 @@ export default function TemplateLibraryPage() {
                             ))}
                           </div>
                         )}
+
+                        {t.interactiveType === "menu" && t.menu && (
+                          <div className="mt-2 border-t pt-2 space-y-1">
+                            <button
+                              type="button"
+                              className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
+                            >
+                              {t.menu.buttonLabel || "Main Menu"}
+                            </button>
+                          </div>
+                        )}
                       </div>
+
+                      {t.interactiveType === "menu" && t.menu && t.menu.sections.length > 0 && (
+                        <div className="mt-2 rounded-md border bg-muted/30 p-2 text-[11px] space-y-2">
+                          {t.menu.sections.map((section, sIdx) => (
+                            <div
+                              key={section.id}
+                              className="space-y-1 border-b last:border-b-0 border-slate-200/70 pb-1 last:pb-0"
+                            >
+                              <div className="font-semibold text-[10px] uppercase tracking-wide text-slate-700">
+                                {(section.title || "").trim() || `Section ${sIdx + 1}`}
+                              </div>
+                              {section.options.length === 0 ? (
+                                <div className="text-[10px] text-muted-foreground">
+                                  No options in this section.
+                                </div>
+                              ) : (
+                                section.options.map((opt, oIdx) => (
+                                  <div key={opt.id} className="flex items-start gap-2">
+                                    <span>-</span>
+                                    <span>
+                                      {(opt.title || `Option ${oIdx + 1}`).toString()}
+                                      {opt.description ? ` - ${opt.description}` : ""}
+                                    </span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {/* bottom meta */}
                       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">

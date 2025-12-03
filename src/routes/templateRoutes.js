@@ -14,6 +14,8 @@ import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
+router.use(authMiddleware);
+
 router.post("/create", createTemplate);
 router.get("/list", listTemplates);
 router.get("/:id", getTemplate);
