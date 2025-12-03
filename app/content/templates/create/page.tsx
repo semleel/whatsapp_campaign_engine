@@ -8,6 +8,9 @@ import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 import TagSelector from "../../../../components/TagSelector";
 
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
+
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
   { value: "my", label: "Bahasa Melayu" },

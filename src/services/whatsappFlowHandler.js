@@ -1,20 +1,14 @@
 // src/services/whatsappFlowHandler.js
-
-// Service to handle WhatsApp message flow + keyword commands
-// All the text + button handling, built on top of flowEngine.
 import prisma from "../config/prismaClient.js";
 import { error } from "../utils/logger.js";
-import { processIncomingMessage } from "./flowEngine.js";
-import { buildWhatsappMenuList } from "./whatsappMenuService.js";
+import { ensureResetKeywordPointsToStart, processIncomingMessage } from "./flowEngine.js";
 import {
-    buildContentSequence,
     loadContentByKey,
-    buildWhatsappMessageFromContent,
+    buildContentSequence,
 } from "./whatsappContentService.js";
 import {
     buildGlobalFallbackBundle,
     loadGlobalFallbackMessage,
-    buildKeywordHintText, // optional but available
 } from "./whatsappFallbackService.js";
 
 function makeResult({
@@ -36,13 +30,111 @@ function makeResult({
 }
 
 /**
- * Handle text commands + keyword flow
+ * Allowed input guard (same as before)
+ */
+async function enforceAllowedInputIfNeeded(lastOutboundKey, textLower, contact) {
+    if (!lastOutboundKey) return null;
+
+    const allowed = await prisma.allowedinput.findMany({
+        where: { triggerkey: lastOutboundKey },
+        select: { allowedvalue: true },
+        take: 50,
+    });
+
+    if (!allowed.length) return null;
+
+    const allowedSet = new Set(
+        allowed.map((a) => (a.allowedvalue || "").toLowerCase())
+    );
+
+    if (allowedSet.has("any")) return null;
+    if (allowedSet.has(textLower)) return null;
+
+    // NODE fallback
+    const nodeFb = await prisma.fallback.findFirst({
+        where: { scope: "NODE", value: lastOutboundKey },
+    });
+
+    if (nodeFb?.contentkeyid) {
+        const fbContent = await loadContentByKey(nodeFb.contentkeyid, contact);
+        if (fbContent) {
+            return makeResult({
+                replyText: fbContent.replyText,
+                replyMessageObj: fbContent.replyMessageObj,
+                contentkeyid: fbContent.contentkeyid,
+            });
+        }
+    }
+
+    const { main, extras } = await buildGlobalFallbackBundle(contact);
+    return makeResult({
+        replyText: main.replyText,
+        replyMessageObj: main.replyMessageObj,
+        contentkeyid: main.contentkeyid || null,
+        extraReplies: extras,
+    });
+}
+
+/**
+ * Resolve system keyword → userflow jump (DB configurable)
+ */
+async function resolveSystemKeyword(normalizedLower) {
+    if (normalizedLower === "/reset") {
+        const resetTarget = await ensureResetKeywordPointsToStart();
+        if (resetTarget?.userflowid) {
+            return {
+                keyword: "/reset",
+                userflowid: resetTarget.userflowid,
+                systemflowid: resetTarget.systemflowid || null,
+                systemflowcode: "START",
+            };
+        }
+    }
+
+    const sysKw = await prisma.system_keyword.findFirst({
+        where: {
+            keyword: normalizedLower,
+            is_active: true,
+        },
+        include: {
+            system_flow: true,
+        },
+    });
+
+    if (!sysKw) return null;
+
+    if (normalizedLower === "/reset" && sysKw.system_flow?.code !== "START") {
+        const resetTarget = await ensureResetKeywordPointsToStart();
+        if (resetTarget?.userflowid) {
+            return {
+                keyword: "/reset",
+                userflowid: resetTarget.userflowid,
+                systemflowid: resetTarget.systemflowid || null,
+                systemflowcode: "START",
+            };
+        }
+    }
+
+    // If connected to a system_flow (code alias), prefer that flow's userflowid
+    const targetUserflowid =
+        sysKw.system_flow?.userflowid || sysKw.userflowid;
+
+    return {
+        keyword: sysKw.keyword,
+        userflowid: targetUserflowid,
+        systemflowid: sysKw.systemflowid || null,
+        systemflowcode: sysKw.system_flow?.code || null,
+    };
+}
+
+/**
+ * Handle ALL text via flowEngine + system keywords.
  */
 export async function handleFlowOrKeyword({ from, text, contact }) {
     const normalizedOriginal = (text || "").trim();
     const normalizedLower = normalizedOriginal.toLowerCase();
 
-    // --- Last outbound content key (to know if we are waiting for a button) ---
+    // last outbound key
     let lastOutboundKey = null;
     if (contact?.contactid) {
         const lastOutbound = await prisma.message.findFirst({
@@ -53,107 +145,24 @@ export async function handleFlowOrKeyword({ from, text, contact }) {
         lastOutboundKey = lastOutbound?.contentkeyid || null;
     }
 
-    const BUTTON_ONLY_KEYS = new Set([
-        "ONBOARD_LANGUAGE",
-        "ONBOARD_TOS_CONFIRM",
-        "ONBOARD_MAIN_MENU",
-    ]);
+    const sysJump = await resolveSystemKeyword(normalizedLower);
 
-    // If we are expecting a button tap, do NOT accept random text
-    if (
-        BUTTON_ONLY_KEYS.has(lastOutboundKey) &&
-        normalizedLower &&
-        normalizedLower !== "/start-over"
-    ) {
-        const selectContent = await loadContentByKey(
-            "ONBOARD_SELECT_OPTION",
-            contact
-        ); // throws if missing
-        return makeResult({
-            replyText: selectContent.replyText,
-            replyMessageObj: selectContent.replyMessageObj,
-            contentkeyid: selectContent.contentkeyid,
-        });
-    }
-
-    // --- Admin reset: cancel sessions + reset TOS/lang, then show reminder only ---
-    if (normalizedLower === "/start-over") {
-        if (contact?.contactid) {
-            await prisma.campaignsession.updateMany({
-                where: { contactid: contact.contactid },
-                data: { sessionstatus: "CANCELLED", checkpoint: null },
-            });
-            await prisma.contact.update({
-                where: { contactid: contact.contactid },
-                data: { tos_accepted: false, lang: null },
-            });
-            contact.tos_accepted = false;
-            contact.lang = null;
-        }
-
-        const reminderText =
-            "Session has been reset.\n\nPlease type any word to start.";
-        return makeResult({
-            replyText: reminderText,
-            replyMessageObj: { type: "text", text: { body: reminderText } },
-        });
-    }
-
-    // --- If TOS not accepted yet: ANY word starts onboarding (first-time or after reset) ---
-    if (!contact?.tos_accepted) {
-        const seq = await buildContentSequence(
-            ["ONBOARD_WELCOME", "ONBOARD_LANGUAGE"],
+    // Allowed-input guard
+    const guardRes = sysJump
+        ? null
+        : await enforceAllowedInputIfNeeded(
+            lastOutboundKey,
+            normalizedLower,
             contact
         );
-        if (seq.length) {
-            const [first, ...rest] = seq;
-            return makeResult({
-                replyText: first.replyText,
-                replyMessageObj: first.replyMessageObj,
-                contentkeyid: first.contentkeyid,
-                extraReplies: rest,
-            });
-        }
-        throw new Error("Missing ONBOARD_WELCOME / ONBOARD_LANGUAGE content in DB");
-    }
+    if (guardRes) return guardRes;
 
-    // From here, TOS already accepted
-
-    // "start" → go straight to main menu
-    if (normalizedLower === "start") {
-        const mainMenu = await loadContentByKey("ONBOARD_MAIN_MENU", contact);
-        if (!mainMenu) {
-            throw new Error("Missing ONBOARD_MAIN_MENU content in DB");
-        }
-        return makeResult({
-            replyText: mainMenu.replyText,
-            replyMessageObj: mainMenu.replyMessageObj,
-            contentkeyid: mainMenu.contentkeyid,
-        });
-    }
-
-    // MENU → list of active campaigns
-    if (normalizedLower === "menu") {
-        const menuMessage = await buildWhatsappMenuList();
-        return makeResult({
-            replyText: null,
-            replyMessageObj: menuMessage,
-        });
-    }
-
-    // JOIN → simple confirmation (placeholder for later flow)
-    if (normalizedLower === "join") {
-        const replyText =
-            "You have successfully joined the campaign. Please wait for further updates.";
-        return makeResult({
-            replyText,
-            replyMessageObj: { type: "text", text: { body: replyText } },
-        });
-    }
-
-    // Keyword-driven campaign flow
+    // Normal engine path
     try {
-        const flow = await processIncomingMessage({ from, text: normalizedOriginal });
+        const flow = await processIncomingMessage({
+            from,
+            text: normalizedOriginal,
+        });
 
         if (!flow || !flow.action) {
             const { main, extras } = await buildGlobalFallbackBundle(contact);
@@ -179,7 +188,7 @@ export async function handleFlowOrKeyword({ from, text, contact }) {
             let replyText = flow.reply;
             if (!replyText) {
                 const gf = await loadGlobalFallbackMessage(contact);
-                replyText = gf.replyText;
+                replyText = gf?.replyText || "Session state blocked.";
             }
             return makeResult({
                 replyText,
@@ -202,42 +211,32 @@ export async function handleFlowOrKeyword({ from, text, contact }) {
         if (flow.action === "moved") {
             const sessionid = flow.sessionid || null;
             const campaignid = flow.campaignid || null;
-            const contentkeyid = flow.nextKey || null;
+            const keysForReply = Array.isArray(flow.keysToSend) && flow.keysToSend.length
+                ? flow.keysToSend
+                : flow.nextKey
+                    ? [flow.nextKey]
+                    : [];
 
-            if (flow.nextKey) {
-                const km = await prisma.keymapping.findUnique({
-                    where: { contentkeyid: flow.nextKey },
-                    include: { content: true },
-                });
+            if (keysForReply.length) {
+                const seq = await buildContentSequence(
+                    keysForReply,
+                    contact,
+                    flow.userflowid || null
+                );
 
-                const content = km?.content || null;
-                if (content) {
-                    const ctx = {
-                        contact_name: contact?.name || contact?.phonenum || "there",
-                        phone: contact?.phonenum || "",
-                    };
-                    const built = buildWhatsappMessageFromContent(content, ctx);
+                if (seq.length) {
+                    const [first, ...rest] = seq;
                     return makeResult({
-                        replyText: built.replyText,
-                        replyMessageObj: built.message,
+                        replyText: first.replyText,
+                        replyMessageObj: first.replyMessageObj,
                         sessionid,
                         campaignid,
-                        contentkeyid,
+                        contentkeyid: first.contentkeyid,
+                        extraReplies: rest,
                     });
                 }
 
-                // Flow says "moved" but there is no content for this key → config error
-                throw new Error(
-                    `Missing content for flow.nextKey=${flow.nextKey} (campaignid=${campaignid || "null"
-                    })`
-                );
-            }
-
-            // flow.action === "moved" but no nextKey → should not happen in correct config
-            if (campaignid) {
-                throw new Error(
-                    `Flow returned action="moved" with no nextKey for campaignid=${campaignid}`
-                );
+                throw new Error(`Missing content for key=${keysForReply[0]}`);
             }
 
             const { main, extras } = await buildGlobalFallbackBundle(contact);
@@ -271,191 +270,14 @@ export async function handleFlowOrKeyword({ from, text, contact }) {
 }
 
 /**
- * Handle onboarding + menu button replies
+ * Button reply handler:
+ * Treat button id as normal input text.
  */
-export async function handleButtonReply({ id, contact }) {
-    // Normalize ID just in case
-    const btnId = (id || "").trim();
-
-    // LANG_EN / LANG_MS → store language
-    if (btnId === "LANG_EN" || btnId === "LANG_MS") {
-        const langCode = btnId === "LANG_EN" ? "en" : "ms";
-
-        if (contact?.contactid) {
-            await prisma.contact.update({
-                where: { contactid: contact.contactid },
-                data: { lang: langCode },
-            });
-            contact.lang = langCode;
-        }
-
-        // If TOS *not* accepted yet → show TOS + confirm
-        if (!contact?.tos_accepted) {
-            const seq = await buildContentSequence(
-                ["ONBOARD_TOS", "ONBOARD_TOS_CONFIRM"],
-                contact
-            );
-            if (seq.length) {
-                const [first, ...rest] = seq;
-                return makeResult({
-                    replyText: first.replyText,
-                    replyMessageObj: first.replyMessageObj,
-                    contentkeyid: first.contentkeyid,
-                    extraReplies: rest,
-                });
-            }
-
-            throw new Error("Missing ONBOARD_TOS / ONBOARD_TOS_CONFIRM content in DB");
-        }
-
-        // TOS already accepted → go straight back to main menu (no more TOS)
-        const mainMenu = await loadContentByKey("ONBOARD_MAIN_MENU", contact);
-        if (!mainMenu) {
-            throw new Error("Missing ONBOARD_MAIN_MENU content in DB");
-        }
-
-        return makeResult({
-            replyText: mainMenu.replyText,
-            replyMessageObj: mainMenu.replyMessageObj,
-            contentkeyid: mainMenu.contentkeyid,
-        });
-    }
-
-    // TOS_YES → Thank you + Main Menu
-    if (btnId === "TOS_YES") {
-        if (contact?.contactid) {
-            await prisma.contact.update({
-                where: { contactid: contact.contactid },
-                data: { tos_accepted: true },
-            });
-            contact.tos_accepted = true;
-        }
-
-        const seq = await buildContentSequence(
-            ["ONBOARD_THANK_YOU", "ONBOARD_MAIN_MENU"],
-            contact
-        );
-        if (seq.length) {
-            const [first, ...rest] = seq;
-            return makeResult({
-                replyText: first.replyText,
-                replyMessageObj: first.replyMessageObj,
-                contentkeyid: first.contentkeyid,
-                extraReplies: rest,
-            });
-        }
-
-        throw new Error("Missing ONBOARD_THANK_YOU / ONBOARD_MAIN_MENU content in DB");
-    }
-
-    // TOS_NO → Abort message (ONBOARD_ABORT)
-    if (btnId === "TOS_NO") {
-        const abortContent = await loadContentByKey("ONBOARD_ABORT", contact);
-        if (abortContent) {
-            return makeResult({
-                replyText: abortContent.replyText,
-                replyMessageObj: abortContent.replyMessageObj,
-                contentkeyid: abortContent.contentkeyid,
-            });
-        }
-
-        throw new Error("Missing ONBOARD_ABORT content in DB");
-    }
-
-    // JOIN_CAMPAIGN (from ONBOARD_MAIN_MENU)
-    // → show JOIN_CAMPAIGN_INSTRUCTION text + campaign LIST
-    if (btnId === "JOIN_CAMPAIGN") {
-        const intro = await buildKeywordHintText(contact); // content row
-        const menuMessage = await buildWhatsappMenuList();
-
-        return makeResult({
-            replyText: intro.replyText,
-            replyMessageObj: intro.replyMessageObj,
-            contentkeyid: intro.contentkeyid,
-            extraReplies: [
-                {
-                    replyText: null,
-                    replyMessageObj: menuMessage,
-                    contentkeyid: null,
-                },
-            ],
-        });
-    }
-
-    // CHANGE_LANG → show language selection again (buttons)
-    if (btnId === "CHANGE_LANG") {
-        const langContent = await loadContentByKey("ONBOARD_LANGUAGE", contact);
-        if (langContent) {
-            return makeResult({
-                replyText: langContent.replyText,
-                replyMessageObj: langContent.replyMessageObj,
-                contentkeyid: langContent.contentkeyid,
-            });
-        }
-        throw new Error("Missing ONBOARD_LANGUAGE content in DB");
-    }
-
-    // GLOBAL_START_OVER → behave like "start" command (no TOS reset)
-    if (btnId === "GLOBAL_START_OVER") {
-        if (contact?.tos_accepted) {
-            const mainMenu = await loadContentByKey("ONBOARD_MAIN_MENU", contact);
-            if (!mainMenu) {
-                throw new Error("Missing ONBOARD_MAIN_MENU content in DB");
-            }
-            return makeResult({
-                replyText: mainMenu.replyText,
-                replyMessageObj: mainMenu.replyMessageObj,
-                contentkeyid: mainMenu.contentkeyid,
-            });
-        } else {
-            const seq = await buildContentSequence(
-                ["ONBOARD_WELCOME", "ONBOARD_LANGUAGE"],
-                contact
-            );
-            if (seq.length) {
-                const [first, ...rest] = seq;
-                return makeResult({
-                    replyText: first.replyText,
-                    replyMessageObj: first.replyMessageObj,
-                    contentkeyid: first.contentkeyid,
-                    extraReplies: rest,
-                });
-            }
-            throw new Error(
-                "Missing ONBOARD_WELCOME / ONBOARD_LANGUAGE content in DB"
-            );
-        }
-    }
-
-    // From campaign detail card: JOIN button (for later real flow)
-    if (btnId.startsWith("CAMPAIGN_JOIN_")) {
-        const campaignIdStr = btnId.replace("CAMPAIGN_JOIN_", "");
-        const campaignId = parseInt(campaignIdStr, 10);
-
-        const replyText =
-            "You have successfully joined this campaign. You will receive updates soon.";
-        return makeResult({
-            replyText,
-            replyMessageObj: { type: "text", text: { body: replyText } },
-            campaignid: Number.isNaN(campaignId) ? null : campaignId,
-        });
-    }
-
-    // From campaign detail card: MENU button (list campaigns)
-    if (btnId === "BACK_TO_MENU") {
-        const menuMessage = await buildWhatsappMenuList();
-        return makeResult({
-            replyText: null,
-            replyMessageObj: menuMessage,
-        });
-    }
-
-    // Unknown button → GLOBAL fallback bundle
-    const { main, extras } = await buildGlobalFallbackBundle(contact);
-    return makeResult({
-        replyText: main.replyText,
-        replyMessageObj: main.replyMessageObj,
-        contentkeyid: main.contentkeyid || null,
-        extraReplies: extras,
+export async function handleButtonReply({ id, contact, from }) {
+    const btnText = (id || "").trim();
+    return handleFlowOrKeyword({
+        from,
+        text: btnText,
+        contact,
     });
 }

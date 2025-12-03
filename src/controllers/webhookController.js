@@ -188,64 +188,44 @@ export async function webhookHandler(req, res) {
         }
 
         if (!campaignId) {
-          // Fallback for misconfigured menus
           const { main, extras } = await buildGlobalFallbackBundle(contact);
           mainReplyText = main.replyText;
           mainReplyMessageObj = main.replyMessageObj;
           mainContentKeyId = main.contentkeyid || null;
           extraReplies = extras;
         } else {
-          // Load campaign with its entry key content
+          // Load campaign
           const campaign = await prisma.campaign.findUnique({
             where: { campaignid: campaignId },
-            include: {
-              keymapping: {
-                include: { content: true },
-              },
-            },
           });
-
-          const entryContent = campaign?.keymapping?.content;
 
           if (
             !campaign ||
             campaign.status !== "Active" ||
-            !campaign.contentkeyid ||
-            !entryContent ||
-            entryContent.isdeleted
+            !campaign.entry_contentkeyid ||   // ✅ admin defines entry in DB
+            !campaign.userflowid
           ) {
-            // Not launchable → show global fallback
             const { main, extras } = await buildGlobalFallbackBundle(contact);
             mainReplyText = main.replyText;
             mainReplyMessageObj = main.replyMessageObj;
             mainContentKeyId = main.contentkeyid || null;
             extraReplies = extras;
           } else {
-            // Start or reuse session for this campaign
-            const session = await findOrCreateSession(
-              contact.contactid,
-              campaign
-            );
+            // New signature: (contactid, { campaign, userflowid })
+            const session = await findOrCreateSession(contact.contactid, {
+              campaign,
+              userflowid: campaign.userflowid,
+            });
 
-            // Use the session checkpoint if it exists, otherwise fall back to campaign.contentkeyid
-            let entryKey =
-              session.checkpoint ||
-              campaign.contentkeyid ||
-              (await getEntryContentKeyForCampaign(campaign));
+            const entryKey = session.checkpoint || campaign.entry_contentkeyid;
 
-            if (entryKey && entryKey !== session.checkpoint) {
-              await prisma.campaignsession.update({
-                where: { campaignsessionid: session.campaignsessionid },
-                data: { checkpoint: entryKey, lastactiveat: new Date() },
-              });
-            }
-
-            const km = await prisma.keymapping.findUnique({
+            // ensure entry content exists
+            const km = await prisma.keymapping.findFirst({
               where: { contentkeyid: entryKey },
               include: { content: true },
             });
 
-            if (!km?.content) {
+            if (!km?.content || km.content.isdeleted) {
               const { main, extras } = await buildGlobalFallbackBundle(contact);
               mainReplyText = main.replyText;
               mainReplyMessageObj = main.replyMessageObj;
@@ -258,6 +238,17 @@ export async function webhookHandler(req, res) {
               };
               const built = buildWhatsappMessageFromContent(km.content, ctx);
 
+              // ✅ keep session consistent (so next user msg continues flow)
+              await prisma.campaignsession.update({
+                where: { campaignsessionid: session.campaignsessionid },
+                data: {
+                  checkpoint: entryKey,
+                  lastactiveat: new Date(),
+                  sessionstatus: "ACTIVE",
+                  current_userflowid: campaign.userflowid,
+                },
+              });
+
               mainReplyText = built.replyText;
               mainReplyMessageObj = built.message;
               mainContentKeyId = entryKey;
@@ -267,7 +258,8 @@ export async function webhookHandler(req, res) {
             }
           }
         }
-      } else if (
+      }
+      else if (
         message.type === "interactive" &&
         message.interactive?.type === "button_reply"
       ) {
@@ -279,7 +271,7 @@ export async function webhookHandler(req, res) {
           replyMessageObj,
           contentkeyid,
           extraReplies: extra,
-        } = await handleButtonReply({ id: btnId, contact });
+        } = await handleButtonReply({ id: btnId, contact, from });
 
         mainReplyText = replyText;
         mainReplyMessageObj = replyMessageObj;
@@ -378,3 +370,6 @@ export async function webhookHandler(req, res) {
     return res.sendStatus(500);
   }
 }
+
+
+

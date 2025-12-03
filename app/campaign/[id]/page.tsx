@@ -8,6 +8,7 @@ import type {
   RegionRef,
   CampaignStatusRef,
   KeywordEntry,
+  FlowListItem,
 } from "@/lib/types";
 import { showCenteredConfirm } from "@/lib/showAlert";
 
@@ -31,17 +32,18 @@ export default function CampaignDetailPage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "", // still part of payload, but no input field
+    userFlowID: "",
     camStatusID: "",
     startAt: "",
     endAt: "",
   });
   const [regions, setRegions] = useState<RegionRef[]>([]);
   const [statuses, setStatuses] = useState<CampaignStatusRef[]>([]);
+  const [userFlows, setUserFlows] = useState<FlowListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  // ✅ keyword state
+  // keyword state
   const [keywords, setKeywords] = useState<KeywordEntry[]>([]);
   const [keywordDraft, setKeywordDraft] = useState("");
   const [keywordLoading, setKeywordLoading] = useState(false);
@@ -51,16 +53,18 @@ export default function CampaignDetailPage() {
     if (!id) return;
     (async () => {
       try {
-        const [regionRes, statusRes, campaignRes, keywordRes] =
+        const [regionRes, statusRes, campaignRes, keywordRes, flowRes] =
           await Promise.all([
             Api.listRegions(),
             Api.listCampaignStatuses(),
             Api.getCampaign(id),
             Api.listKeywordsByCampaign(id),
+            Api.listFlows(),
           ]);
 
         setRegions(regionRes);
         setStatuses(statusRes);
+        setUserFlows(flowRes || []);
 
         setForm({
           campaignName: campaignRes.campaignname || "",
@@ -94,7 +98,7 @@ export default function CampaignDetailPage() {
     try {
       await Api.updateCampaign(id, {
         ...form,
-        userFlowID: "", // ensure user flow remains unset
+        userFlowID: form.userFlowID ? Number(form.userFlowID) : null,
       });
       setMessage("Campaign updated successfully.");
       setTimeout(() => router.push("/campaign"), 1000);
@@ -106,7 +110,7 @@ export default function CampaignDetailPage() {
     }
   };
 
-  // ✅ Add keyword for this campaign – with pre-check like create page
+  // Add keyword for this campaign - with pre-check like create page
   const handleAddKeyword = async () => {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw || !id) return;
@@ -142,7 +146,7 @@ export default function CampaignDetailPage() {
     }
   };
 
-  // ✅ Delete keyword
+  // Delete keyword
   const handleDeleteKeyword = async (keywordid: number) => {
     const confirmed = await showCenteredConfirm("Remove this keyword from this campaign?");
     if (!confirmed) return;
@@ -239,6 +243,26 @@ export default function CampaignDetailPage() {
               ))}
             </select>
           </label>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-[#8e8e9e] uppercase">
+              User Flow
+            </label>
+            <select
+              className="w-full p-2.5 border border-[#e0e0e7] rounded bg-white text-sm"
+              value={form.userFlowID}
+              onChange={(e) =>
+                setForm((prev) => ({ ...prev, userFlowID: e.target.value }))
+              }
+              required
+            >
+              <option value="">Select flow...</option>
+              {userFlows.map((uf) => (
+                <option key={uf.userflowid} value={uf.userflowid}>
+                  {uf.userflowname}
+                </option>
+              ))}
+            </select>
+          </div>
           <label className="space-y-1 text-sm font-medium">
             <span>Status</span>
             <select
@@ -335,7 +359,7 @@ export default function CampaignDetailPage() {
                       onClick={() => handleDeleteKeyword(k.keywordid)}
                       className="text-[11px] text-rose-600 hover:text-rose-700"
                     >
-                      ✕
+                      x
                     </button>
                   </span>
                 ))}

@@ -1,3 +1,5 @@
+// src/controllers/sessionController.js
+
 import prisma from "../config/prismaClient.js";
 
 /**

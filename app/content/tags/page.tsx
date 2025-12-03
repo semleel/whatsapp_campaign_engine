@@ -5,7 +5,8 @@ import Link from "next/link";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
 
 type Tag = {
   tagid: number;

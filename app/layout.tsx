@@ -18,11 +18,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen`}>
         <AuthGate>
-          <div className="flex min-h-screen bg-background text-foreground">
+          <div className="flex h-screen min-h-screen bg-background text-foreground overflow-hidden">
             <Sidebar />
-            <main className="flex-1">
+            <main className="flex-1 flex flex-col overflow-hidden">
               <Topbar />
-              <div className="p-6">{children}</div>
+              <div className="flex-1 overflow-y-auto p-6">{children}</div>
             </main>
           </div>
         </AuthGate>

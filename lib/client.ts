@@ -1,6 +1,19 @@
+// lib/client.ts
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   "http://localhost:3000";
+
+const TOKEN_STORAGE_KEY = "auth_token";
+
+function getBearerToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 function withBase(path: string) {
   if (/^https?:\/\//i.test(path)) return path;
@@ -72,8 +85,12 @@ import type {
   FlowCreatePayload,
   FlowDefinition,
   FlowUpdatePayload,
+  TagItem,
+  SystemFlow,
+  SystemKeyword,
   CampaignSession,
-  TagItem
+  SystemFlowActivationRef,
+  FlowStatus
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -461,6 +478,74 @@ export const Api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+
+  deleteFlowDefinition: (id: string | number) =>
+    http<{ message: string }>(`/api/flow/${id}`, {
+      method: "DELETE",
+    }),
+
+  updateFlowStatus: (id: string | number, status: FlowStatus) =>
+    http<{ message: string; status: FlowStatus }>(`/api/flow/${id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+
+  // =========================================================
+  // System -> System Flows & Keywords
+  // =========================================================
+
+  listSystemFlows: () => http<SystemFlow[]>("/api/system/flows"),
+
+  getActiveSystemStartFlow: () =>
+    http<SystemFlowActivationRef | null>("/api/system/start-flow"),
+
+  setActiveSystemStartFlow: (userflowid: number) =>
+    http<SystemFlowActivationRef>("/api/system/start-flow", {
+      method: "POST",
+      body: JSON.stringify({ userflowid }),
+    }),
+
+  getActiveSystemEndFlow: () =>
+    http<SystemFlowActivationRef | null>("/api/system/end-flow"),
+
+  setActiveSystemEndFlow: (userflowid: number) =>
+    http<SystemFlowActivationRef>("/api/system/end-flow", {
+      method: "POST",
+      body: JSON.stringify({ userflowid }),
+    }),
+
+  listSystemKeywords: () => http<SystemKeyword[]>("/api/system/keywords"),
+
+  createSystemKeyword: (payload: {
+    keyword: string;
+    userflowid: number;
+    systemflowid?: number | null;
+    is_active?: boolean;
+  }) =>
+    http<SystemKeyword>("/api/system/keywords", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  updateSystemKeyword: (
+    keyword: string,
+    payload: {
+      keyword?: string;
+      userflowid?: number;
+      systemflowid?: number | null;
+      is_active?: boolean;
+    }
+  ) =>
+    http<SystemKeyword>(`/api/system/keywords/${encodeURIComponent(keyword)}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteSystemKeyword: (keyword: string) =>
+    http<{ ok: boolean }>(
+      `/api/system/keywords/${encodeURIComponent(keyword)}`,
+      { method: "DELETE" }
+    ),
 
   // =========================================================
   // Sessions (campaignsession)

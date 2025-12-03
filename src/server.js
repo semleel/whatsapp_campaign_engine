@@ -34,15 +34,9 @@ const allowedOrigins =
 
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      const lanOrigin = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))/.test(origin);
-      if (allowedOrigins.includes(origin) || lanOrigin) {
-        return callback(null, true);
-      }
-      return callback(new Error("Not allowed by CORS"), false);
-    },
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    origin: "http://localhost:3001", // frontend origin
+    // Allow PATCH so admins can toggle flow status from the UI
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );

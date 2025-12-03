@@ -1,85 +1,92 @@
 // src/services/whatsappFallbackService.js
-
-// Service to build global fallback WhatsApp messages
-// Global fallback + join-campaign instruction.
+import prisma from "../config/prismaClient.js";
 import { buildWhatsappMenuList } from "./whatsappMenuService.js";
-import {
-    loadContentByKey,
-} from "./whatsappContentService.js";
+import { loadContentByKey } from "./whatsappContentService.js";
 
 /**
- * JOIN_CAMPAIGN_INSTRUCTION from content table
+ * Resolve system flow ENTRY content by system_flow.code
  */
-export async function buildKeywordHintText(contact = null) {
-    const content = await loadContentByKey("JOIN_CAMPAIGN_INSTRUCTION", contact);
+async function loadSystemFlowEntryContent(code, contact) {
+    const sf = await prisma.system_flow.findFirst({
+        where: { code, is_active: true },
+        select: { userflowid: true },
+    });
+    if (!sf) throw new Error(`Missing active system_flow: ${code}`);
 
-    if (!content) {
-        throw new Error("Missing JOIN_CAMPAIGN_INSTRUCTION content in DB");
-    }
+    const entryFb = await prisma.fallback.findFirst({
+        where: {
+            userflowid: sf.userflowid,
+            scope: "FLOW",
+            value: "ENTRY",
+        },
+        select: { contentkeyid: true },
+    });
+    if (!entryFb?.contentkeyid)
+        throw new Error(`Missing ENTRY fallback for system_flow: ${code}`);
 
-    // shape: { replyText, replyMessageObj, contentkeyid }
-    return content;
+    return loadContentByKey(entryFb.contentkeyid, contact);
 }
 
 /**
- * Load GLOBAL_FALLBACK from DB (must exist)
+ * Build Reset button based on system_keyword tied to RESET flow
  */
-export async function loadGlobalFallbackMessage(contact) {
-    const res = await loadContentByKey("GLOBAL_FALLBACK", contact); // throws if missing
-    return res; // { replyText, replyMessageObj, contentkeyid }
+async function buildResetButton(contact) {
+    const sf = await prisma.system_flow.findFirst({
+        where: { code: "RESET", is_active: true },
+        select: { systemflowid: true },
+    });
+    if (!sf) throw new Error("Missing system_flow RESET");
+
+    const sk = await prisma.system_keyword.findFirst({
+        where: { systemflowid: sf.systemflowid, is_active: true },
+        select: { keyword: true },
+    });
+    if (!sk?.keyword) throw new Error("Missing system_keyword for RESET");
+
+    const entryContent = await loadSystemFlowEntryContent("RESET", contact);
+
+    const bodyText = entryContent.replyText || "Reset";
+    const btnId = sk.keyword; // e.g. "/reset"
+
+    return {
+        replyText: bodyText,
+        replyMessageObj: {
+            type: "interactive",
+            interactive: {
+                type: "button",
+                body: { text: bodyText },
+                action: {
+                    buttons: [
+                        {
+                            type: "reply",
+                            reply: { id: btnId, title: "Reset" },
+                        },
+                    ],
+                },
+            },
+        },
+    };
 }
 
 /**
  * Global fallback bundle:
- *  - GLOBAL_FALLBACK
- *  - JOIN_CAMPAIGN_INSTRUCTION
- *  - Campaign menu list
- *  - Start over button
+ * system_flow codes only.
  */
 export async function buildGlobalFallbackBundle(contact) {
-    // Main GLOBAL_FALLBACK
-    const main = await loadGlobalFallbackMessage(contact);
+    const main = await loadSystemFlowEntryContent("GLOBAL_FALLBACK", contact);
+    const joinHint = await loadSystemFlowEntryContent("JOIN_CAMPAIGN_HINT", contact);
 
-    // Join campaign instruction
-    const joinInstruction = await buildKeywordHintText(contact);
-
-    // Campaign menu
     const menuMessage = await buildWhatsappMenuList();
-    const menuReply = {
-        replyText: null,
-        replyMessageObj: menuMessage,
-        contentkeyid: null,
-    };
+    const menuReply = { replyText: null, replyMessageObj: menuMessage };
 
-    // Start over button
-    const startOverText = "Or you can start a new conversation.";
-    const startOverMessageObj = {
-        type: "interactive",
-        interactive: {
-            type: "button",
-            body: { text: startOverText },
-            action: {
-                buttons: [
-                    {
-                        type: "reply",
-                        reply: {
-                            id: "GLOBAL_START_OVER",
-                            title: "Start Over",
-                        },
-                    },
-                ],
-            },
-        },
-    };
-
-    const startOver = {
-        replyText: startOverText,
-        replyMessageObj: startOverMessageObj,
-        contentkeyid: null,
-    };
+    const resetButton = await buildResetButton(contact);
 
     return {
         main,
-        extras: [joinInstruction, menuReply, startOver],
+        extras: [joinHint, menuReply, resetButton],
     };
+}
+
+export async function loadGlobalFallbackMessage(contact) {
+    return loadSystemFlowEntryContent("GLOBAL_FALLBACK", contact);
 }

@@ -42,13 +42,20 @@ export const MENU: MenuSection[] = [
     id: "flows",
     label: "Flows",
     items: [
-      { label: "Flow List", href: "/flows", exact: true },
+      { label: "Flow Hub", href: "/flows", exact: true },
     ],
   },
   {
     id: "contacts",
     label: "Contacts",
     items: [{ label: "Contacts", href: "/contacts", exact: true }],
+  },
+  {
+    id: "conversations",
+    label: "Conversations",
+    items: [
+      { label: "Conversations List", href: "/conversations" },
+    ],
   },
   {
     id: "integration",
@@ -79,13 +86,6 @@ export const MENU: MenuSection[] = [
       { label: "Tokens", href: "/system/tokens" },
       { label: "Security Logs", href: "/system/logs" },
       { label: "WhatsApp Config", href: "/system/whatsapp" },
-    ],
-  },
-    {
-    id: "conversations",
-    label: "Conversations",
-    items: [
-      { label: "Conversations List", href: "/conversations/" },
     ],
   },
 ] as const;

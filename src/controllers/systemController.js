@@ -1,3 +1,5 @@
+// src/controllers/systemController.js
+
 import prisma from "../config/prismaClient.js";
 
 // GET /api/system/whatsapp-config

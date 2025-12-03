@@ -94,7 +94,7 @@ export default function Sidebar() {
   if (pathname === "/login") return null;
 
   return (
-    <aside className="hidden md:flex md:w-72 md:flex-col border-r border-border bg-sidebar text-sidebar-foreground">
+    <aside className="hidden md:flex md:w-72 md:flex-col md:sticky md:top-0 md:h-screen border-r border-border bg-sidebar text-sidebar-foreground">
       <div className="h-14 shrink-0 flex items-center px-4 border-b border-border">
         <Link href="/" className="text-lg font-semibold tracking-tight">
           Ops Control

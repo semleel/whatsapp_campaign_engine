@@ -1,254 +1,320 @@
+// src/controllers/flowController.js
 import prisma from "../config/prismaClient.js";
 
+const FLOW_TYPES = ["START", "CAMPAIGN", "END"];
+
+function normalizeFlowType(value) {
+    if (!value) return "CAMPAIGN";
+    const upper = String(value).toUpperCase();
+    return FLOW_TYPES.includes(upper) ? upper : "CAMPAIGN";
+}
+
+function normalizeFlowStatus(value) {
+    if (!value) return "Draft";
+    const formatted = String(value).trim();
+    return formatted === "Active" ? "Active" : "Draft";
+}
+
+// helpers stay the same
+function buildPlaceholdersFromNode(n = {}) {
+    const attachmentType = n.attachmentType || "none";
+    const attachmentUrl =
+        attachmentType !== "none" ? (n.attachmentUrl || null) : null;
+
+    const interactiveType = n.interactiveType || "none";
+    const buttons =
+        interactiveType === "buttons" ? (n.buttons || []) : [];
+    const listOptions =
+        interactiveType === "list" ? (n.listOptions || []) : [];
+
+    // decision extras (just metadata for now)
+    const decisionRules = Array.isArray(n.decisionRules) ? n.decisionRules : [];
+    const elseKey = n.elseKey || null;
+
+    // api extras (metadata; engine can ignore if not used)
+    const endpointId = n.endpointId ?? null;
+    const apiSuccessKey = n.apiSuccessKey || null;
+    const apiErrorKey = n.apiErrorKey || null;
+
+    const waitTimeoutMin = n.waitTimeoutMin ?? null;
+    const templateId = n.templateId ?? null;
+    const jumpNextKey = n.jumpNextKey ?? null;
+
+    return {
+        attachmentType,
+        attachmentUrl,
+        interactiveType,
+        buttons,
+        listOptions,
+        decisionRules,
+        elseKey,
+        endpointId,
+        apiSuccessKey,
+        apiErrorKey,
+        waitTimeoutMin,
+        templateId,
+        jumpNextKey,
+    };
+}
+
+function extractNodeExtras(placeholders) {
+    const p = placeholders || {};
+    return {
+        attachmentType: p.attachmentType || "none",
+        attachmentUrl: p.attachmentUrl || null,
+        interactiveType: p.interactiveType || "none",
+        buttons: Array.isArray(p.buttons) ? p.buttons : [],
+        listOptions: Array.isArray(p.listOptions) ? p.listOptions : [],
+        decisionRules: Array.isArray(p.decisionRules) ? p.decisionRules : [],
+        elseKey: p.elseKey || null,
+        endpointId: p.endpointId ?? null,
+        apiSuccessKey: p.apiSuccessKey || null,
+        apiErrorKey: p.apiErrorKey || null,
+        waitTimeoutMin: p.waitTimeoutMin ?? null,
+        templateId: p.templateId ?? null,
+        jumpNextKey: p.jumpNextKey ?? null,
+    };
+}
+
+function normalizeUiMetadata(raw) {
+    if (!raw) return null;
+    if (typeof raw !== "object") return null;
+    try {
+        return JSON.parse(JSON.stringify(raw));
+    } catch (err) {
+        console.warn("normalizeUiMetadata failed:", err);
+        return null;
+    }
+}
+
+/**
+ * GET /api/flow/list
+ * Returns flows for table listing.
+ */
 export async function listFlows(req, res) {
     try {
         const flows = await prisma.userflow.findMany({
-            orderBy: { userflowid: "asc" },
             select: {
                 userflowid: true,
                 userflowname: true,
-                keymapping: {
-                    select: {
-                        contentkeyid: true,
-                        content: {
-                            select: {
-                                updatedat: true,
-                                createdat: true,
-                            },
-                        },
-                    },
+                description: true,
+                status: true,
+                createdat: true,
+                updatedat: true,
+                flow_type: true,
+                _count: {
+                    select: { keymapping: true },
                 },
-                fallback: {
-                    select: {
-                        scope: true,
-                        value: true,
-                        contentkeyid: true,
-                    },
-                },
+            },
+            orderBy: { userflowid: "desc" },
+        });
+
+        const flowIds = flows.map((f) => f.userflowid);
+
+        // FLOW-level fallbacks only (ENTRY + GLOBAL_FALLBACK)
+        const flowFallbacks = await prisma.fallback.findMany({
+            where: {
+                userflowid: { in: flowIds },
+                scope: "FLOW",
+            },
+            select: {
+                userflowid: true,
+                value: true,         // "ENTRY" | "GLOBAL_FALLBACK"
+                contentkeyid: true,
             },
         });
 
+        // group fallbacks by flowid
+        const fbMap = new Map();
+        for (const fb of flowFallbacks) {
+            if (!fbMap.has(fb.userflowid)) fbMap.set(fb.userflowid, []);
+            fbMap.get(fb.userflowid).push(fb);
+        }
+
         const mapped = flows.map((f) => {
-            const entry = f.fallback.find(
-                (fb) => fb.scope === "FLOW" && fb.value === "ENTRY"
-            );
-            const globalFb = f.fallback.find(
-                (fb) => fb.scope === "FLOW" && fb.value === "GLOBAL_FALLBACK"
-            );
+            let entryKey = null;
+            let fallbackKey = null;
 
-            const nodeCount = f.keymapping.length;
-
-            // take the latest content updatedat/createdat as "updatedAt"
-            let latest = null;
-            for (const km of f.keymapping) {
-                const ts = km.content.updatedat || km.content.createdat;
-                if (!ts) continue;
-                if (!latest || ts > latest) latest = ts;
+            const fbs = fbMap.get(f.userflowid) || [];
+            for (const fb of fbs) {
+                if (fb.value === "ENTRY") entryKey = fb.contentkeyid;
+                if (fb.value === "GLOBAL_FALLBACK") fallbackKey = fb.contentkeyid;
             }
 
             return {
                 userflowid: f.userflowid,
                 userflowname: f.userflowname,
-                nodeCount,
-                entryKey: entry?.contentkeyid ?? null,
-                fallbackKey: globalFb?.contentkeyid ?? null,
-                status: "Active", // you can later make this real if you add a column
-                updatedAt: latest ? latest.toISOString() : null,
+                description: f.description || null,
+                nodeCount: f._count?.keymapping || 0,
+                entryKey,
+                fallbackKey,
+                status: normalizeFlowStatus(f.status),
+                updatedAt: f.updatedat || f.createdat,
+                flowType: f.flow_type || "CAMPAIGN",
             };
         });
 
-        return res.status(200).json(mapped);
+        return res.json(mapped);
     } catch (err) {
         console.error("listFlows error:", err);
-        return res.status(500).json({ error: err.message || "Failed to list flows" });
+        return res
+            .status(500)
+            .json({ error: err.message || "Failed to list flows" });
     }
 }
 
 /**
- * POST /api/flows
- *
- * Body: FlowCreatePayload
- * - userflowname: string
- * - entryKey: string
- * - fallbackKey: string
- * - description?: string | null
- * - nodes: [
- *     {
- *       key: string;
- *       type: string;
- *       content: string;
- *       allowedInputs?: string[];
- *       branches?: { input: string; next: string }[];
- *       fallbackKey?: string | null;
- *     }
- *   ]
+ * POST /api/flow/create
  */
 export async function createFlowDefinition(req, res) {
     try {
-        const payload = req.body || {};
         const {
             userflowname,
+            description,
+            nodes = [],
+            edges = [],
+            fallbackEdges = [],
             entryKey,
             fallbackKey,
-            description,
-            nodes,
-        } = payload;
+            flowType,
+        } = req.body || {};
 
-        // Basic validation
-        if (!userflowname || typeof userflowname !== "string") {
-            return res.status(400).json({ error: "userflowname is required" });
-        }
-        if (!Array.isArray(nodes) || nodes.length === 0) {
-            return res.status(400).json({ error: "At least one node is required" });
-        }
-
-        const trimmedName = userflowname.trim();
-
-        // Extra defensive checks (mirroring your frontend validate)
-        const keys = nodes.map((n) => (n.key || "").trim());
-        if (keys.some((k) => !k)) {
+        if (!userflowname || !nodes.length) {
             return res.status(400).json({
-                error: "Every node must have a non-empty key (CONTENT_KEY).",
+                error: "userflowname and nodes are required",
             });
         }
 
-        const lowerKeys = keys.map((k) => k.toLowerCase());
-        const hasDuplicates = lowerKeys.some(
-            (k, idx) => lowerKeys.indexOf(k) !== idx
+        const preparedNodes = [...nodes];
+
+        const hasGF = preparedNodes.some((n) => String(n.key || n.label) === "GLOBAL_FALLBACK");
+        if (!hasGF) {
+            preparedNodes.unshift({
+                key: "GLOBAL_FALLBACK",
+                type: "message",
+                body: "Sorry, I didn't understand that. Please try again.",
+                allowedInputs: [],
+                fallbackKey: null,
+            });
+        }
+
+        const nodeKeySet = new Set(
+            preparedNodes
+                .map((n) => String(n.key || n.label || "").trim())
+                .filter(Boolean)
         );
-        if (hasDuplicates) {
-            return res.status(400).json({
-                error: "Duplicate node keys found. CONTENT_KEY must be unique per flow.",
-            });
-        }
 
-        const entryKeyLower = (entryKey || "").trim().toLowerCase();
-        const fallbackKeyLower = (fallbackKey || "").trim().toLowerCase();
+        const normalizedFlowType = normalizeFlowType(flowType);
 
-        if (!lowerKeys.includes(entryKeyLower)) {
-            return res.status(400).json({
-                error:
-                    'Entry content key must match one of the node keys defined in "nodes".',
-            });
-        }
-        if (!lowerKeys.includes(fallbackKeyLower)) {
-            return res.status(400).json({
-                error:
-                    'Fallback content key must match one of the node keys defined in "nodes".',
-            });
-        }
+        const result = await prisma.$transaction(
+            async (tx) => {
+                const flow = await tx.userflow.create({
+                    data: {
+                        userflowname: userflowname.trim(),
+                        description: description || null,
+                        status: "Draft",
+                        flow_type: normalizedFlowType,
+                    },
+                    select: { userflowid: true, userflowname: true },
+                });
 
-        // Main transaction
-        const result = await prisma.$transaction(async (tx) => {
-            // 1) Create userflow
-            const userflow = await tx.userflow.create({
-                data: {
-                    userflowname: trimmedName,
-                },
-                select: {
-                    userflowid: true,
-                    userflowname: true,
-                },
-            });
+            const ufid = flow.userflowid;
 
-            const ufid = userflow.userflowid;
+            // ---------- 1) nodes ----------
+            for (const n of preparedNodes) {
+                const key = String(n.key || n.label || "").trim();
+                if (!key) continue;
 
-            // 2) For each node, create content + keymapping
-            for (const rawNode of nodes) {
-                const nodeKey = (rawNode.key || "").trim();
-                const nodeType = (rawNode.type || "message").trim();
-                const nodeContent = (rawNode.content || "").trim();
-                const descriptionText =
-                    description && description.trim().length > 0
-                        ? description.trim()
-                        : `Node ${nodeKey} in flow ${trimmedName}`;
+                const placeholders = buildPlaceholdersFromNode(n);
+                const ui_metadata = normalizeUiMetadata(n.ui_metadata) || {};
+                const body = String(n.body || "").trim();
+                const safeType =
+                    n.type === "wait_input"
+                        ? "message"
+                        : n.type === "question"
+                            ? "message"
+                            : (n.type || "message");
 
                 const content = await tx.content.create({
                     data: {
-                        type: nodeType, // e.g. 'message', 'question', 'api', 'decision'
-                        body: nodeContent,
-                        description: descriptionText,
+                        type: safeType,
+                        body,
+                        description: body || `Node ${key}`,
                         status: "Active",
+                        placeholders, // ✅ extra UI fields
                     },
-                    select: {
-                        contentid: true,
-                    },
+                    select: { contentid: true },
                 });
 
                 await tx.keymapping.create({
                     data: {
-                        contentkeyid: nodeKey,
+                        contentkeyid: key,
                         contentid: content.contentid,
                         userflowid: ufid,
+                        ui_metadata,
                     },
                 });
-            }
 
-            // 3) Configure allowedinput + branchrule + fallback per node
-            for (const rawNode of nodes) {
-                const nodeKey = (rawNode.key || "").trim();
-                const nodeAllowed = Array.isArray(rawNode.allowedInputs)
-                    ? rawNode.allowedInputs
-                    : [];
-                const nodeBranches = Array.isArray(rawNode.branches)
-                    ? rawNode.branches
-                    : [];
-                const nodeFallbackKey = rawNode.fallbackKey
-                    ? rawNode.fallbackKey.trim()
-                    : null;
+                // ✅ unique allowedInputs only once
+                const uniqueAllowed = Array.from(
+                    new Set([...(n.allowedInputs || [])].map((s) => String(s).trim()).filter(Boolean))
+                );
 
-                // allowedinput rows
-                for (const value of nodeAllowed) {
-                    const val = (value || "").trim();
-                    if (!val) continue;
-
+                for (const val of uniqueAllowed) {
                     await tx.allowedinput.create({
                         data: {
-                            triggerkey: nodeKey,
+                            triggerkey: key,
                             allowedvalue: val,
                             userflowid: ufid,
                         },
                     });
                 }
 
-                // branchrule rows
-                for (const br of nodeBranches) {
-                    const inputVal = (br.input || "").trim();
-                    const nextKey = (br.next || "").trim();
-                    if (!inputVal || !nextKey) continue;
-
-                    await tx.branchrule.create({
-                        data: {
-                            triggerkey: nodeKey,
-                            inputvalue: inputVal,
-                            nextkey: nextKey,
-                            userflowid: ufid,
-                        },
-                    });
-                }
-
-                // node-level fallback: scope = "NODE"
-                if (nodeFallbackKey) {
-                    await tx.fallback.create({
-                        data: {
-                            scope: "NODE",
-                            value: nodeKey, // "this node's fallback config"
-                            contentkeyid: nodeFallbackKey,
-                            userflowid: ufid,
-                        },
-                    });
-                }
             }
 
-            // 4) (Optional) Flow-level metadata for entry + global fallback
-            // We re-use the "fallback" table for conceptual flow config.
-            // - scope = "FLOW"
-            // - value = "ENTRY" or "GLOBAL_FALLBACK"
+            // ---------- 2) edges -> branchrule ----------
+            for (const e of edges) {
+                const from = String(e.source || "").trim();
+                const to = String(e.target || "").trim();
+                if (!from || !to) continue;
+
+                const inputvalue = String(e.label || "").trim() || "ANY";
+
+                await tx.branchrule.create({
+                    data: {
+                        triggerkey: from,
+                        inputvalue,
+                        nextkey: to,
+                        userflowid: ufid,
+                        priority: 1,
+                    },
+                });
+            }
+
+            const sanitizedFallbackEdges = Array.isArray(fallbackEdges) ? fallbackEdges : [];
+            for (const fe of sanitizedFallbackEdges) {
+                const from = String(fe.source || "").trim();
+                const to = String(fe.target || "").trim();
+                if (!from || !to) continue;
+                if (!nodeKeySet.has(from) || !nodeKeySet.has(to)) continue;
+                await tx.fallback.create({
+                    data: {
+                        scope: "NODE",
+                        value: from,
+                        contentkeyid: to,
+                        userflowid: ufid,
+                    },
+                });
+            }
+
+            // ---------- 3) flow fallbacks ----------
+            const firstKey = String(preparedNodes[0]?.key || "").trim();
+
             await tx.fallback.create({
                 data: {
                     scope: "FLOW",
                     value: "ENTRY",
-                    contentkeyid: entryKey.trim(),
+                    contentkeyid: String(entryKey || firstKey || "").trim(),
                     userflowid: ufid,
                 },
             });
@@ -257,13 +323,15 @@ export async function createFlowDefinition(req, res) {
                 data: {
                     scope: "FLOW",
                     value: "GLOBAL_FALLBACK",
-                    contentkeyid: fallbackKey.trim(),
+                    contentkeyid: String(fallbackKey || "GLOBAL_FALLBACK").trim(),
                     userflowid: ufid,
                 },
             });
 
-            return userflow;
-        });
+            return flow;
+            },
+            { maxWait: 5000, timeout: 20000 }
+        );
 
         return res.status(201).json({
             message: "Flow created",
@@ -272,47 +340,45 @@ export async function createFlowDefinition(req, res) {
     } catch (err) {
         console.error("createFlowDefinition error:", err);
         return res.status(500).json({
-            error: err?.message || "Failed to create flow definition",
+            error: err.message || "Failed to create flow",
         });
     }
 }
 
+/**
+ * GET /api/flow/:id
+ */
 export async function getFlowDefinition(req, res) {
     try {
-        const rawId = req.params.id;
-        const userflowid = Number(rawId);
+        const userflowid = Number(req.params.id);
 
         if (!userflowid || Number.isNaN(userflowid)) {
             return res.status(400).json({ error: "Invalid userflow id" });
         }
 
-        // 1) Load basic userflow
-        const userflow = await prisma.userflow.findUnique({
+        const flow = await prisma.userflow.findUnique({
             where: { userflowid },
+            select: { userflowid: true, userflowname: true, description: true, flow_type: true },
         });
 
-        if (!userflow) {
+        if (!flow) {
             return res.status(404).json({ error: "Flow not found" });
         }
 
-        // 2) Load flow-level fallbacks (ENTRY + GLOBAL_FALLBACK)
+        // 1) FLOW fallbacks
         const flowFallbacks = await prisma.fallback.findMany({
             where: { userflowid, scope: "FLOW" },
+            select: { value: true, contentkeyid: true },
         });
 
-        let entryKey = "START";
-        let fallbackKey = "FALLBACK";
-
+        let entryKey = null;
+        let fallbackKey = null;
         for (const fb of flowFallbacks) {
-            if (fb.value === "ENTRY" && fb.contentkeyid) {
-                entryKey = fb.contentkeyid;
-            }
-            if (fb.value === "GLOBAL_FALLBACK" && fb.contentkeyid) {
-                fallbackKey = fb.contentkeyid;
-            }
+            if (fb.value === "ENTRY") entryKey = fb.contentkeyid;
+            if (fb.value === "GLOBAL_FALLBACK") fallbackKey = fb.contentkeyid;
         }
 
-        // 3) Load nodes: keymapping + content + allowedinput + branchrule + node-level fallback
+        // 2) keymaps
         const keymaps = await prisma.keymapping.findMany({
             where: { userflowid },
             include: {
@@ -321,226 +387,269 @@ export async function getFlowDefinition(req, res) {
                         type: true,
                         body: true,
                         description: true,
+                        placeholders: true,
                     },
                 },
                 allowedinput: true,
                 branchrule: true,
-                fallback: {
-                    where: { scope: "NODE" },
-                },
             },
             orderBy: { contentkeyid: "asc" },
         });
 
+        const nodeKeys = keymaps.map((km) => km.contentkeyid);
+
+        // 3) NODE fallbacks (authoritative)
+        const nodeFallbacks = await prisma.fallback.findMany({
+            where: {
+                userflowid,
+                scope: "NODE",
+                value: { in: nodeKeys },
+            },
+            select: { value: true, contentkeyid: true },
+        });
+
+        const nodeFbMap = new Map();
+        for (const fb of nodeFallbacks) {
+            nodeFbMap.set(fb.value, fb.contentkeyid);
+        }
+
+        // 4) nodes
         const nodes = keymaps.map((km) => {
-            const c = km.content || {};
-            const nodeDescription = c.body || c.description || "";
+            const extras = extractNodeExtras(km.content?.placeholders);
 
             return {
                 key: km.contentkeyid,
-                type: c.type || "message",
-                description: nodeDescription,
+                type:
+                    km.content?.type === "wait_input"
+                        ? "message"
+                        : km.content?.type === "question"
+                            ? "message"
+                            : km.content?.type || "message",
+                body: km.content?.body || "",
+                description: km.content?.description || "",
                 allowedInputs: km.allowedinput.map((ai) => ai.allowedvalue),
+
                 branches: km.branchrule.map((br) => ({
                     input: br.inputvalue,
                     next: br.nextkey,
                 })),
-                fallback:
-                    km.fallback && km.fallback.length > 0
-                        ? km.fallback[0].contentkeyid
-                        : null,
+
+                // ✅ real NODE fallback from fallback table
+                fallback: nodeFbMap.get(km.contentkeyid) || null,
+
+                ui_metadata: normalizeUiMetadata(km.ui_metadata) || {},
+
+                ...extras,
             };
         });
 
         return res.json({
-            id: userflow.userflowid,
-            name: userflow.userflowname,
+            id: flow.userflowid,
+            name: flow.userflowname,
+            description: flow.description || null,
             entryKey,
             fallbackKey,
             nodes,
+            flowType: flow.flow_type || "CAMPAIGN",
         });
     } catch (err) {
         console.error("getFlowDefinition error:", err);
         return res.status(500).json({
-            error: err?.message || "Failed to load flow definition",
+            error: err.message || "Failed to load flow definition",
         });
     }
 }
 
+/**
+ * PUT /api/flow/:id
+ */
 export async function updateFlowDefinition(req, res) {
     try {
-        const rawId = req.params.id;
-        const userflowid = Number(rawId);
+        const userflowid = Number(req.params.id);
+        const {
+            userflowname,
+            description,
+            nodes = [],
+            edges = [],
+            fallbackEdges = [],
+            entryKey,
+            fallbackKey,
+            flowType,
+        } = req.body || {};
 
         if (!userflowid || Number.isNaN(userflowid)) {
             return res.status(400).json({ error: "Invalid userflow id" });
         }
-
-        const payload = req.body || {};
-        const { userflowname, entryKey, fallbackKey, description, nodes } = payload;
-
-        if (!userflowname || typeof userflowname !== "string") {
-            return res.status(400).json({ error: "userflowname is required" });
-        }
-        if (!Array.isArray(nodes) || nodes.length === 0) {
-            return res.status(400).json({ error: "At least one node is required" });
+        if (!userflowname || !nodes.length) {
+            return res.status(400).json({ error: "Invalid update payload" });
         }
 
-        const trimmedName = userflowname.trim();
+        const preparedNodes = [...nodes];
 
-        const keys = nodes.map((n) => (n.key || "").trim());
-        if (keys.some((k) => !k)) {
-            return res.status(400).json({
-                error: "Every node must have a non-empty key (CONTENT_KEY).",
-            });
-        }
-
-        const lowerKeys = keys.map((k) => k.toLowerCase());
-        const hasDuplicates = lowerKeys.some(
-            (k, idx) => lowerKeys.indexOf(k) !== idx
+        // ensure GLOBAL_FALLBACK is always present (required for flow-level fallback FK)
+        const hasGlobalFallback = preparedNodes.some(
+            (n) => String(n.key || n.label || "").trim() === "GLOBAL_FALLBACK"
         );
-        if (hasDuplicates) {
-            return res.status(400).json({
-                error: "Duplicate node keys found. CONTENT_KEY must be unique per flow.",
+        if (!hasGlobalFallback) {
+            preparedNodes.unshift({
+                key: "GLOBAL_FALLBACK",
+                type: "message",
+                body: "Sorry, I didn't understand that. Please try again.",
+                allowedInputs: [],
+                fallbackKey: null,
             });
         }
 
-        const entryKeyLower = (entryKey || "").trim().toLowerCase();
-        const fallbackKeyLower = (fallbackKey || "").trim().toLowerCase();
+        const nodeKeySet = new Set(
+            preparedNodes
+                .map((n) => String(n.key || n.label || "").trim())
+                .filter(Boolean)
+        );
 
-        if (!lowerKeys.includes(entryKeyLower)) {
-            return res.status(400).json({
-                error:
-                    'Entry content key must match one of the node keys defined in "nodes".',
-            });
-        }
-        if (!lowerKeys.includes(fallbackKeyLower)) {
-            return res.status(400).json({
-                error:
-                    'Fallback content key must match one of the node keys defined in "nodes".',
-            });
-        }
-
-        await prisma.$transaction(async (tx) => {
-            // Ensure flow exists
+        await prisma.$transaction(
+            async (tx) => {
             const existing = await tx.userflow.findUnique({
                 where: { userflowid },
+                select: { description: true, flow_type: true },
             });
-            if (!existing) {
-                throw new Error("Flow not found");
-            }
+            if (!existing) throw new Error("Flow not found");
 
-            // 1) Update basic userflow info
+            const normalizedFlowType = flowType
+                ? normalizeFlowType(flowType)
+                : existing.flow_type || "CAMPAIGN";
+
             await tx.userflow.update({
                 where: { userflowid },
-                data: { userflowname: trimmedName },
+                data: {
+                    userflowname: userflowname.trim(),
+                    description:
+                        description !== undefined ? description : existing.description,
+                    updatedat: new Date(),
+                    flow_type: normalizedFlowType,
+                },
             });
 
-            // 2) Delete old nodes + rules
-            const oldMappings = await tx.keymapping.findMany({
+            // delete old graph
+            const oldMaps = await tx.keymapping.findMany({
                 where: { userflowid },
                 select: { contentid: true },
             });
-            const oldContentIds = oldMappings.map((m) => m.contentid);
+            const oldContentIds = oldMaps.map((m) => m.contentid);
 
             await tx.allowedinput.deleteMany({ where: { userflowid } });
             await tx.branchrule.deleteMany({ where: { userflowid } });
             await tx.fallback.deleteMany({ where: { userflowid } });
             await tx.keymapping.deleteMany({ where: { userflowid } });
 
-            if (oldContentIds.length > 0) {
+            if (oldContentIds.length) {
                 await tx.content.deleteMany({
                     where: { contentid: { in: oldContentIds } },
                 });
             }
 
-            // 3) Re-create nodes
-            for (const rawNode of nodes) {
-                const nodeKey = (rawNode.key || "").trim();
-                const nodeType = (rawNode.type || "message").trim();
-                const nodeContent = (rawNode.content || "").trim();
-                const descriptionText =
-                    description && description.trim().length > 0
-                        ? description.trim()
-                        : `Node ${nodeKey} in flow ${trimmedName}`;
+            // recreate nodes
+            for (const n of preparedNodes) {
+                const key = String(n.key || n.label || "").trim();
+                if (!key) continue;
+
+                const placeholders = buildPlaceholdersFromNode(n);
+                const ui_metadata = normalizeUiMetadata(n.ui_metadata) || {};
+                const body = String(n.body || "").trim();
+                const safeType =
+                    n.type === "wait_input"
+                        ? "message"
+                        : n.type === "question"
+                            ? "message"
+                            : (n.type || "message");
 
                 const content = await tx.content.create({
                     data: {
-                        type: nodeType,
-                        body: nodeContent,
-                        description: descriptionText,
+                        type: safeType,
+                        body,
+                        description: body || `Node ${key}`,
                         status: "Active",
+                        placeholders,
                     },
                     select: { contentid: true },
                 });
 
                 await tx.keymapping.create({
                     data: {
-                        contentkeyid: nodeKey,
+                        contentkeyid: key,
                         contentid: content.contentid,
                         userflowid,
+                        ui_metadata,
                     },
                 });
 
-                const nodeAllowed = Array.isArray(rawNode.allowedInputs)
-                    ? rawNode.allowedInputs
-                    : [];
-                const nodeBranches = Array.isArray(rawNode.branches)
-                    ? rawNode.branches
-                    : [];
-                const nodeFallbackKey = rawNode.fallbackKey
-                    ? rawNode.fallbackKey.trim()
-                    : null;
+                const uniqueAllowed = Array.from(
+                    new Set([...(n.allowedInputs || [])].map((s) => String(s).trim()).filter(Boolean))
+                );
 
-                // allowedinput
-                for (const value of nodeAllowed) {
-                    const val = (value || "").trim();
-                    if (!val) continue;
-
+                for (const val of uniqueAllowed) {
                     await tx.allowedinput.create({
                         data: {
-                            triggerkey: nodeKey,
+                            triggerkey: key,
                             allowedvalue: val,
                             userflowid,
                         },
                     });
                 }
 
-                // branchrule
-                for (const br of nodeBranches) {
-                    const inputVal = (br.input || "").trim();
-                    const nextKey = (br.next || "").trim();
-                    if (!inputVal || !nextKey) continue;
-
-                    await tx.branchrule.create({
-                        data: {
-                            triggerkey: nodeKey,
-                            inputvalue: inputVal,
-                            nextkey: nextKey,
-                            userflowid,
-                        },
-                    });
-                }
-
-                // node-level fallback
-                if (nodeFallbackKey) {
-                    await tx.fallback.create({
-                        data: {
-                            scope: "NODE",
-                            value: nodeKey,
-                            contentkeyid: nodeFallbackKey,
-                            userflowid,
-                        },
-                    });
-                }
             }
 
-            // 4) Recreate flow-level ENTRY / GLOBAL_FALLBACK
+            // recreate edges
+            for (const e of edges) {
+                const from = String(e.source || "").trim();
+                const to = String(e.target || "").trim();
+                if (!from || !to) continue;
+
+                const inputvalue = String(e.label || "").trim() || "ANY";
+
+                await tx.branchrule.create({
+                    data: {
+                        triggerkey: from,
+                        inputvalue,
+                        nextkey: to,
+                        userflowid,
+                        priority: 1,
+                    },
+                });
+            }
+
+            const sanitizedFallbackEdges = Array.isArray(fallbackEdges) ? fallbackEdges : [];
+            for (const fe of sanitizedFallbackEdges) {
+                const from = String(fe.source || "").trim();
+                const to = String(fe.target || "").trim();
+                if (!from || !to) continue;
+                if (!nodeKeySet.has(from) || !nodeKeySet.has(to)) continue;
+                await tx.fallback.create({
+                    data: {
+                        scope: "NODE",
+                        value: from,
+                        contentkeyid: to,
+                        userflowid,
+                    },
+                });
+            }
+
+            // flow fallbacks
+            const firstKey = String(preparedNodes[0]?.key || "").trim();
+            const safeEntryKey = nodeKeySet.has(String(entryKey || "").trim())
+                ? String(entryKey || "").trim()
+                : firstKey;
+            const defaultFallbackKey = nodeKeySet.has("GLOBAL_FALLBACK")
+                ? "GLOBAL_FALLBACK"
+                : firstKey;
+            const safeFallbackKey = nodeKeySet.has(String(fallbackKey || "").trim())
+                ? String(fallbackKey || "").trim()
+                : defaultFallbackKey;
+
             await tx.fallback.create({
                 data: {
                     scope: "FLOW",
                     value: "ENTRY",
-                    contentkeyid: entryKey.trim(),
+                    contentkeyid: safeEntryKey,
                     userflowid,
                 },
             });
@@ -549,17 +658,130 @@ export async function updateFlowDefinition(req, res) {
                 data: {
                     scope: "FLOW",
                     value: "GLOBAL_FALLBACK",
-                    contentkeyid: fallbackKey.trim(),
+                    contentkeyid: safeFallbackKey,
                     userflowid,
                 },
             });
-        });
+        },
+            { maxWait: 5000, timeout: 20000 }
+        );
 
-        return res.status(200).json({ message: "Flow updated" });
+        return res.json({ message: "Flow updated" });
     } catch (err) {
         console.error("updateFlowDefinition error:", err);
         return res.status(500).json({
-            error: err?.message || "Failed to update flow definition",
+            error: err.message || "Failed to update flow",
+        });
+    }
+}
+
+export async function updateFlowStatus(req, res) {
+    try {
+        const userflowid = Number(req.params.id);
+        const { status } = req.body || {};
+
+        if (!userflowid || Number.isNaN(userflowid)) {
+            return res.status(400).json({ error: "Invalid userflow id" });
+        }
+
+        const rawStatus = typeof status === "string" ? status.trim() : "";
+        const normalizedStatus =
+            rawStatus.toLowerCase() === "active"
+                ? "Active"
+                : rawStatus.toLowerCase() === "draft"
+                    ? "Draft"
+                    : null;
+
+        if (!normalizedStatus) {
+            return res.status(400).json({ error: "Invalid status value" });
+        }
+
+        await prisma.userflow.update({
+            where: { userflowid },
+            data: {
+                status: normalizedStatus,
+                updatedat: new Date(),
+            },
+        });
+
+        return res.json({ message: "Flow status updated", status: normalizedStatus });
+    } catch (err) {
+        console.error("updateFlowStatus error:", err);
+        return res.status(500).json({
+            error: err.message || "Failed to update flow status",
+        });
+    }
+}
+
+/**
+ * DELETE /api/flow/:id
+ * Removes a flow and all related records (nodes, rules, fallbacks, sessions, transitions, keywords, system flows, campaigns).
+ */
+export async function deleteFlowDefinition(req, res) {
+    try {
+        const userflowid = Number(req.params.id);
+        if (!userflowid || Number.isNaN(userflowid)) {
+            return res.status(400).json({ error: "Invalid userflow id" });
+        }
+
+        const existing = await prisma.userflow.findUnique({
+            where: { userflowid },
+            select: { userflowid: true },
+        });
+        if (!existing) {
+            return res.status(404).json({ error: "Flow not found" });
+        }
+
+        await prisma.$transaction(
+            async (tx) => {
+                // gather content ids for cleanup
+                const keymaps = await tx.keymapping.findMany({
+                    where: { userflowid },
+                    select: { contentid: true },
+                });
+                const contentIds = keymaps.map((k) => k.contentid);
+
+                // delete dependent records
+                await tx.campaignsession.deleteMany({
+                    where: { current_userflowid: userflowid },
+                });
+                await tx.campaign.deleteMany({
+                    where: { userflowid },
+                });
+                await tx.system_keyword.deleteMany({
+                    where: { userflowid },
+                });
+                await tx.system_flow.deleteMany({
+                    where: { userflowid },
+                });
+                await tx.flow_transition.deleteMany({
+                    where: {
+                        OR: [{ from_userflowid: userflowid }, { to_userflowid: userflowid }],
+                    },
+                });
+                await tx.fallback.deleteMany({ where: { userflowid } });
+                await tx.branchrule.deleteMany({ where: { userflowid } });
+                await tx.allowedinput.deleteMany({ where: { userflowid } });
+                await tx.keymapping.deleteMany({ where: { userflowid } });
+
+                if (contentIds.length) {
+                    await tx.content.deleteMany({
+                        where: { contentid: { in: contentIds } },
+                    });
+                }
+
+                await tx.userflow.delete({
+                    where: { userflowid },
+                });
+            },
+            { maxWait: 5000, timeout: 20000 }
+        );
+
+        return res.json({ message: "Flow deleted" });
+    } catch (err) {
+        console.error("deleteFlowDefinition error:", err);
+        return res.status(500).json({
+            error: err.message || "Failed to delete flow",
         });
     }
 }

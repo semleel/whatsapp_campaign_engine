@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
-import type { CampaignCreatePayload } from "@/lib/types";
+import type { CampaignCreatePayload, FlowListItem } from "@/lib/types";
 import { showCenteredAlert } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
@@ -17,15 +17,16 @@ export default function CampaignCreatePage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "", // still in payload, but no input field
+    userFlowID: "",
     startAt: "",
     endAt: "",
   });
 
   const [regions, setRegions] = useState<SelectOption[]>([]);
+  const [userFlows, setUserFlows] = useState<SelectOption[]>([]);
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ keyword UI state
+  // keyword UI state
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keywordDraft, setKeywordDraft] = useState("");
   const [keywordMessage, setKeywordMessage] = useState("");
@@ -34,12 +35,23 @@ export default function CampaignCreatePage() {
     (async () => {
       if (privLoading || !canCreate) return;
       try {
-        const regionData = await Api.listRegions();
+        const [regionData, flowData] = await Promise.all([
+          Api.listRegions(),
+          Api.listFlows(),
+        ]);
+
         setRegions(
-          regionData.map((r) => ({
+          (regionData || []).map((r) => ({
             id: String(r.regionid),
             name: r.regionname,
             code: r.regioncode || undefined,
+          }))
+        );
+
+        setUserFlows(
+          (flowData || []).map((f: FlowListItem) => ({
+            id: String(f.userflowid),
+            name: f.userflowname,
           }))
         );
       } catch (err) {
@@ -54,7 +66,7 @@ export default function CampaignCreatePage() {
     setFormData((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  // ✅ Add keyword: check DB first, then add chip
+  // Add keyword: check DB first, then add chip
   const handleAddKeyword = async () => {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw) return;
@@ -101,7 +113,7 @@ export default function CampaignCreatePage() {
       campaignName: formData.campaignName,
       objective: formData.objective || null,
       targetRegionID: formData.targetRegionID || null,
-      userFlowID: null, // user flow disabled for now
+      userFlowID: formData.userFlowID ? Number(formData.userFlowID) : null,
       startAt: formData.startAt || null,
       endAt: formData.endAt || null,
     };
@@ -130,7 +142,7 @@ export default function CampaignCreatePage() {
           try {
             const availability = await Api.checkKeywordAvailability(value);
             if (!availability.ok) {
-              // Already used in another campaign → treat as duplicate
+              // Already used in another campaign -> treat as duplicate
               duplicates.push(value);
               continue;
             }
@@ -253,6 +265,26 @@ export default function CampaignCreatePage() {
               ))}
             </select>
           </label>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-[#8e8e9e] uppercase">
+              User Flow
+            </label>
+            <select
+              className="w-full p-2.5 border border-[#e0e0e7] rounded bg-white text-sm"
+              value={formData.userFlowID}
+              onChange={(e) =>
+                setFormData((f) => ({ ...f, userFlowID: e.target.value }))
+              }
+              required
+            >
+              <option value="">Select flow...</option>
+              {userFlows.map((uf) => (
+                <option key={uf.id} value={uf.id}>
+                  {uf.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <label className="space-y-1 text-sm font-medium">
             <span>Start</span>
             <input
@@ -324,7 +356,7 @@ export default function CampaignCreatePage() {
                       onClick={() => handleRemoveKeyword(k)}
                       className="text-[11px] text-rose-600 hover:text-rose-700"
                     >
-                      ✕
+                      x
                     </button>
                   </span>
                 ))}
