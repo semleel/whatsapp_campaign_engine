@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { usePrivilege } from "@/lib/permissions";
 
 function renderPreview(template: string, payload: any) {
   return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
@@ -15,6 +16,7 @@ function renderPreview(template: string, payload: any) {
 }
 
 export default function FormatterPlayground() {
+  const { canView, loading } = usePrivilege("integration");
   const [template, setTemplate] = useState("Hi {{contact.name}}, your balance is {{loyalty.points}} points.");
   const [payloadText, setPayloadText] = useState(
     JSON.stringify(
@@ -35,6 +37,14 @@ export default function FormatterPlayground() {
       return { preview: "", error: err?.message || "Invalid JSON" };
     }
   }, [template, payloadText]);
+
+  if (!loading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view formatters.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

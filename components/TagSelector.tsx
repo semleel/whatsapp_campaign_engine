@@ -8,11 +8,11 @@ import React, {
   KeyboardEvent,
   ChangeEvent,
 } from "react";
+import { Api } from "@/lib/client";
 
 type TagSelectorProps = {
   selected: string[];
   onChange: (tags: string[]) => void;
-  apiBase: string;
 };
 
 type TagRow = {
@@ -25,7 +25,6 @@ type TagRow = {
 export default function TagSelector({
   selected,
   onChange,
-  apiBase,
 }: TagSelectorProps) {
   const [allTags, setAllTags] = useState<TagRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,12 +47,7 @@ export default function TagSelector({
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`${apiBase}/api/tags?includeDeleted=false`);
-        if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(txt || `HTTP ${res.status}`);
-        }
-        const data: TagRow[] = await res.json();
+        const data = await Api.listTags(false);
         if (!cancelled) {
           setAllTags(data || []);
         }
@@ -71,7 +65,7 @@ export default function TagSelector({
     return () => {
       cancelled = true;
     };
-  }, [apiBase]);
+  }, []);
 
   // ------------------------------------------------
   // Close dropdown on click outside

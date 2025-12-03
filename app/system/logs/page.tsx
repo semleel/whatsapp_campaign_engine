@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredToken } from "@/lib/auth";
+import { usePrivilege } from "@/lib/permissions";
 
 type LogRow = {
   logid: number;
@@ -22,6 +23,7 @@ export default function SecurityLogsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [limit, setLimit] = useState(200);
+  const { canView, loading: privLoading } = usePrivilege("system");
 
   function formatRole(role: string | null | undefined) {
     const r = (role || "").trim();
@@ -29,12 +31,26 @@ export default function SecurityLogsPage() {
     return r.charAt(0).toUpperCase() + r.slice(1).toLowerCase();
   }
 
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view security logs.
+      </div>
+    );
+  }
+
   useEffect(() => {
     loadLogs();
-  }, [limit]);
+  }, [limit, canView, privLoading]);
 
   async function loadLogs() {
     try {
+      if (privLoading) return;
+      if (!canView) {
+        setError("You do not have permission to view security logs.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
       const token = getStoredToken();

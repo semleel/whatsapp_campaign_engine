@@ -15,21 +15,16 @@ export async function listTags(req, res) {
   try {
     const includeDeleted = req.query.includeDeleted === "true";
 
-    const where = includeDeleted
-      ? {}
-      : {
-          OR: [{ isdeleted: false }, { isdeleted: null }],
-        };
+    const where = includeDeleted ? {} : { isdeleted: false };
 
     const tags = await prisma.tag.findMany({
-      where,
-      orderBy: { name: "asc" },
+      where: includeDeleted ? {} : { isdeleted: false },
+      orderBy: { tagid: "asc" },
     });
-
-    return res.status(200).json(tags);
+    return res.json(tags);
   } catch (err) {
-    console.error("listTags error:", err);
-    return res.status(500).json({ error: err.message || "Server error" });
+    console.error("Error listing tags:", err);
+    return res.status(500).json({ error: "Failed to load tags" });
   }
 }
 
@@ -204,6 +199,41 @@ export async function recoverTag(req, res) {
     console.error("recoverTag error:", err);
     if (err.code === "P2025") {
       return res.status(404).json({ error: "Tag not found" });
+    }
+    return res.status(500).json({ error: err.message || "Server error" });
+  }
+}
+
+/**
+ * DELETE /api/tags/:id
+ * Hard delete: remove tag and detach tag links
+ */
+export async function deleteTag(req, res) {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) {
+      return res.status(400).json({ error: "Invalid tag id" });
+    }
+
+    // Remove tag links first to satisfy FK constraints before deleting the tag.
+    await prisma.$transaction([
+      prisma.contenttag.deleteMany({ where: { tagid: id } }),
+      prisma.tag.delete({ where: { tagid: id } }),
+    ]);
+
+    return res
+      .status(200)
+      .json({ message: "Tag deleted permanently" });
+  } catch (err) {
+    console.error("deleteTag error:", err);
+    if (err.code === "P2025") {
+      return res.status(404).json({ error: "Tag not found" });
+    }
+    if (err.code === "P2003") {
+      return res.status(409).json({
+        error:
+          "Unable to delete tag due to existing references. Remove any linked records and try again.",
+      });
     }
     return res.status(500).json({ error: err.message || "Server error" });
   }

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
+import { usePrivilege } from "@/lib/permissions";
 
 interface Campaign {
   campaignid: number;
@@ -15,6 +16,8 @@ interface Campaign {
   currentstatus: string;
   start_at?: string | null;
   end_at?: string | null;
+  hasKeyword?: boolean;
+  hasTemplate?: boolean;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -25,7 +28,7 @@ const STATUS_STYLES: Record<string, string> = {
   inactive: "bg-slate-100 text-slate-700",
 };
 
-// ⬇️ only block editing when Active
+// Only block editing when the campaign is Active
 const canEditCampaign = (status: string | undefined | null) =>
   (status || "").toLowerCase() !== "active";
 
@@ -35,9 +38,19 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [openWarningId, setOpenWarningId] = useState<number | null>(null);
+  const { loading: privLoading, canView, canCreate, canUpdate, canArchive } = usePrivilege(
+    "campaigns"
+  );
 
   useEffect(() => {
     (async () => {
+      if (privLoading) return;
+      if (!canView) {
+        setErrorMessage("You do not have permission to view campaigns.");
+        setLoading(false);
+        return;
+      }
       try {
         const data = await Api.listCampaigns();
         setCampaigns(data);
@@ -52,11 +65,40 @@ export default function CampaignsPage() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [canView, privLoading]);
 
-  const handleEdit = (id: number) => router.push(`/campaign/${id}`);
+  useEffect(() => {
+    const handleClickAway = (event: MouseEvent) => {
+      if (!openWarningId) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".warning-popover")) return;
+      setOpenWarningId(null);
+    };
+    document.addEventListener("mousedown", handleClickAway);
+    return () => document.removeEventListener("mousedown", handleClickAway);
+  }, [openWarningId]);
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view campaigns.
+      </div>
+    );
+  }
+
+  const handleEdit = (id: number) => {
+    if (!canUpdate) {
+      setErrorMessage("You do not have permission to edit campaigns.");
+      return;
+    }
+    router.push(`/campaign/${id}`);
+  };
 
   const handleArchive = async (id: number) => {
+    if (!canArchive) {
+      setErrorMessage("You do not have permission to archive campaigns.");
+      return;
+    }
     const confirmed = await showCenteredConfirm("Archive this campaign?");
     if (!confirmed) return;
     try {
@@ -71,20 +113,21 @@ export default function CampaignsPage() {
     }
   };
 
-  // ⬇️ Pause: only used when currentstatus is Active
   const handlePause = async (id: number) => {
-    const confirmed = await showCenteredConfirm("Pause this campaign so you can edit the schedule?");
+    if (!canUpdate) {
+      setErrorMessage("You do not have permission to update campaigns.");
+      return;
+    }
+    const confirmed = await showCenteredConfirm(
+      "Pause this campaign so you can edit the schedule?"
+    );
     if (!confirmed) return;
     try {
-      // Call your backend to set status = "Paused"
       await Api.updateCampaign(id, { status: "Paused" });
 
-      // Optimistically update UI
       setCampaigns((prev) =>
         prev.map((c) =>
-          c.campaignid === id
-            ? { ...c, currentstatus: "Paused" }
-            : c
+          c.campaignid === id ? { ...c, currentstatus: "Paused" } : c
         )
       );
       await showCenteredAlert("Campaign paused. You can now edit the schedule.");
@@ -113,9 +156,9 @@ export default function CampaignsPage() {
   }, [campaigns, statusFilter]);
 
   const formatDateTime = (value?: string | null) => {
-    if (!value) return "—";
+    if (!value) return "--";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "—";
+    if (Number.isNaN(date.getTime())) return "--";
     return date.toLocaleString();
   };
 
@@ -157,12 +200,14 @@ export default function CampaignsPage() {
           >
             Archived Campaigns
           </Link>
-          <Link
-            href="/campaign/create"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-          >
-            New Campaign
-          </Link>
+          {canCreate && (
+            <Link
+              href="/campaign/create"
+              className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            >
+              New Campaign
+            </Link>
+          )}
         </div>
       </div>
 
@@ -195,11 +240,70 @@ export default function CampaignsPage() {
                 const isActive =
                   (c.currentstatus || "").toLowerCase() === "active";
                 const editable = canEditCampaign(c.currentstatus);
+                const allowPause = canUpdate && isActive;
+                const allowEdit = canUpdate && editable;
+                const allowArchive = canArchive;
+                const missingKeyword = c.hasKeyword === false;
+                const missingTemplate = c.hasTemplate === false;
+                const hasWarning = missingKeyword || missingTemplate;
+                const warningText = [
+                  missingKeyword ? "Missing keyword" : null,
+                  missingTemplate ? "Missing template" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" | ");
 
                 return (
                   <tr key={c.campaignid} className="border-t">
                     <td className="px-3 py-2 font-medium">
-                      {c.campaignname}
+                      <div className="flex items-center gap-2">
+                        <span>{c.campaignname}</span>
+                        {hasWarning && (
+                          <div className="relative inline-flex warning-popover">
+                            <button
+                              type="button"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-100 text-rose-700 text-xs font-bold"
+                              onClick={() =>
+                                setOpenWarningId((prev) =>
+                                  prev === c.campaignid ? null : c.campaignid
+                                )
+                              }
+                              aria-label="Missing configuration"
+                            >
+                              !
+                            </button>
+                            <div
+                              className={`absolute left-0 top-6 z-10 ${
+                                openWarningId === c.campaignid
+                                  ? "block"
+                                  : "hidden"
+                              } w-56 max-h-48 overflow-y-auto rounded-lg border border-rose-200 bg-white p-3 text-xs text-rose-700 shadow-lg`}
+                            >
+                              <div className="font-semibold text-rose-700 mb-2">
+                                {warningText || "Missing configuration"}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {missingKeyword && (
+                                  <Link
+                                    href="/campaign/keywords"
+                                    className="rounded border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
+                                  >
+                                    Manage keywords
+                                  </Link>
+                                )}
+                                {missingTemplate && (
+                                  <Link
+                                    href="/content/templates/create"
+                                    className="rounded border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
+                                  >
+                                    Create template
+                                  </Link>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {c.userflowname}
@@ -221,7 +325,7 @@ export default function CampaignsPage() {
                       {formatDateTime(c.end_at)}
                     </td>
                     <td className="px-3 py-2 text-right space-x-2">
-                      {isActive ? (
+                      {allowPause ? (
                         <button
                           onClick={() => handlePause(c.campaignid)}
                           className="rounded border px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
@@ -229,37 +333,42 @@ export default function CampaignsPage() {
                         >
                           Pause
                         </button>
-                      ) : (
+                      ) : allowEdit ? (
                         <button
-                          onClick={() => editable && handleEdit(c.campaignid)}
-                          disabled={!editable}
+                          onClick={() => allowEdit && handleEdit(c.campaignid)}
+                          disabled={!allowEdit}
                           title={
-                            editable
+                            allowEdit
                               ? "Edit campaign & schedule"
                               : "Cannot edit this campaign."
                           }
                           className={`rounded border px-2 py-1 text-xs font-medium hover:bg-muted ${
-                            !editable
+                            !allowEdit
                               ? "cursor-not-allowed opacity-50 hover:bg-transparent"
                               : ""
                           }`}
                         >
                           Edit
                         </button>
+                      ) : null}
+                      {allowArchive ? (
+                        <button
+                          onClick={() => handleArchive(c.campaignid)}
+                          className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                        >
+                          Archive
+                        </button>
+                      ) : null}
+                      {!allowPause && !allowEdit && !allowArchive && (
+                        <span className="text-xs text-muted-foreground">No actions</span>
                       )}
-                      <button
-                        onClick={() => handleArchive(c.campaignid)}
-                        className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                      >
-                        Archive
-                      </button>
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={6} className="px-3 py-4 text-muted-foreground">
                   No campaigns yet. Create one to get started.
                 </td>
               </tr>

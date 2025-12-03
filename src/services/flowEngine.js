@@ -55,7 +55,7 @@ export async function findCampaignByKeyword(text) {
  *   1) Prefer fallback(scope='FLOW', value='ENTRY')
  *   2) Fallback to heuristic on keymapping/content
  */
-async function getEntryContentKeyForCampaign(campaign) {
+export async function getEntryContentKeyForCampaign(campaign) {
   if (!campaign) return null;
 
   // 0) No userflow → try CAMPAIGN_<id>_INTRO
@@ -143,21 +143,33 @@ export async function findOrCreateSession(contactid, campaign) {
     orderBy: { createdat: "desc" },
   });
 
-  if (
-    existing &&
-    ![SESSION_STATUS.CANCELLED, SESSION_STATUS.COMPLETED].includes(
-      existing.sessionstatus
-    )
-  ) {
-    return existing;
+  if (existing) {
+    // Revive expired sessions when user comes back
+    if (existing.sessionstatus === SESSION_STATUS.EXPIRED) {
+      return prisma.campaignsession.update({
+        where: { campaignsessionid: existing.campaignsessionid },
+        data: { sessionstatus: SESSION_STATUS.ACTIVE, lastactiveat: new Date() },
+      });
+    }
+
+    // Reuse anything that's not cancelled or completed
+    if (
+      ![SESSION_STATUS.CANCELLED, SESSION_STATUS.COMPLETED].includes(
+        existing.sessionstatus
+      )
+    ) {
+      return existing;
+    }
   }
 
-  // Fresh session (no checkpoint yet)
+  // Fresh session (pre-fill checkpoint to entry node if available)
+  const entryKey = await getEntryContentKeyForCampaign(campaign);
+
   return prisma.campaignsession.create({
     data: {
       contactid: Number(contactid),
       campaignid: Number(campaign.campaignid),
-      checkpoint: null,
+      checkpoint: entryKey ?? null,
       sessionstatus: SESSION_STATUS.ACTIVE,
       lastactiveat: new Date(),
     },

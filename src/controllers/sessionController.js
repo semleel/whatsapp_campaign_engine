@@ -186,8 +186,8 @@ export async function resumeSession(req, res) {
  * POST /api/session/:id/cancel
  */
 export async function cancelSession(req, res) {
-    try {
-        const id = parseInt(req.params.id, 10);
+  try {
+    const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
         const updated = await prisma.campaignsession.update({
@@ -198,10 +198,36 @@ export async function cancelSession(req, res) {
 
         return res.status(200).json({ message: "Session cancelled", session: formatSession(updated) });
     } catch (err) {
-        console.error("cancelSession error:", err);
-        if (err.code === "P2025") return res.status(404).json({ error: "Session not found" });
-        return res.status(500).json({ error: err.message });
+    console.error("cancelSession error:", err);
+    if (err.code === "P2025") return res.status(404).json({ error: "Session not found" });
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+/**
+ * GET /api/session/by-contact/:contactId
+ */
+export async function listSessionsByContact(req, res) {
+  try {
+    const contactId = parseInt(req.params.contactId, 10);
+    if (Number.isNaN(contactId)) {
+      return res.status(400).json({ error: "Invalid contact id" });
     }
+
+    const sessions = await prisma.campaignsession.findMany({
+      where: { contactid: contactId },
+      orderBy: [{ lastactiveat: "desc" }, { createdat: "desc" }],
+      include: {
+        campaign: { select: { campaignname: true } },
+        contact: { select: { phonenum: true } },
+      },
+    });
+
+    return res.status(200).json(sessions.map(formatSession));
+  } catch (err) {
+    console.error("listSessionsByContact error:", err);
+    return res.status(500).json({ error: err.message });
+  }
 }
 
 export async function markSessionCompleted(campaignsessionid) {

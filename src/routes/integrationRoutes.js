@@ -17,31 +17,35 @@ import {
   updateMapping,
   updateResponseTemplate,
 } from "../controllers/integrationController.js";
+import authMiddleware from "../middleware/auth.js";
+import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
+router.use(authMiddleware);
+
 // endpoint catalog
-router.get("/endpoints", getAllEndpoints);
-router.post("/endpoints", createEndpoint);
-router.get("/endpoints/:id", getSingleEndpoint);
-router.put("/endpoints/:id", updateEndpoint);
-router.delete("/endpoints/:id", removeEndpoint);
+router.get("/endpoints", requirePrivilege("integration", "view"), getAllEndpoints);
+router.post("/endpoints", requirePrivilege("integration", "create"), createEndpoint);
+router.get("/endpoints/:id", requirePrivilege("integration", "view"), getSingleEndpoint);
+router.put("/endpoints/:id", requirePrivilege("integration", "update"), updateEndpoint);
+router.delete("/endpoints/:id", requirePrivilege("integration", "archive"), removeEndpoint);
 
 // response templates
-router.get("/templates", getAllResponseTemplates);
-router.post("/templates", createResponseTemplate);
-router.put("/templates/:id", updateResponseTemplate);
-router.delete("/templates/:id", removeResponseTemplate);
+router.get("/templates", requirePrivilege("integration", "view"), getAllResponseTemplates);
+router.post("/templates", requirePrivilege("integration", "create"), createResponseTemplate);
+router.put("/templates/:id", requirePrivilege("integration", "update"), updateResponseTemplate);
+router.delete("/templates/:id", requirePrivilege("integration", "archive"), removeResponseTemplate);
 
 // mapping
-router.get("/mappings", getAllMappings);
-router.post("/mappings", createMapping);
-router.put("/mappings/:id", updateMapping);
-router.delete("/mappings/:id", removeMapping);
+router.get("/mappings", requirePrivilege("integration", "view"), getAllMappings);
+router.post("/mappings", requirePrivilege("integration", "create"), createMapping);
+router.put("/mappings/:id", requirePrivilege("integration", "update"), updateMapping);
+router.delete("/mappings/:id", requirePrivilege("integration", "archive"), removeMapping);
 
 // execution
-router.post("/test", runTest);
-router.post("/dispatch", dispatchMapping);
-router.get("/logs", getIntegrationLogs);
+router.post("/test", requirePrivilege("integration", "update"), runTest);
+router.post("/dispatch", requirePrivilege("integration", "update"), dispatchMapping);
+router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
 
 export default router;

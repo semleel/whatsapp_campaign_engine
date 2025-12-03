@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Api } from "@/lib/client";
-import { showCenteredConfirm } from "@/lib/showAlert";
+import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
 
 interface Campaign {
   campaignid: number;
@@ -25,6 +25,7 @@ export default function ArchivedCampaignsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -47,17 +48,103 @@ export default function ArchivedCampaignsPage() {
       await Api.restoreCampaign(id);
       setMessage("Campaign restored successfully.");
       setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     } catch (err: any) {
       console.error(err);
       setMessage(err?.message || "Network error.");
     }
   };
 
+  const handleDelete = async (id: number) => {
+    const confirmed = await showCenteredConfirm(
+      "Permanently delete this archived campaign? This cannot be undone."
+    );
+    if (!confirmed) return;
+    try {
+      await Api.deleteArchivedCampaign(id);
+      setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setMessage("Campaign permanently deleted.");
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err?.message || "Failed to delete campaign.");
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    const confirmed = await showCenteredConfirm(
+      `Permanently delete ${ids.length} archived campaign(s)? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    try {
+      const res = await Api.deleteArchivedCampaigns(ids);
+      setCampaigns((prev) =>
+        prev.filter((c) => !selectedIds.has(c.campaignid))
+      );
+      setSelectedIds(new Set());
+      setMessage(res.message);
+      await showCenteredAlert(res.message);
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err?.message || "Failed to delete archived campaigns.");
+    }
+  };
+
+  const handleBulkRestore = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    const confirmed = await showCenteredConfirm(
+      `Restore ${ids.length} archived campaign(s)?`
+    );
+    if (!confirmed) return;
+    try {
+      await Promise.all(ids.map((id) => Api.restoreCampaign(id)));
+      setCampaigns((prev) => prev.filter((c) => !selectedIds.has(c.campaignid)));
+      setSelectedIds(new Set());
+      setMessage("Selected campaigns restored.");
+      await showCenteredAlert("Selected campaigns restored.");
+    } catch (err: any) {
+      console.error(err);
+      setMessage(err?.message || "Failed to bulk restore campaigns.");
+    }
+  };
+
   const formatDateTime = (value?: string | null) => {
-    if (!value) return "—";
+    if (!value) return "--";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "—";
+    if (Number.isNaN(date.getTime())) return "--";
     return date.toLocaleString();
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (prev.size === campaigns.length) {
+        return new Set();
+      }
+      return new Set(campaigns.map((c) => c.campaignid));
+    });
   };
 
   const archivedCount = useMemo(() => campaigns.length, [campaigns]);
@@ -68,12 +155,50 @@ export default function ArchivedCampaignsPage() {
         <div>
           <h3 className="text-lg font-semibold">Archived campaigns</h3>
           <p className="text-sm text-muted-foreground">
-            View and restore campaigns that were previously archived.
+            View, restore, or permanently delete campaigns that were previously
+            archived.
           </p>
         </div>
-        <Link href="/campaign" className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted">
-          Back to active list
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBulkRestore}
+            disabled={!selectedIds.size}
+            className={`rounded border px-3 py-2 text-sm font-medium ${
+              selectedIds.size
+                ? "text-emerald-700 hover:bg-emerald-50 border-emerald-200"
+                : "text-muted-foreground border-border cursor-not-allowed opacity-60"
+            }`}
+            title={
+              selectedIds.size
+                ? "Restore selected archived campaigns"
+                : "Select archived campaigns to restore"
+            }
+          >
+            Restore selected
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            disabled={!selectedIds.size}
+            className={`rounded border px-3 py-2 text-sm font-medium ${
+              selectedIds.size
+                ? "text-rose-700 hover:bg-rose-50 border-rose-200"
+                : "text-muted-foreground border-border cursor-not-allowed opacity-60"
+            }`}
+            title={
+              selectedIds.size
+                ? "Delete selected archived campaigns"
+                : "Select archived campaigns to delete"
+            }
+          >
+            Delete selected
+          </button>
+          <Link
+            href="/campaign"
+            className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Back to active list
+          </Link>
+        </div>
       </div>
 
       {message && <div className="text-sm text-muted-foreground">{message}</div>}
@@ -82,6 +207,17 @@ export default function ArchivedCampaignsPage() {
         <table className="w-full text-sm">
           <thead className="bg-muted/40">
             <tr>
+              <th className="px-3 py-2 text-left font-medium">
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={
+                    selectedIds.size > 0 &&
+                    selectedIds.size === campaigns.length
+                  }
+                  onChange={toggleSelectAll}
+                />
+              </th>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
               <th className="px-3 py-2 text-left font-medium">User flow</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
@@ -100,26 +236,54 @@ export default function ArchivedCampaignsPage() {
               </tr>
             ) : campaigns.length ? (
               campaigns.map((c) => {
-                const badge = STATUS_STYLES[c.currentstatus?.toLowerCase() || "archived"] || "bg-slate-200 text-slate-700";
+                const badge =
+                  STATUS_STYLES[c.currentstatus?.toLowerCase() || "archived"] ||
+                  "bg-slate-200 text-slate-700";
+                const isSelected = selectedIds.has(c.campaignid);
                 return (
                   <tr key={c.campaignid} className="border-t">
                     <td className="px-3 py-2">
-                      <div className="font-medium">{c.campaignname}</div>
-                      <div className="text-xs text-muted-foreground">{c.objective || "—"}</div>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${c.campaignname}`}
+                        checked={isSelected}
+                        onChange={() => toggleSelect(c.campaignid)}
+                      />
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.userflowname || "N/A"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c.regionname || "N/A"}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}>{c.currentstatus || "Archived"}</span>
+                      <div className="font-medium">{c.campaignname}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {c.objective || "--"}
+                      </div>
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.start_at)}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{formatDateTime(c.end_at)}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {c.regionname || "N/A"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${badge}`}
+                      >
+                        {c.currentstatus || "Archived"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.start_at)}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.end_at)}
+                    </td>
+                    <td className="px-3 py-2 text-right space-x-2">
                       <button
                         onClick={() => handleRestore(c.campaignid)}
                         className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
                       >
                         Restore
+                      </button>
+                      <button
+                        onClick={() => handleDelete(c.campaignid)}
+                        className="rounded border px-2 py-1 text-xs font-medium text-rose-700 border-rose-200 hover:bg-rose-50"
+                      >
+                        Delete
                       </button>
                     </td>
                   </tr>

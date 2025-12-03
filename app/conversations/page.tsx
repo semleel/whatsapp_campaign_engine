@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Api } from "@/lib/client";
-import type { ConversationThread, ConversationMessage } from "@/lib/types";
+import type {
+  ConversationThread,
+  ConversationMessage,
+  CampaignSession,
+} from "@/lib/types";
+import { usePrivilege } from "@/lib/permissions";
 
 function statusPill(status: ConversationThread["status"]) {
   const base = "pill";
@@ -22,15 +27,25 @@ export default function ConversationsPage() {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [showComposer, setShowComposer] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<CampaignSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
+  const { canView, canUpdate, loading: privLoading } = usePrivilege("conversations");
 
   useEffect(() => {
     const load = async () => {
+      if (privLoading) return;
+      if (!canView) {
+        setError("You do not have permission to view conversations.");
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
@@ -44,7 +59,7 @@ export default function ConversationsPage() {
       }
     };
     load();
-  }, []);
+  }, [canView, privLoading]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -65,7 +80,32 @@ export default function ConversationsPage() {
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [selectedThread?.contactId, selectedThread?.messages.length]);
 
+  // Load sessions for selected contact
+  useEffect(() => {
+    if (!selectedThread?.contactId) {
+      setSessions([]);
+      return;
+    }
+    const loadSessions = async () => {
+      setSessionsLoading(true);
+      setSessionsError(null);
+      try {
+        const data = await Api.listSessionsByContact(selectedThread.contactId);
+        setSessions(data);
+      } catch (e: any) {
+        setSessionsError(e?.message || "Failed to load sessions");
+      } finally {
+        setSessionsLoading(false);
+      }
+    };
+    loadSessions();
+  }, [selectedThread?.contactId]);
+
   const handleSend = async () => {
+    if (!canUpdate) {
+      setSendError("You do not have permission to send messages.");
+      return;
+    }
     if (!selectedThread || !draft.trim()) return;
 
     const nextMessage: ConversationMessage = {
@@ -92,7 +132,7 @@ export default function ConversationsPage() {
         )
       );
 
-      await Api.sendConversationMessage(selectedThread.phone, draft.trim());
+      await Api.sendConversationMessage(selectedThread.contactId, draft.trim());
       setDraft("");
       setShowComposer(false);
     } catch (e: any) {
@@ -101,6 +141,14 @@ export default function ConversationsPage() {
       setSending(false);
     }
   };
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view conversations.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -111,18 +159,24 @@ export default function ConversationsPage() {
         </div>
         <div className="flex gap-2">
           <button className="btn btn-ghost">Export</button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setShowComposer(true);
-            }}
-          >
-            Send message to user
-          </button>
+          {canUpdate && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShowComposer(true);
+              }}
+            >
+              Send message to user
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[320px_1fr_320px]">
+      <div
+        className={`grid gap-4 ${
+          showDetails ? "lg:grid-cols-[320px_1fr_320px]" : "lg:grid-cols-[320px_1fr]"
+        }`}
+      >
         {/* Left pane: conversation list */}
         <div className="card p-4 h-[calc(100vh-200px)] overflow-hidden">
           {error ? (
@@ -148,7 +202,7 @@ export default function ConversationsPage() {
           <div className="overflow-y-auto h-full pr-1 space-y-2">
             {loading && filtered.length === 0 ? (
               <div className="text-sm text-muted-foreground text-center py-8">
-                Loading conversations…
+                Loading conversations...
               </div>
             ) : (
               filtered.map((c) => (
@@ -205,7 +259,12 @@ export default function ConversationsPage() {
                     </div>
                   ) : null}
                 </div>
-                <button className="btn btn-ghost">Assign</button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setShowDetails((prev) => !prev)}
+                >
+                  {showDetails ? "Hide details" : "Show details"}
+                </button>
               </div>
 
               <div
@@ -233,35 +292,37 @@ export default function ConversationsPage() {
                 ))}
               </div>
 
-              <div className="pt-3 border-t">
-                {showComposer ? (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <textarea
-                        rows={2}
-                        value={draft}
-                        onChange={(e) => setDraft(e.target.value)}
-                        placeholder="Type a reply..."
-                        className="w-full rounded-lg border border-border bg-secondary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-                      />
-                      <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
-                        {sending ? "Sending..." : "Send"}
-                      </button>
-                    </div>
-                    {sendError ? (
-                      <div className="mt-2 text-xs text-rose-700">{sendError}</div>
-                    ) : null}
-                    <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
-                      <span className="pill">WhatsApp</span>
-                      <span className="pill">Callbell</span>
-                    </div>
-                  </>
-                ) : (
-                  <button className="btn btn-primary" onClick={() => setShowComposer(true)}>
-                    Send message to user
-                  </button>
-                )}
-              </div>
+              {canUpdate && (
+                <div className="pt-3 border-t">
+                  {showComposer ? (
+                    <>
+                      <div className="flex items-center gap-2 max-w-2xl">
+                        <textarea
+                          rows={2}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          placeholder="Type a reply..."
+                          className="w-full max-w-xl resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                        <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
+                          {sending ? "Sending..." : "Send"}
+                        </button>
+                      </div>
+                      {sendError ? (
+                        <div className="mt-2 text-xs text-rose-700">{sendError}</div>
+                      ) : null}
+                      <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
+                        <span className="pill">WhatsApp</span>
+                        <span className="pill">Callbell</span>
+                      </div>
+                    </>
+                  ) : (
+                    <button className="btn btn-primary" onClick={() => setShowComposer(true)}>
+                      Send message to user
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">
@@ -271,47 +332,65 @@ export default function ConversationsPage() {
         </div>
 
         {/* Right pane: contact details */}
-        <div className="card p-4 h-[calc(100vh-200px)] overflow-y-auto">
-          {selectedThread ? (
-            <div className="space-y-4">
-              <div>
-                <div className="text-sm text-muted-foreground">Contact</div>
-                <div className="text-lg font-semibold">{selectedThread.contactName}</div>
-                <div className="text-sm text-muted-foreground">{selectedThread.phone}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Campaign</div>
-                <div className="text-base">{selectedThread.campaign || "Not assigned"}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Status</div>
-                <div className={statusPill(selectedThread.status)}>{selectedThread.status}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Last activity</div>
-                <div className="text-base">
-                  {formatDistanceToNow(new Date(selectedThread.updatedAt), { addSuffix: true })}
+        {showDetails && (
+          <div className="card p-4 h-[calc(100vh-200px)] overflow-y-auto">
+            {selectedThread ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="text-sm text-muted-foreground">Contact</div>
+                  <div className="text-lg font-semibold">{selectedThread.contactName}</div>
+                  <div className="text-sm text-muted-foreground">{selectedThread.phone}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Last activity</div>
+                  <div className="text-base">
+                    {formatDistanceToNow(new Date(selectedThread.updatedAt), { addSuffix: true })}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-semibold mb-2">Sessions</div>
+                  {sessionsLoading ? (
+                    <div className="text-xs text-muted-foreground">Loading sessions...</div>
+                  ) : sessionsError ? (
+                    <div className="text-xs text-rose-700">{sessionsError}</div>
+                  ) : sessions.length ? (
+                    <div className="space-y-2">
+                      {sessions.map((s) => (
+                        <div
+                          key={s.id}
+                          className="rounded-lg border border-border bg-secondary px-3 py-2 text-sm"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">
+                              {s.campaignname || "Unknown campaign"}
+                            </span>
+                            <span className="pill">{s.status || "UNKNOWN"}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Last active:{" "}
+                            {s.lastActiveAt
+                              ? formatDistanceToNow(new Date(s.lastActiveAt), { addSuffix: true })
+                              : "N/A"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">No sessions found.</div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground mb-2">Notes</div>
+                  <div className="rounded-lg border border-border bg-secondary p-3 text-sm">
+                    Capture quick notes from calls or WhatsApp here. (Connect to your notes API later.)
+                  </div>
                 </div>
               </div>
-              <div>
-                <div className="text-sm text-muted-foreground mb-2">Notes</div>
-                <div className="rounded-lg border border-border bg-secondary p-3 text-sm">
-                  Capture quick notes from calls or WhatsApp here. (Connect to your notes API later.)
-                </div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground mb-2">Session Actions</div>
-                <div className="flex flex-wrap gap-2">
-                  <button className="btn btn-primary">Send WhatsApp</button>
-                  <button className="btn btn-ghost">Mark Completed</button>
-                  <button className="btn btn-ghost">Pause Session</button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-muted-foreground text-sm">Select a conversation to see details.</div>
-          )}
-        </div>
+            ) : (
+              <div className="text-muted-foreground text-sm">Select a conversation to see details.</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

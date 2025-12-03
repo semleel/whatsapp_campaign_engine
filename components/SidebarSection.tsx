@@ -13,12 +13,20 @@ function isItemActive(pathname: string, item: MenuItem) {
     return p === h || p.startsWith(h + "/");
 }
 
-export default function SidebarSection({ section }: { section: MenuSection }) {
+export default function SidebarSection({
+    section,
+    allowed = true,
+}: {
+    section: MenuSection;
+    allowed?: boolean;
+}) {
     const pathname = usePathname() || "/";
 
     const [open, setOpen] = useState<boolean>(() =>
         section.items.some((i) => isItemActive(pathname, i))
     );
+
+    const disabled = !allowed;
 
     return (
         <div className="mb-2">
@@ -45,9 +53,14 @@ export default function SidebarSection({ section }: { section: MenuSection }) {
                         return (
                             <li key={item.href}>
                                 <Link
-                                    href={item.href}
-                                    className={`group relative block rounded-md px-4 py-2 text-sm transition-colors ${active ? "bg-sidebar-accent font-medium" : "hover:bg-sidebar-accent"
-                                        }`}
+                                    href={disabled ? "#" : item.href}
+                                    aria-disabled={disabled}
+                                    onClick={(e) => {
+                                        if (disabled) e.preventDefault();
+                                    }}
+                                    className={`group relative block rounded-md px-4 py-2 text-sm transition-colors ${
+                                        active ? "bg-sidebar-accent font-medium" : disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-sidebar-accent"
+                                    }`}
                                 >
                                     {active && (
                                         <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1.5 rounded-r-md bg-primary" />

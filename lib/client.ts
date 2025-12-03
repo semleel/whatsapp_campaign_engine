@@ -9,12 +9,16 @@ function withBase(path: string) {
   return `${base}/${target}`;
 }
 
+import { getStoredToken } from "./auth";
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
+  const token = typeof window !== "undefined" ? getStoredToken() : null;
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
     cache: "no-store",
@@ -27,10 +31,14 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // ignore
     }
+    const defaultMessage =
+      res.status === 403
+        ? "You do not have permission to perform this action."
+        : `${res.status} ${res.statusText}`;
     const message =
       details?.error ||
       details?.message ||
-      `${res.status} ${res.statusText}`;
+      defaultMessage;
     throw new Error(message);
   }
 
@@ -64,7 +72,8 @@ import type {
   FlowCreatePayload,
   FlowDefinition,
   FlowUpdatePayload,
-  CampaignSession
+  CampaignSession,
+  TagItem
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -128,6 +137,34 @@ export const Api = {
   restoreCampaign: (id: number | string) =>
     http<{ message: string }>(`/api/campaign/restore/${id}`, {
       method: "PUT",
+    }),
+
+  deleteArchivedCampaign: (id: number | string) =>
+    http<{ message: string }>(`/api/campaign/archive/${id}`, {
+      method: "DELETE",
+    }),
+
+  deleteArchivedCampaigns: (ids: Array<number | string>) =>
+    http<{ message: string; deleted: number }>(`/api/campaign/archive/bulk-delete`, {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+
+  // =========================================================
+  // Privileges
+  // =========================================================
+  getPrivileges: (adminid: number | string) =>
+    http<{ adminid: number; privileges: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }> }>(
+      `/api/privilege/${adminid}`
+    ),
+
+  savePrivileges: (
+    adminid: number | string,
+    privileges: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }>
+  ) =>
+    http<{ success: boolean; count: number }>(`/api/privilege/${adminid}`, {
+      method: "PUT",
+      body: JSON.stringify({ privileges }),
     }),
 
   // =========================================================
@@ -240,18 +277,40 @@ export const Api = {
   // =========================================================
   listDeliveryReport: (limit = 200) =>
     http<DeliveryReportRow[]>(`/api/report/delivery?limit=${limit}`),
+  listFlowStats: () => http<FlowStat[]>(`/api/report/flow`),
+  getReportSummary: () => http<ReportSummary>(`/api/report/summary`),
+
+  // Admin/staff
+  listAdmins: () =>
+    http<
+      {
+        adminid: number;
+        name: string | null;
+        email: string;
+        role: string | null;
+        phonenum?: string | null;
+        is_active?: boolean | null;
+        createdat?: string | null;
+        has_privileges?: boolean;
+      }[]
+    >("/api/admin"),
 
   // Conversations
   listConversations: (limit = 100) =>
     http<ConversationThread[]>(`/api/conversation/list?limit=${limit}`),
-  sendConversationMessage: (to: string, text: string) =>
-    http("/api/wa/send", {
-      method: "POST",
-      body: JSON.stringify({
-        to,
-        message: { type: "text", text: { body: text } },
-      }),
-    }),
+  sendConversationMessage: (contactId: number | string, text: string) =>
+    http<{ success: boolean; provider_msg_id?: string | null }>(
+      `/api/conversation/${contactId}/send`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text,
+        }),
+      }
+    ),
+
+  listSessionsByContact: (contactId: number | string) =>
+    http<CampaignSession[]>(`/api/session/by-contact/${contactId}`),
 
   // =========================================================
   // System -> WhatsApp Integration (whatsapp_config)
@@ -270,8 +329,10 @@ export const Api = {
   // Templates (content)
   // =========================================================
 
-  listTemplates: () =>
-    http<TemplateListItem[]>("/api/template/list"),
+  listTemplates: (includeDeleted = false) =>
+    http<TemplateListItem[]>(
+      `/api/template/list${includeDeleted ? "?includeDeleted=true" : ""}`
+    ),
 
   getTemplate: (id: number | string) =>
     http<TemplateDetail>(`/api/template/${id}`),
@@ -291,8 +352,92 @@ export const Api = {
       body: JSON.stringify(payload),
     }),
 
+  softDeleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}/delete`, {
+      method: "POST",
+    }),
+
+  attachTagsToTemplate: (id: number | string, tags: string[]) =>
+    http<{ message: string; tagIds: number[] }>(`/api/template/${id}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tags }),
+    }),
+
+  setTemplateExpiry: (id: number | string, expiresAt: string) =>
+    http<{ message: string }>(`/api/template/${id}/expire`, {
+      method: "POST",
+      body: JSON.stringify({ expiresAt }),
+    }),
+
+  listTags: (includeDeleted = false) =>
+    http<{ tagid: number; name: string; isdeleted?: boolean | null }[]>(
+      `/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`
+    ),
+
   deleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}`, {
+      method: "DELETE",
+    }),
+
+
+  attachTags: (templateId: number, tags: string[]) =>
+    http(`/api/template/${templateId}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tags }),
+    }),
+
+  setTemplateExpiry: (templateId: number, expiresAt: string) =>
+    http(`/api/template/${templateId}/expire`, {
+      method: "POST",
+      body: JSON.stringify({ expiresAt }),
+    }),
+
+  softDeleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}/delete`, {
+      method: "POST",
+    }),
+
+  recoverTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/template/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ isdeleted: false }),
+    }),
+
+  // =========================================================
+  // Tags
+  // =========================================================
+  listTags: (includeDeleted = false) =>
+    http<TagItem[]>(`/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`),
+
+  getTag: (id: number | string) => http<TagItem>(`/api/tags/${id}`),
+
+  createTag: (name: string) =>
+    http<{ message: string; data: TagItem }>("/api/tags", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  updateTag: (
+    id: number | string,
+    payload: { name?: string; isdeleted?: boolean }
+  ) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
+  archiveTag: (id: number | string) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}/archive`, {
+      method: "POST",
+    }),
+
+  recoverTag: (id: number | string) =>
+    http<{ message: string; data: TagItem }>(`/api/tags/${id}/recover`, {
+      method: "POST",
+    }),
+
+  deleteTag: (id: number | string) =>
+    http<{ message: string }>(`/api/tags/${id}`, {
       method: "DELETE",
     }),
 

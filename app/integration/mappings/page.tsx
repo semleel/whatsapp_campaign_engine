@@ -3,17 +3,9 @@
 import { useEffect, useState } from "react";
 import { Api } from "@/lib/client";
 import type { CampaignApiMapping, EndpointConfig } from "@/lib/types";
+import { usePrivilege } from "@/lib/permissions";
 
-type DraftMapping = {
-  campaignid: string;
-  contentkeyid: string;
-  apiid: string;
-  success_contentkeyid: string;
-  error_contentkeyid: string;
-  is_active: boolean;
-};
-
-const EMPTY_DRAFT: DraftMapping = {
+const EMPTY_DRAFT = {
   campaignid: "",
   contentkeyid: "",
   apiid: "",
@@ -23,219 +15,202 @@ const EMPTY_DRAFT: DraftMapping = {
 };
 
 export default function MappingsPage() {
-  const [draft, setDraft] = useState<DraftMapping>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [endpoints, setEndpoints] = useState<EndpointConfig[]>([]);
   const [mappings, setMappings] = useState<CampaignApiMapping[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { canView, canCreate, canUpdate, canArchive, loading: privLoading } =
+    usePrivilege("integration");
 
   async function refresh() {
+    if (privLoading) return;
+    if (!canView) {
+      setError("You do not have permission to view mappings.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const [endpointData, mappingData] = await Promise.all([Api.listEndpoints(), Api.listMappings()]);
+      const [endpointData, mappingData] = await Promise.all([
+        Api.listEndpoints(),
+        Api.listMappings(),
+      ]);
       setEndpoints(endpointData);
       setMappings(mappingData);
     } catch (err: any) {
       setError(err?.message || "Unable to load mappings");
-      setEndpoints([]);
-      setMappings([]);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    refresh();
-  }, []);
+    void refresh();
+  }, [canView, privLoading]);
 
-  const handleCreate = async () => {
-    if (!draft.campaignid || !draft.contentkeyid || !draft.apiid) {
-      setError("Campaign ID, content key, and API are required.");
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canCreate) {
+      setError("You do not have permission to create mappings.");
       return;
     }
-    setError(null);
-    await Api.createMapping({
-      campaignid: Number(draft.campaignid),
-      contentkeyid: draft.contentkeyid.trim(),
-      apiid: Number(draft.apiid),
-      success_contentkeyid: draft.success_contentkeyid.trim() || null,
-      error_contentkeyid: draft.error_contentkeyid.trim() || null,
-      is_active: draft.is_active,
-    });
-    setDraft(EMPTY_DRAFT);
-    refresh();
+    try {
+      const payload = {
+        ...draft,
+        campaignid: Number(draft.campaignid),
+        apiid: Number(draft.apiid),
+      };
+      await Api.createMapping(payload as any);
+      setDraft(EMPTY_DRAFT);
+      await refresh();
+    } catch (err: any) {
+      setError(err?.message || "Failed to create mapping");
+    }
   };
 
-  const endpointLabel = (apiid?: number | null) => {
-    if (!apiid) return "—";
-    const match = endpoints.find((endpoint) => endpoint.apiid === apiid);
-    return match ? `${match.name} (${match.method})` : `API #${apiid}`;
+  const handleDelete = async (mappingId: number) => {
+    if (!canArchive) {
+      setError("You do not have permission to delete mappings.");
+      return;
+    }
+    await Api.removeMapping(mappingId);
+    await refresh();
   };
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view mappings.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold">Campaign ⇄ API mapping</h3>
-          <p className="text-sm text-muted-foreground max-w-2xl">
-            Each row maps a {`<campaignid, contentkeyid>`} pair to a registered API and optional success/error follow-up nodes.
+          <h2 className="text-xl font-semibold">Campaign API Mappings</h2>
+          <p className="text-sm text-muted-foreground">
+            Link content keys to endpoints via campaign_api_mapping.
           </p>
         </div>
       </div>
 
-      {error && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+      {error && (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {error}
+        </div>
+      )}
 
-      <section className="rounded-xl border p-4 space-y-3">
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="space-y-1 text-sm font-medium">
-            <span>Campaign ID</span>
-            <input
-              className="w-full rounded-md border px-3 py-2"
-              value={draft.campaignid}
-              onChange={(e) => setDraft((prev) => ({ ...prev, campaignid: e.target.value }))}
-              placeholder="e.g. 12"
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Content key</span>
-            <input
-              className="w-full rounded-md border px-3 py-2"
-              value={draft.contentkeyid}
-              onChange={(e) => setDraft((prev) => ({ ...prev, contentkeyid: e.target.value }))}
-              placeholder="WELCOME_STEP"
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>API</span>
-            <select
-              className="w-full rounded-md border px-3 py-2"
-              value={draft.apiid}
-              onChange={(e) => setDraft((prev) => ({ ...prev, apiid: e.target.value }))}
-            >
-              <option value="">Select API</option>
-              {endpoints.map((endpoint) => (
-                <option key={endpoint.apiid ?? endpoint.name} value={endpoint.apiid}>
-                  {endpoint.name} ({endpoint.method})
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="space-y-1 text-sm font-medium">
-            <span>Success content key</span>
-            <input
-              className="w-full rounded-md border px-3 py-2"
-              value={draft.success_contentkeyid}
-              onChange={(e) => setDraft((prev) => ({ ...prev, success_contentkeyid: e.target.value }))}
-              placeholder="OPTIONAL"
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Error content key</span>
-            <input
-              className="w-full rounded-md border px-3 py-2"
-              value={draft.error_contentkeyid}
-              onChange={(e) => setDraft((prev) => ({ ...prev, error_contentkeyid: e.target.value }))}
-              placeholder="OPTIONAL"
-            />
-          </label>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-medium">
+      {/* Create form */}
+      {canCreate && (
+        <form onSubmit={handleCreate} className="grid gap-3 md:grid-cols-2">
           <input
-            type="checkbox"
-            checked={draft.is_active}
-            onChange={(e) => setDraft((prev) => ({ ...prev, is_active: e.target.checked }))}
+            className="rounded-md border px-3 py-2 text-sm"
+            placeholder="Campaign ID"
+            value={draft.campaignid}
+            onChange={(e) => setDraft((d) => ({ ...d, campaignid: e.target.value }))}
           />
-          Mapping is active
-        </label>
-        <div>
-          <button
-            type="button"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-            onClick={handleCreate}
-            disabled={loading}
+          <input
+            className="rounded-md border px-3 py-2 text-sm"
+            placeholder="CONTENT_KEY"
+            value={draft.contentkeyid}
+            onChange={(e) => setDraft((d) => ({ ...d, contentkeyid: e.target.value }))}
+          />
+          <select
+            className="rounded-md border px-3 py-2 text-sm"
+            value={draft.apiid}
+            onChange={(e) => setDraft((d) => ({ ...d, apiid: e.target.value }))}
           >
-            Add mapping
-          </button>
-        </div>
-      </section>
+            <option value="">Select endpoint</option>
+            {endpoints.map((ep) => (
+              <option key={ep.apiid} value={ep.apiid}>
+                {ep.name || ep.apiid}
+              </option>
+            ))}
+          </select>
+          <input
+            className="rounded-md border px-3 py-2 text-sm"
+            placeholder="Success CONTENT_KEY"
+            value={draft.success_contentkeyid}
+            onChange={(e) => setDraft((d) => ({ ...d, success_contentkeyid: e.target.value }))}
+          />
+          <input
+            className="rounded-md border px-3 py-2 text-sm"
+            placeholder="Error CONTENT_KEY"
+            value={draft.error_contentkeyid}
+            onChange={(e) => setDraft((d) => ({ ...d, error_contentkeyid: e.target.value }))}
+          />
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={draft.is_active}
+              onChange={(e) => setDraft((d) => ({ ...d, is_active: e.target.checked }))}
+            />
+            Active
+          </label>
+          <div>
+            <button
+              type="submit"
+              className="btn btn-primary"
+            >
+              Create mapping
+            </button>
+          </div>
+        </form>
+      )}
 
-      <section className="rounded-xl border overflow-x-auto">
+      <div className="rounded-xl border overflow-x-auto bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/40">
             <tr>
-              <th className="px-3 py-2 text-left font-medium">Mapping ID</th>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
               <th className="px-3 py-2 text-left font-medium">Content key</th>
-              <th className="px-3 py-2 text-left font-medium">API</th>
-              <th className="px-3 py-2 text-left font-medium">Success/Error</th>
+              <th className="px-3 py-2 text-left font-medium">Endpoint</th>
+              <th className="px-3 py-2 text-left font-medium">Success</th>
+              <th className="px-3 py-2 text-left font-medium">Error</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
-                  Loading mappings...
+            {mappings.map((m) => (
+              <tr key={m.id} className="border-t">
+                <td className="px-3 py-2">{m.campaignid}</td>
+                <td className="px-3 py-2 font-mono text-xs">{m.contentkeyid}</td>
+                <td className="px-3 py-2">{m.apiid}</td>
+                <td className="px-3 py-2 font-mono text-xs">{m.success_contentkeyid}</td>
+                <td className="px-3 py-2 font-mono text-xs">{m.error_contentkeyid}</td>
+                <td className="px-3 py-2 text-xs">
+                  {m.is_active ? (
+                    <span className="pill bg-emerald-100 text-emerald-700">Active</span>
+                  ) : (
+                    <span className="pill bg-slate-100 text-slate-700">Disabled</span>
+                  )}
                 </td>
-              </tr>
-            ) : mappings.length ? (
-              mappings.map((mapping) => (
-                <tr key={mapping.mappingid} className="border-t">
-                  <td className="px-3 py-2 font-mono text-xs">{mapping.mappingid}</td>
-                  <td className="px-3 py-2">Campaign #{mapping.campaignid}</td>
-                  <td className="px-3 py-2">{mapping.contentkeyid}</td>
-                  <td className="px-3 py-2">{endpointLabel(mapping.apiid)}</td>
-                  <td className="px-3 py-2 text-xs">
-                    <div>Success: {mapping.success_contentkeyid || "—"}</div>
-                    <div>Error: {mapping.error_contentkeyid || "—"}</div>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        mapping.is_active ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-700"
-                      }`}
-                    >
-                      {mapping.is_active ? "Active" : "Disabled"}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right space-x-2">
+                <td className="px-3 py-2 text-right space-x-2">
+                  {canUpdate ? (
+                    <span className="text-muted-foreground text-xs">Edit via API</span>
+                  ) : (
+                    <span className="text-muted-foreground text-xs">View only</span>
+                  )}
+                  {canArchive && (
                     <button
-                      className="rounded border px-2 py-1 text-xs"
-                      onClick={async () => {
-                        if (!mapping.mappingid) return;
-                        await Api.updateMapping(mapping.mappingid, { ...mapping, is_active: !mapping.is_active });
-                        refresh();
-                      }}
-                    >
-                      {mapping.is_active ? "Disable" : "Enable"}
-                    </button>
-                    <button
-                      className="rounded border px-2 py-1 text-xs text-rose-600"
-                      onClick={async () => {
-                        if (!mapping.mappingid) return;
-                        await Api.deleteMapping(mapping.mappingid);
-                        refresh();
-                      }}
+                      type="button"
+                      onClick={() => handleDelete(m.id)}
+                      className="text-rose-600 hover:underline text-xs"
                     >
                       Delete
                     </button>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={7} className="px-3 py-4 text-muted-foreground">
-                  No mappings yet.
+                  )}
                 </td>
               </tr>
-            )}
+            ))}
           </tbody>
         </table>
-      </section>
+      </div>
     </div>
   );
 }

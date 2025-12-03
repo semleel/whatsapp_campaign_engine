@@ -1,12 +1,13 @@
 "use client";
 
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { showCenteredAlert } from "@/lib/showAlert";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+import TagSelector from "@/components/TagSelector";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 
 // ------------------------------
 // Types
@@ -58,19 +59,19 @@ const TEMPLATE_CATEGORY_OPTIONS: {
     value: "Marketing",
     label: "Marketing",
     subtitle: "One-to-many bulk broadcast marketing messages",
-    icon: "📣",
+    icon: "[M]",
   },
   {
     value: "Utility",
     label: "Utility",
     subtitle: "Transactional updates triggered by a user action",
-    icon: "🔔",
+    icon: "[U]",
   },
   {
     value: "Authentication",
     label: "Authentication",
     subtitle: "One-time passwords and login verification",
-    icon: "🔐",
+    icon: "[A]",
   },
 ];
 
@@ -105,6 +106,74 @@ type FeedbackState = {
   onSecondary?: () => void;
 };
 
+const INLINE_FORMATTERS = [
+  {
+    regex: /\*\*(.+?)\*\*/g,
+    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
+  },
+  {
+    regex: /\*(.+?)\*/g,
+    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
+  },
+  {
+    regex: /~~(.+?)~~/g,
+    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
+  },
+  {
+    regex: /`([^`]+)`/g,
+    wrap: (content: string, key: string) => (
+      <code key={key} className="bg-muted px-1 rounded text-[11px]">
+        {content}
+      </code>
+    ),
+  },
+];
+
+function formatWhatsAppLine(line: string, keyPrefix: string) {
+  let segments: React.ReactNode[] = [line];
+
+  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
+    const next: React.ReactNode[] = [];
+
+    segments.forEach((seg, segIdx) => {
+      if (typeof seg !== "string") {
+        next.push(seg);
+        return;
+      }
+
+      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(seg)) !== null) {
+        if (match.index > lastIndex) {
+          next.push(seg.slice(lastIndex, match.index));
+        }
+
+        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < seg.length) {
+        next.push(seg.slice(lastIndex));
+      }
+    });
+
+    segments = next;
+  });
+
+  return segments;
+}
+
+function renderFormattedLines(text: string, placeholder: string) {
+  const lines = text ? text.split("\n") : [placeholder];
+
+  return lines.map((line, idx) => {
+    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
+    return <p key={`line-${idx}`}>{content}</p>;
+  });
+}
+
 // ------------------------------
 // Component
 // ------------------------------
@@ -116,6 +185,7 @@ export default function EditTemplatePage() {
     () => (params?.id ? Number(params.id) : NaN),
     [params]
   );
+  const { canView, canUpdate, canArchive, loading: privLoading } = usePrivilege("content");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -141,9 +211,6 @@ export default function EditTemplatePage() {
     headerMediaType: "image",
     isdeleted: null,
   });
-
-  // Tags input
-  const [tagInput, setTagInput] = useState("");
 
   // Modal states
   const [confirm, setConfirm] = useState<ConfirmState>({
@@ -204,54 +271,62 @@ export default function EditTemplatePage() {
 
     const load = async () => {
       try {
+        if (privLoading) return;
+        if (!canView) {
+          setError("You do not have permission to view templates.");
+          setLoading(false);
+          return;
+        }
         setLoading(true);
-        const res = await fetch(`${API_BASE}/api/template/${templateId}`);
-        if (!res.ok) throw new Error("Failed to load template");
 
-        const data = await res.json();
+        // ✅ use shared API client
+        const data = await Api.getTemplate(templateId);
 
-        const isdeleted: boolean | null = data.isdeleted ?? null;
+        const isdeleted: boolean | null = (data as any).isdeleted ?? null;
         const placeholders =
-          (data.placeholders as Record<string, unknown> | null) || null;
+          ((data as any).placeholders as Record<string, unknown> | null) ||
+          null;
 
         const headerType: TemplateData["headerType"] =
-          data.headerType ||
+          (data as any).headerType ||
           (placeholders?.headerType as TemplateData["headerType"]) ||
-          (data.mediaurl ? "media" : "none");
+          ((data as any).mediaurl ? "media" : "none");
 
         const headerText: string =
-          data.headerText ||
+          (data as any).headerText ||
           (placeholders?.headerText as string | null) ||
           "";
 
         const headerMediaType: TemplateData["headerMediaType"] =
-          data.headerMediaType ||
+          (data as any).headerMediaType ||
           (placeholders?.headerMediaType as TemplateData["headerMediaType"]) ||
           "image";
 
         const footerText: string =
-          data.footertext ||
+          (data as any).footertext ||
           (placeholders?.footerText as string | null) ||
           "";
 
         const buttons: ButtonItem[] =
-          data.buttons ||
+          (data as any).buttons ||
           ((placeholders?.buttons as ButtonItem[] | undefined) ?? []);
 
         setForm({
-          contentid: data.contentid,
-          title: data.title || "",
-          type: data.type,
-          status: data.status,
-          lang: (data.lang || data.defaultlang || "en")?.trim() || "en",
-          category: data.category || "Marketing",
-          body: data.body || data.description || "",
-          description: data.description || "",
+          contentid: (data as any).contentid,
+          title: (data as any).title || "",
+          type: (data as any).type,
+          status: (data as any).status,
+          lang:
+            ((data as any).lang || (data as any).defaultlang || "en")?.trim() ||
+            "en",
+          category: (data as any).category || "Marketing",
+          body: (data as any).body || (data as any).description || "",
+          description: (data as any).description || "",
           footerText,
-          mediaurl: data.mediaurl || null,
-          expiresat: data.expiresat || "",
+          mediaurl: (data as any).mediaurl || null,
+          expiresat: (data as any).expiresat || "",
           placeholders,
-          tags: data.tags ?? [],
+          tags: ((data as any).tags as string[]) ?? [],
           buttons,
           headerType,
           headerText,
@@ -267,7 +342,7 @@ export default function EditTemplatePage() {
     };
 
     load();
-  }, [templateId]);
+  }, [templateId, canView, privLoading]);
 
   // ------------------------------
   // Buttons helpers
@@ -311,35 +386,14 @@ export default function EditTemplatePage() {
   };
 
   // ------------------------------
-  // Tags helpers
-  // ------------------------------
-
-  const addTags = () => {
-    const tagList = tagInput
-      .split(/[\s,]+/)
-      .map((t) => t.trim())
-      .filter(Boolean);
-    if (!tagList.length) return;
-
-    setForm((prev) => ({
-      ...prev,
-      tags: [...(prev.tags || []), ...tagList],
-    }));
-    setTagInput("");
-  };
-
-  const removeTag = (name: string) => {
-    setForm((prev) => ({
-      ...prev,
-      tags: prev.tags!.filter((t) => t !== name),
-    }));
-  };
-
-  // ------------------------------
   // Save / Archive / Recover
   // ------------------------------
 
   const doSave = async () => {
+    if (!canUpdate) {
+      await showCenteredAlert("You do not have permission to update templates.");
+      return;
+    }
     if (!form.title.trim()) {
       await showCenteredAlert("Title is required");
       openFeedback({
@@ -370,12 +424,16 @@ export default function EditTemplatePage() {
       };
 
       const payload = {
-        ...form,
+        title: form.title,
+        type: form.type,
+        category: form.category || null,
         status: form.status,
+        defaultLang: form.lang,
         lang: form.lang,
+        defaultLang: form.lang, // ✅ match TemplatePayload
         body: form.body,
         description: form.description || form.body || null,
-        mediaurl: finalMediaUrl,
+        mediaUrl: finalMediaUrl,
         expiresat: expiresAtIso,
         footerText: placeholderData.footerText,
         headerText: placeholderData.headerText,
@@ -386,30 +444,21 @@ export default function EditTemplatePage() {
           ...(form.placeholders || {}),
           ...placeholderData,
         },
+        isdeleted: form.isdeleted,
+        expiresAt: expiresAtIso || undefined,
       };
 
-      const res = await fetch(`${API_BASE}/api/template/${form.contentid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // 1) Update main template record via shared Api client
+      await Api.updateTemplate(form.contentid, payload as any);
 
-      if (!res.ok) throw new Error("Failed to update template");
+      // 2) Attach tags to template (same behaviour as create page)
+      await Api.attachTags(form.contentid, form.tags || []);
 
+      // This shows the "Heads up" modal.
       await showCenteredAlert("Template updated successfully!");
-      openFeedback({
-        title: "Template saved",
-        message: "Your changes have been saved successfully.",
-        primaryLabel: "Back to library",
-        secondaryLabel: "Continue editing",
-        onPrimary: () => {
-          closeFeedback();
-          router.push("/content/templates");
-        },
-        onSecondary: () => {
-          closeFeedback();
-        },
-      });
+
+      // After user clicks OK on the heads up modal, go straight back to library.
+      router.push("/content/templates");
     } catch (e: any) {
       console.error(e);
       await showCenteredAlert(e.message || "Failed to update template.");
@@ -427,27 +476,7 @@ export default function EditTemplatePage() {
     setSaving(true);
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/template/${form.contentid}/delete`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        }
-      );
-
-      const bodyText = await res.text();
-
-      if (!res.ok) {
-        openFeedback({
-          title: "Delete failed",
-          message:
-            `Server response: ${res.status} ${res.statusText}\n` +
-            (bodyText || ""),
-          variant: "error",
-          primaryLabel: "Close",
-        });
-        return;
-      }
+      await Api.softDeleteTemplate(form.contentid);
 
       setForm((prev) => ({ ...prev, isdeleted: true }));
 
@@ -471,20 +500,37 @@ export default function EditTemplatePage() {
     }
   };
 
+  // Hard delete (permanent)
+  const doHardDelete = async () => {
+    setSaving(true);
+
+    try {
+      await Api.deleteTemplate(form.contentid);
+
+      openFeedback({
+        title: "Template deleted",
+        message: "This template has been removed permanently.",
+        variant: "success",
+        primaryLabel: "Back to library",
+        onPrimary: () => router.push("/content/templates"),
+      });
+    } catch (err: any) {
+      openFeedback({
+        title: "Delete failed",
+        message: err instanceof Error ? err.message : String(err),
+        variant: "error",
+        primaryLabel: "Close",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Recover from archive
   const doRecover = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/api/template/${form.contentid}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isdeleted: false }),
-      });
-
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || "Failed to recover template");
-      }
+      await Api.recoverTemplate(form.contentid);
 
       setForm((prev) => ({ ...prev, isdeleted: false }));
 
@@ -512,7 +558,8 @@ export default function EditTemplatePage() {
   const handleSaveClick = () => {
     openConfirm({
       title: "Save changes?",
-      message: "Are you sure you want to save the changes made to this template?",
+      message:
+        "Are you sure you want to save the changes made to this template?",
       confirmLabel: "Save",
       cancelLabel: "Cancel",
       onConfirm: () => {
@@ -536,7 +583,20 @@ export default function EditTemplatePage() {
   };
 
   const handleDeleteClick = () => {
-    if (form.isdeleted) return;
+    if (form.isdeleted) {
+      openConfirm({
+        title: "Delete template?",
+        message:
+          "This will permanently delete the template and it cannot be recovered.",
+        confirmLabel: "Delete",
+        cancelLabel: "Cancel",
+        onConfirm: () => {
+          closeConfirm();
+          void doHardDelete();
+        },
+      });
+      return;
+    }
 
     openConfirm({
       title: "Archive template?",
@@ -568,6 +628,13 @@ export default function EditTemplatePage() {
   // ------------------------------
   // UI: loading / error
   // ------------------------------
+
+  if (!privLoading && !canView)
+    return (
+      <div className="p-6 text-center text-sm text-amber-700 border border-amber-200 bg-amber-50 rounded-lg">
+        You do not have permission to view templates.
+      </div>
+    );
 
   if (loading)
     return <div className="p-6 text-center text-sm">Loading...</div>;
@@ -667,7 +734,9 @@ export default function EditTemplatePage() {
             </label>
           </div>
 
-          {/* Category row – WANotifier-style cards */}
+          {/*
+            Category selection temporarily disabled, will be restored later.
+
           <div className="mt-4 text-sm">
             <span className="font-medium block mb-1">Category</span>
             <p className="text-xs text-muted-foreground mb-3">
@@ -712,51 +781,21 @@ export default function EditTemplatePage() {
               })}
             </div>
           </div>
+          */}
 
           {/* TAGS – directly under Category */}
           <div className="border-t pt-4 mt-4 space-y-3">
             <h4 className="font-semibold text-sm">Tags</h4>
 
-            <div className="flex flex-wrap gap-2">
-              {form.tags?.map((t) => (
-                <span
-                  key={t}
-                  className="px-2 py-1 bg-muted border rounded-full text-xs flex items-center gap-2"
-                >
-                  {t}
-                  <button
-                    type="button"
-                    className="text-red-500"
-                    onClick={() => removeTag(t)}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <input
-                className="border rounded px-3 py-2 flex-1"
-                placeholder="Add tags (press Enter or click Add)..."
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    addTags();
-                  }
-                }}
-              />
-
-              <button
-                type="button"
-                className="border rounded px-3 py-2 text-sm"
-                onClick={addTags}
-              >
-                Add
-              </button>
-            </div>
+            <TagSelector
+              selected={form.tags}
+              onChange={(nextTags: string[]) =>
+                setForm((prev) => ({
+                  ...prev,
+                  tags: nextTags,
+                }))
+              }
+            />
           </div>
 
           {/* EXPIRY – right under Tags */}
@@ -862,6 +901,9 @@ export default function EditTemplatePage() {
           {/* BODY */}
           <label className="text-sm border-t pt-4 block space-y-1">
             <span className="font-medium">Body</span>
+            <p className="text-xs text-muted-foreground">
+              Formatting supported: **bold**, *italic*, ~~strikethrough~~, `code`.
+            </p>
             <textarea
               className="w-full border rounded px-3 py-2 min-h-32"
               value={form.body}
@@ -1021,13 +1063,13 @@ export default function EditTemplatePage() {
               type="button"
               className={`w-full border rounded px-4 py-2 text-sm ${
                 form.isdeleted
-                  ? "border-slate-300 text-slate-400 cursor-not-allowed"
+                  ? "border-red-600 text-red-600"
                   : "border-red-500 text-red-500"
-              }`}
+              } ${saving ? "opacity-70 cursor-not-allowed" : ""}`}
               onClick={handleDeleteClick}
-              disabled={!!form.isdeleted}
+              disabled={saving}
             >
-              {form.isdeleted ? "Archived" : "Archive Template"}
+              {form.isdeleted ? "Delete Template" : "Archive Template"}
             </button>
 
             {/* Recover button – only when archived */}
@@ -1062,9 +1104,7 @@ export default function EditTemplatePage() {
               )}
 
               <div className="bg-background rounded p-2 text-xs shadow">
-                {form.body.split("\n").map((line, i) => (
-                  <p key={i}>{line || " "}</p>
-                ))}
+                {renderFormattedLines(form.body, " ")}
               </div>
 
               {form.footerText && (
@@ -1161,3 +1201,4 @@ export default function EditTemplatePage() {
     </div>
   );
 }
+

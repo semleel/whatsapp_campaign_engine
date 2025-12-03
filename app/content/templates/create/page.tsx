@@ -4,10 +4,9 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { showCenteredAlert } from "@/lib/showAlert";
+import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 import TagSelector from "../../../../components/TagSelector";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
 
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
@@ -39,25 +38,25 @@ const TEMPLATE_CATEGORY_OPTIONS: {
   subtitle: string;
   icon: string;
 }[] = [
-    {
-      value: "Marketing",
-      label: "Marketing",
-      subtitle: "One-to-many bulk broadcast marketing messages",
-      icon: "📣",
-    },
-    {
-      value: "Utility",
-      label: "Utility",
-      subtitle: "Transactional updates triggered by a user action",
-      icon: "🔔",
-    },
-    {
-      value: "Authentication",
-      label: "Authentication",
-      subtitle: "One-time passwords and login verification",
-      icon: "🔐",
-    },
-  ];
+  {
+    value: "Marketing",
+    label: "Marketing",
+    subtitle: "One-to-many bulk broadcast marketing messages",
+    icon: "[M]",
+  },
+  {
+    value: "Utility",
+    label: "Utility",
+    subtitle: "Transactional updates triggered by a user action",
+    icon: "[U]",
+  },
+  {
+    value: "Authentication",
+    label: "Authentication",
+    subtitle: "One-time passwords and login verification",
+    icon: "[A]",
+  },
+];
 
 type TemplateForm = {
   title: string;
@@ -80,6 +79,74 @@ type TemplateForm = {
 
 function generateId() {
   return Math.random().toString(36).substring(2, 10);
+}
+
+const INLINE_FORMATTERS = [
+  {
+    regex: /\*\*(.+?)\*\*/g,
+    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
+  },
+  {
+    regex: /\*(.+?)\*/g,
+    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
+  },
+  {
+    regex: /~~(.+?)~~/g,
+    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
+  },
+  {
+    regex: /`([^`]+)`/g,
+    wrap: (content: string, key: string) => (
+      <code key={key} className="bg-muted px-1 rounded text-[11px]">
+        {content}
+      </code>
+    ),
+  },
+];
+
+function formatWhatsAppLine(line: string, keyPrefix: string) {
+  let segments: React.ReactNode[] = [line];
+
+  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
+    const next: React.ReactNode[] = [];
+
+    segments.forEach((seg, segIdx) => {
+      if (typeof seg !== "string") {
+        next.push(seg);
+        return;
+      }
+
+      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(seg)) !== null) {
+        if (match.index > lastIndex) {
+          next.push(seg.slice(lastIndex, match.index));
+        }
+
+        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < seg.length) {
+        next.push(seg.slice(lastIndex));
+      }
+    });
+
+    segments = next;
+  });
+
+  return segments;
+}
+
+function renderFormattedLines(text: string, placeholder: string) {
+  const lines = text ? text.split("\n") : [placeholder];
+
+  return lines.map((line, idx) => {
+    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
+    return <p key={`line-${idx}`}>{content}</p>;
+  });
 }
 
 // Initial form factory so we can reuse it
@@ -105,11 +172,11 @@ function createEmptyForm(): TemplateForm {
 
 export default function ContentCreatePage() {
   const router = useRouter();
+  const { canCreate, loading: privLoading } = usePrivilege("content");
 
   const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
 
   const handleChange = (
     e:
@@ -136,8 +203,8 @@ export default function ContentCreatePage() {
             type === "visit_website"
               ? "Visit website"
               : type === "call_phone"
-                ? "Call now"
-                : "Quick reply",
+              ? "Call now"
+              : "Quick reply",
           url: type === "visit_website" ? "" : undefined,
           phone: type === "call_phone" ? "" : undefined,
         },
@@ -166,6 +233,10 @@ export default function ContentCreatePage() {
   // -----------------------------
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canCreate) {
+      setMessage("You do not have permission to create templates.");
+      return;
+    }
     setSubmitting(true);
 
     try {
@@ -187,6 +258,7 @@ export default function ContentCreatePage() {
         category: form.category || null,
         status: form.status,
         lang: form.lang,
+        defaultLang: form.lang, 
         body: form.body,
         description: form.description || form.body || null,
         mediaUrl: form.mediaurl?.trim() || null,
@@ -199,65 +271,39 @@ export default function ContentCreatePage() {
         placeholders: placeholderData,
       };
 
-      const res = await fetch(`${API_BASE}/api/template/create`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // 1) Create main template record via shared Api client
+      const createdResponse = await Api.createTemplate(payload);
+      const created = (createdResponse as any)?.data;
+      const contentId: number | undefined = created?.contentid;
 
-      const ct = res.headers.get("content-type") || "";
-      const isJson = ct.includes("application/json");
-      const data = isJson ? await res.json() : await res.text();
-
-      if (res.ok && isJson) {
-        const created = (data as any)?.data;
-        const contentId: number | undefined = created?.contentid;
-
-        // tags -> join table
-        const tags = form.tags;
-        if (contentId && tags.length) {
-          await fetch(`${API_BASE}/api/template/${contentId}/tags`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tags }),
-          });
-        }
-
-        // expiry -> dedicated endpoint
-        if (contentId && form.expiresat) {
-          const iso = new Date(form.expiresat).toISOString();
-          await fetch(`${API_BASE}/api/template/${contentId}/expire`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ expiresAt: iso }),
-          });
-        }
-
-        // reset form
-        setForm(createEmptyForm());
-        setShowSuccess(true);
-        setMessage(null);
-
-        // optional: auto-redirect handled by overlay button
-        router.push(
-          `/content/templates?notice=${encodeURIComponent(
-            "Template created successfully."
-          )}`
-        );
-      } else {
-        const msg =
-          typeof data === "string"
-            ? data
-            : (data as any)?.error ||
-            (data as any)?.message ||
-            "Unknown error";
-        await showCenteredAlert(`Error: ${msg}`);
-        console.error("Create template error:", msg, data);
-        setMessage(`Error: ${msg}`);
+      // 2) Attach tags (join table)
+      const tags = form.tags;
+      if (contentId && tags.length) {
+        // Make sure these helpers exist in client.ts:
+        // attachTags(templateId: number, tags: string[])
+        await (Api as any).attachTags(contentId, tags);
       }
+
+      // 3) Expiry – dedicated endpoint
+      if (contentId && form.expiresat) {
+        const iso = new Date(form.expiresat).toISOString();
+        // Make sure this helper exists in client.ts:
+        // setTemplateExpiry(templateId: number, expiresAt: string)
+        await (Api as any).setTemplateExpiry(contentId, iso);
+      }
+
+      // reset form (not really visible since we redirect, but safe)
+      setForm(createEmptyForm());
+      setMessage(null);
+
+      // Single success popup, then go back to template library
+      await showCenteredAlert("Template created successfully!");
+      router.push("/content/templates");
     } catch (err: any) {
       console.error(err);
-      await showCenteredAlert("Network error.");
+      await showCenteredAlert(
+        err?.message || "Network error."
+      );
       setMessage(err?.message || "Network error.");
     } finally {
       setSubmitting(false);
@@ -268,40 +314,15 @@ export default function ContentCreatePage() {
   const previewFooter =
     form.footerText.trim() || "Sent via Campaign Engine";
 
+  const permissionBanner =
+    !privLoading && !canCreate ? (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to create templates.
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-6 relative">
-      {/* Success overlay */}
-      {showSuccess && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-xl bg-card border shadow-lg p-6 space-y-4">
-            <h3 className="text-lg font-semibold">Template created</h3>
-            <p className="text-sm text-muted-foreground">
-              Your WhatsApp template has been created successfully. What
-              would you like to do next?
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2 pt-2">
-              <button
-                type="button"
-                className="flex-1 inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-                onClick={() => {
-                  setShowSuccess(false);
-                  setForm(createEmptyForm());
-                }}
-              >
-                Continue creating
-              </button>
-              <button
-                type="button"
-                className="flex-1 inline-flex items-center justify-center rounded-md border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/60"
-                onClick={() => router.push("/content/templates")}
-              >
-                Back to library
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -388,7 +409,9 @@ export default function ContentCreatePage() {
             </label>
           </div>
 
-          {/* Category cards */}
+          {/*
+            Category selection temporarily disabled, will be restored later.
+
           <div className="mt-4 text-sm">
             <span className="font-medium block mb-1">Category</span>
             <p className="text-xs text-muted-foreground mb-3">
@@ -435,6 +458,7 @@ export default function ContentCreatePage() {
               })}
             </div>
           </div>
+          */}
 
           {/* TAGS – Wati-style picker */}
           <div className="border-t pt-4 space-y-2">
@@ -452,9 +476,7 @@ export default function ContentCreatePage() {
                   tags,
                 }))
               }
-              apiBase={API_BASE}
             />
-
           </div>
 
           {/* EXPIRY */}
@@ -554,6 +576,9 @@ export default function ContentCreatePage() {
           {/* Body */}
           <label className="space-y-1 text-sm font-medium block border-t pt-4">
             <span>Body</span>
+            <p className="text-xs text-muted-foreground">
+              Formatting supported: **bold**, *italic*, ~~strikethrough~~, `code`.
+            </p>
             <textarea
               name="body"
               placeholder="Message body and personalization notes"
@@ -628,8 +653,8 @@ export default function ContentCreatePage() {
                         {btn.type === "visit_website"
                           ? "Call to Action – Visit website"
                           : btn.type === "call_phone"
-                            ? "Call to Action – Call phone"
-                            : "Quick reply"}
+                          ? "Call to Action – Call phone"
+                          : "Quick reply"}
                       </span>
                       <button
                         type="button"
@@ -753,11 +778,7 @@ export default function ContentCreatePage() {
 
               {/* body bubble */}
               <div className="rounded-lg bg-background px-3 py-2 text-xs leading-relaxed shadow-sm">
-                {previewBody.split("\n").map((line, i) => (
-                  <p key={i}>
-                    {line || (i === 0 ? "Body text here" : "")}
-                  </p>
-                ))}
+                {renderFormattedLines(previewBody, "Body text here")}
               </div>
 
               {/* footer */}
@@ -794,3 +815,4 @@ export default function ContentCreatePage() {
     </div>
   );
 }
+

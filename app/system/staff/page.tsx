@@ -3,6 +3,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredAdmin, getStoredToken } from "@/lib/auth";
+import { usePrivilege } from "@/lib/permissions";
+import { Api } from "@/lib/client";
 
 type Staff = {
   adminid: number;
@@ -12,6 +14,25 @@ type Staff = {
   phonenum?: string | null;
   is_active?: boolean | null;
   createdat?: string | null;
+  has_privileges?: boolean;
+};
+
+type PrivilegeAction = {
+  key: string;
+  label: string;
+};
+
+type PrivilegeItem = {
+  id: string;
+  label: string;
+  actions: PrivilegeAction[];
+};
+
+type PrivilegeGroup = {
+  id: string;
+  title: string;
+  accent: "amber" | "sky";
+  items: PrivilegeItem[];
 };
 
 const NEW_STAFF_DEFAULT = {
@@ -22,11 +43,201 @@ const NEW_STAFF_DEFAULT = {
   phonenum: "",
 };
 
+const PRIVILEGE_CATALOG: PrivilegeGroup[] = [
+  {
+    id: "core-access",
+    title: "Workspace Access",
+    accent: "amber",
+    items: [
+      { id: "overview", label: "Overview", actions: buildCrudActions() },
+      { id: "campaigns", label: "Campaigns", actions: buildCrudActions() },
+      { id: "content", label: "Content", actions: buildCrudActions() },
+      { id: "flows", label: "Flows", actions: buildCrudActions() },
+      { id: "contacts", label: "Contacts", actions: buildCrudActions() },
+      { id: "integration", label: "Integrations", actions: buildCrudActions() },
+      { id: "reports", label: "Reports", actions: buildCrudActions() },
+      { id: "system", label: "System", actions: buildCrudActions() },
+      { id: "conversations", label: "Conversations", actions: buildCrudActions() },
+    ],
+  },
+];
+
+function buildCrudActions(): PrivilegeAction[] {
+  return [
+    { key: "view", label: "View" },
+    { key: "create", label: "Create" },
+    { key: "update", label: "Edit" },
+    { key: "archive", label: "Archive" },
+  ];
+}
+
+const DEFAULT_PRIVILEGE_KEYS = new Set<string>(
+  [
+    "overview",
+    "campaigns",
+    "content",
+    "flows",
+    "contacts",
+    "integration",
+    "reports",
+    "system",
+    "conversations",
+  ].map((id) => privilegeKey("core-access", id, "view"))
+);
+
+function privilegeKey(groupId: string, itemId: string, actionKey: string) {
+  return `${groupId}.${itemId}.${actionKey}`;
+}
+
+function buildPrivilegeState(withDefaults = false) {
+  const state: Record<string, boolean> = {};
+
+  for (const group of PRIVILEGE_CATALOG) {
+    for (const item of group.items) {
+      for (const action of item.actions) {
+        const key = privilegeKey(group.id, item.id, action.key);
+        state[key] = withDefaults ? DEFAULT_PRIVILEGE_KEYS.has(key) : false;
+      }
+    }
+  }
+
+  return state;
+}
+
+type PrivilegeState = Record<string, boolean>;
+
+const GENERAL_PRIV_STORAGE_KEY = "general_staff_privileges_v1";
+const MANUAL_OVERRIDE_STORAGE_KEY = "staff_manual_overrides_v1";
+const BASELINE_ADMIN_ID = Number(process.env.NEXT_PUBLIC_BASELINE_ADMIN_ID || 1);
+
+function loadStoredGeneralPrivileges(): PrivilegeState {
+  if (typeof window === "undefined") return buildPrivilegeState(true);
+  try {
+    const raw = localStorage.getItem(GENERAL_PRIV_STORAGE_KEY);
+    if (!raw) return buildPrivilegeState(true);
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      return { ...buildPrivilegeState(false), ...parsed };
+    }
+  } catch {
+    // fall through to defaults
+  }
+  return buildPrivilegeState(true);
+}
+
+function persistGeneralPrivileges(state: PrivilegeState) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(GENERAL_PRIV_STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadManualOverrideIds(): Set<number> {
+  if (typeof window === "undefined") return new Set<number>();
+  try {
+    const raw = localStorage.getItem(MANUAL_OVERRIDE_STORAGE_KEY);
+    if (!raw) return new Set<number>();
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const nums = parsed
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n));
+      return new Set<number>(nums);
+    }
+  } catch {
+    // ignore
+  }
+  return new Set<number>();
+}
+
+function persistManualOverrideIds(ids: Set<number>) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(
+    MANUAL_OVERRIDE_STORAGE_KEY,
+    JSON.stringify(Array.from(ids))
+  );
+}
+
+type ToggleFn = (keys: string | string[], next?: boolean) => void;
+
+function PrivilegeGroupCard({
+  group,
+  state,
+  onToggle,
+  disabled,
+}: {
+  group: PrivilegeGroup;
+  state: PrivilegeState;
+  onToggle: ToggleFn;
+  disabled?: boolean;
+}) {
+  const accent =
+    group.accent === "amber"
+      ? { dot: "bg-amber-500", border: "border-amber-200", text: "text-amber-700", bg: "bg-amber-50" }
+      : { dot: "bg-sky-500", border: "border-sky-200", text: "text-sky-700", bg: "bg-sky-50" };
+
+  return (
+    <div className="space-y-3 rounded-xl border p-3 bg-gradient-to-b from-white to-slate-50/40">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <span className={`h-2.5 w-2.5 rounded-full ${accent.dot}`} />
+        <span>{group.title}</span>
+      </div>
+      <div className="space-y-2">
+        {group.items.map((item) => (
+          <div
+            key={item.id}
+            className="rounded-lg border bg-white/80 px-3 py-2 shadow-sm transition hover:border-primary/30"
+          >
+            <div className="grid items-center gap-3 md:grid-cols-[1fr_minmax(420px,1fr)]">
+              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border"
+                  checked={item.actions.every((action) =>
+                    state[privilegeKey(group.id, item.id, action.key)]
+                  )}
+                  onChange={() => {
+                    const keys = item.actions.map((a) => privilegeKey(group.id, item.id, a.key));
+                    const allOn = keys.every((k) => state[k]);
+                    onToggle(keys, !allOn);
+                  }}
+                  disabled={disabled}
+                />
+                <span className="text-foreground">{item.label}</span>
+              </div>
+              <div className="flex w-full flex-wrap items-center justify-end gap-2">
+                {item.actions.map((action) => {
+                  const key = privilegeKey(group.id, item.id, action.key);
+                  return (
+                    <label
+                      key={action.key}
+                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border bg-white px-3 py-1.5 text-xs font-semibold shadow-sm ${disabled ? "opacity-50" : "hover:border-primary/30"}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 rounded border"
+                        checked={!!state[key]}
+                        onChange={() => onToggle(key)}
+                        disabled={disabled}
+                      />
+                      <span className="leading-none">{action.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function StaffPage() {
   const router = useRouter();
+  const { canView, canCreate, canUpdate, canArchive, loading: privLoading } = usePrivilege("system");
   const [staff, setStaff] = useState<Staff[]>([]);
   const [currentAdminId, setCurrentAdminId] = useState<number | null>(null);
   const [currentAdminRole, setCurrentAdminRole] = useState<string | null>(null);
+  const [staffOnlyList, setStaffOnlyList] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -48,6 +259,15 @@ export default function StaffPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<"recent" | "oldest" | "name">("recent");
+  const [generalPrivileges, setGeneralPrivileges] = useState<PrivilegeState>(() =>
+    loadStoredGeneralPrivileges()
+  );
+  const [staffPrivileges, setStaffPrivileges] = useState<Record<number, PrivilegeState>>({});
+  const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
+  const [savingPrivileges, setSavingPrivileges] = useState(false);
+  const [manualOverrideIds, setManualOverrideIds] = useState<Set<number>>(() =>
+    loadManualOverrideIds()
+  );
 
   function sanitizePayload(obj: Record<string, any>) {
     return Object.fromEntries(
@@ -109,36 +329,96 @@ export default function StaffPage() {
     const admin = getStoredAdmin();
     if (admin?.id) setCurrentAdminId(admin.id);
     if (admin?.role) setCurrentAdminRole((admin.role as string).toLowerCase());
-    loadStaff();
   }, []);
+
+  // Load staff only after privilege state is known (covers initial mount).
+  useEffect(() => {
+    if (privLoading) return;
+    loadStaff();
+  }, [privLoading, canView]);
+
+  useEffect(() => {
+    if (selectedStaffId && !staffOnlyList.find((s) => s.adminid === selectedStaffId)) {
+      setSelectedStaffId(staffOnlyList[0]?.adminid ?? null);
+    } else if (!selectedStaffId && staffOnlyList.length) {
+      setSelectedStaffId(staffOnlyList[0].adminid);
+    }
+  }, [selectedStaffId, staffOnlyList]);
+
+  useEffect(() => {
+    if (selectedStaffId) {
+      loadPrivilegesFromApi(selectedStaffId);
+    }
+  }, [selectedStaffId]);
+
+  if (!privLoading && !canView) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view staff.
+      </div>
+    );
+  }
+
+  const selectedPrivilegeState: PrivilegeState =
+    (selectedStaffId && staffPrivileges[selectedStaffId]) || generalPrivileges;
+
+  async function loadPrivilegesFromApi(adminid: number) {
+    try {
+      const res = await Api.getPrivileges(adminid);
+      const map: PrivilegeState = { ...buildPrivilegeState(false) };
+      Object.entries(res.privileges || {}).forEach(([resource, flags]) => {
+        map[`core-access.${resource}.view`] = !!flags.view;
+        map[`core-access.${resource}.create`] = !!flags.create;
+        map[`core-access.${resource}.update`] = !!flags.update;
+        map[`core-access.${resource}.archive`] = !!flags.archive;
+      });
+      setStaffPrivileges((prev) => ({ ...prev, [adminid]: map }));
+    } catch {
+      // ignore
+    }
+  }
 
   async function loadStaff() {
     try {
+      const self = getStoredAdmin();
+      const isLocalAdmin =
+        (self?.role || "").toLowerCase() === "admin" || (self?.id ?? 0) === 1;
+      const allowView = canView || isLocalAdmin;
+
+      if (privLoading) return;
+      if (!allowView) {
+        setError("You do not have permission to view staff.");
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError(null);
-      const token = getStoredToken();
-      if (!token) {
-        router.replace("/login");
-        return;
-      }
 
-      const res = await fetch(`${API_BASE_URL}/api/admin`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const data = await Api.listAdmins();
+      const normalized =
+        Array.isArray(data) && data.length
+          ? data.map((row: any) => ({
+              ...row,
+              has_privileges: Boolean(row?.has_privileges),
+            }))
+          : [];
+      setStaff(normalized);
+      const staffOnly = normalized.filter((row) => (row.role || "").toLowerCase() !== "admin");
+      setStaffOnlyList(staffOnly);
+
+      // Clean up manual override ids that no longer have custom privileges
+      setManualOverrideIds((prev) => {
+        const next = new Set<number>();
+        normalized.forEach((row: any) => {
+          if (row?.has_privileges && prev.has(row.adminid)) {
+            next.add(row.adminid);
+          }
+        });
+        if (next.size !== prev.size) {
+          persistManualOverrideIds(next);
+        }
+        return next;
       });
-
-      if (res.status === 401) {
-        clearStoredSession();
-        router.replace("/login");
-        return;
-      }
-      if (res.status === 403) {
-        setError("You need admin permissions to manage staff.");
-        return;
-      }
-      if (!res.ok) throw new Error(`Failed to load staff (${res.status})`);
-
-      const data = await res.json();
-      setStaff(Array.isArray(data) ? data : []);
     } catch (err: any) {
       setError(err.message || "Failed to load staff");
     } finally {
@@ -146,10 +426,166 @@ export default function StaffPage() {
     }
   }
 
+function toggleGeneralPrivilege(keys: string | string[], next?: boolean) {
+  const list = Array.isArray(keys) ? keys : [keys];
+  setGeneralPrivileges((prev) => {
+    const target = next !== undefined ? next : !prev[list[0]];
+    const updated = { ...prev };
+    list.forEach((k) => {
+      updated[k] = target;
+    });
+    return updated;
+  });
+}
+
+function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
+  if (!selectedStaffId) return;
+  const list = Array.isArray(keys) ? keys : [keys];
+  setStaffPrivileges((prev) => {
+    const base = prev[selectedStaffId] ? { ...prev[selectedStaffId] } : { ...generalPrivileges };
+    const target = next !== undefined ? next : !base[list[0]];
+    list.forEach((k) => {
+      base[k] = target;
+    });
+    return {
+      ...prev,
+      [selectedStaffId]: base,
+    };
+  });
+}
+
+  function applyGeneralToSelected() {
+    if (!selectedStaffId) return;
+    setStaffPrivileges((prev) => ({
+      ...prev,
+      [selectedStaffId]: { ...generalPrivileges },
+    }));
+  }
+
+  async function clearSelectedOverride() {
+    if (!selectedStaffId) return;
+    try {
+      setSavingPrivileges(true);
+      setError(null);
+      await Api.savePrivileges(selectedStaffId, {}); // delete per-staff rows so baseline applies
+      setStaffPrivileges((prev) => {
+        const next = { ...prev };
+        delete next[selectedStaffId];
+        return next;
+      });
+      setManualOverrideIds((prev) => {
+        const next = new Set(prev);
+        next.delete(selectedStaffId);
+        persistManualOverrideIds(next);
+        return next;
+      });
+      setStaff((list) =>
+        list.map((row) =>
+          row.adminid === selectedStaffId ? { ...row, has_privileges: false } : row
+        )
+      );
+      setMessage("Override removed; baseline will apply.");
+    } catch (err: any) {
+      setError(err.message || "Failed to remove override");
+    } finally {
+      setSavingPrivileges(false);
+    }
+  }
+
+  function normalizePrivilegesForApi(state: PrivilegeState) {
+    const output: Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }> = {};
+    Object.entries(state).forEach(([key, value]) => {
+      const [group, resource, action] = key.split(".");
+      if (group !== "core-access") return;
+      if (!output[resource]) {
+        output[resource] = { view: false, create: false, update: false, archive: false };
+      }
+      if (action === "view" || action === "create" || action === "update" || action === "archive") {
+        output[resource][action] = !!value;
+      }
+    });
+    return output;
+  }
+
+  function handleSavePrivileges() {
+    if (!canUpdate) {
+      setError("You do not have permission to update staff privileges.");
+      return;
+    }
+    const manualIds = new Set(manualOverrideIds);
+    const targets = selectedStaffId
+      ? [selectedStaffId]
+      : staffOnlyList
+          .map((s) => s.adminid)
+          .filter((id) => !manualIds.has(id));
+
+    if (!targets.length) {
+      setError("No eligible staff to save privileges (manual overrides are skipped).");
+      return;
+    }
+    const confirmed = window.confirm(
+      selectedStaffId
+        ? "Save privilege changes for this staff member?"
+        : "Save the current baseline to all staff without manual overrides?"
+    );
+    if (!confirmed) return;
+    setSavingPrivileges(true);
+    // Always persist the general baseline (adminid = 0) so non-overridden staff inherit it.
+    const baselinePromise = Api.savePrivileges(
+      BASELINE_ADMIN_ID,
+      normalizePrivilegesForApi(generalPrivileges)
+    );
+
+    Promise.all([
+      baselinePromise,
+      ...targets.map((adminid) =>
+        Api.savePrivileges(
+          adminid,
+          normalizePrivilegesForApi(
+            selectedStaffId
+              ? staffPrivileges[adminid] || generalPrivileges
+              : generalPrivileges
+          )
+        )
+      ),
+    ])
+      .then(() => {
+        if (selectedStaffId) {
+          setManualOverrideIds((prev) => {
+            const next = new Set(prev);
+            next.add(selectedStaffId);
+            persistManualOverrideIds(next);
+            return next;
+          });
+          // Ensure staff entry reflects manual override
+          setStaff((list) =>
+            list.map((row) =>
+              row.adminid === selectedStaffId ? { ...row, has_privileges: true } : row
+            )
+          );
+        }
+        persistGeneralPrivileges(generalPrivileges);
+        setMessage(
+          selectedStaffId
+            ? "Privileges saved to server"
+            : `Baseline applied to ${targets.length} staff`
+        );
+        window.dispatchEvent(new Event("privileges-changed"));
+      })
+      .catch((err) => {
+        setError(err.message || "Failed to save privileges");
+      })
+      .finally(() => setSavingPrivileges(false));
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
     setError(null);
+    if (!canCreate) {
+      setError("You do not have permission to create staff.");
+      return;
+    }
     try {
       setCreating(true);
       const token = getStoredToken();
@@ -207,8 +643,10 @@ export default function StaffPage() {
   }
 
   function startEdit(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot edit admin information.");
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot edit another admin.");
       return;
     }
     setMessage(null);
@@ -240,8 +678,10 @@ export default function StaffPage() {
   }
 
   function toggleEdit(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot edit admin information.");
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot edit another admin.");
       return;
     }
     if (editId === member.adminid) {
@@ -270,6 +710,14 @@ export default function StaffPage() {
   }
 
   async function saveEdit(id: number | null) {
+    if (!canUpdate) {
+      setError("You do not have permission to update staff.");
+      return;
+    }
+    if (editOriginal?.role?.toLowerCase() === "admin" && currentAdminId !== editOriginal.adminid) {
+      setError("You cannot edit another admin.");
+      return;
+    }
     if (!id) return;
     const passwordProvided = !!(editData.password || editData.confirmPassword);
     if (passwordProvided) {
@@ -338,8 +786,14 @@ export default function StaffPage() {
   }
 
   async function toggleActive(member: Staff) {
-    if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
-      setError("Staff cannot change admin status.");
+    if (!canUpdate) {
+      setError("You do not have permission to change staff status.");
+      return;
+    }
+    const isTargetAdmin = (member.role || "").toLowerCase() === "admin";
+    const isSelf = currentAdminId === member.adminid;
+    if (isTargetAdmin && !isSelf) {
+      setError("You cannot change another admin's status.");
       return;
     }
     if (currentAdminId && member.adminid === currentAdminId) {
@@ -394,6 +848,10 @@ export default function StaffPage() {
   }
 
   async function deleteStaff(member: Staff) {
+    if (!canArchive) {
+      setError("You do not have permission to disable staff.");
+      return;
+    }
     if (member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin") {
       setError("Staff cannot disable admin accounts.");
       return;
@@ -444,6 +902,127 @@ export default function StaffPage() {
           <p className="text-sm text-muted-foreground">
             Manage staff accounts (create, update details, activate/deactivate).
           </p>
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-xl border p-4">
+        <div className="flex flex-wrap justify-between gap-3">
+          <div>
+            <h4 className="text-base font-semibold">Access control</h4>
+            <p className="text-xs text-muted-foreground">
+              Set the default staff privilege baseline or override permissions for specific staff.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              New staff automatically inherit the general baseline. Create overrides here only when a specific staff member needs different access.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="rounded-full bg-slate-100 px-2 py-1">General baseline</span>
+            <span className="rounded-full bg-slate-100 px-2 py-1">Per-staff override</span>
+            <button
+              type="button"
+              onClick={handleSavePrivileges}
+              className="rounded-full bg-primary px-3 py-1 text-primary-foreground shadow-sm"
+            >
+              Save changes
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  General staff privilege
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Baseline applied to all staff unless overridden.
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                Default
+              </span>
+            </div>
+            <div className="space-y-3">
+              {PRIVILEGE_CATALOG.map((group) => (
+                <PrivilegeGroupCard
+                  key={group.id}
+                  group={group}
+                  state={generalPrivileges}
+                  onToggle={toggleGeneralPrivilege}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Specific staff privilege
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Override the baseline for a single staff account.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {selectedStaffId && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={applyGeneralToSelected}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 font-semibold text-sky-700"
+                    >
+                      Copy general defaults
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearSelectedOverride}
+                      className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700"
+                    >
+                      Remove override
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+      <div className="space-y-2">
+        <label className="text-xs font-semibold text-muted-foreground">Select staff</label>
+        <select
+          className="w-full rounded-md border px-3 py-2 text-sm"
+          value={selectedStaffId ?? ""}
+          onChange={(e) => setSelectedStaffId(Number(e.target.value) || null)}
+          disabled={!staffOnlyList.length}
+        >
+          {!staffOnlyList.length && <option value="">No staff available</option>}
+          {staffOnlyList.map((member) => (
+            <option key={member.adminid} value={member.adminid}>
+              #{member.adminid} — {member.name || member.email}
+            </option>
+          ))}
+        </select>
+            </div>
+
+            {selectedStaffId ? (
+              <div className="space-y-3">
+                {PRIVILEGE_CATALOG.map((group) => (
+                  <PrivilegeGroupCard
+                    key={group.id}
+                    group={group}
+                    state={selectedPrivilegeState}
+                    onToggle={toggleStaffPrivilege}
+                    disabled={!selectedStaffId}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                Add a staff member first to set specific overrides.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -557,9 +1136,13 @@ export default function StaffPage() {
                 </tr>
               </thead>
               <tbody>
-              {displayedStaff.map((member) => (
-                <Fragment key={member.adminid}>
-                  <tr className="border-t align-middle">
+              {displayedStaff.map((member) => {
+                const isAdminRow = (member.role || "").toLowerCase() === "admin";
+                const isSelf = currentAdminId === member.adminid;
+                const adminLocked = isAdminRow && !isSelf;
+                return (
+                  <Fragment key={member.adminid}>
+                    <tr className="border-t align-middle">
                       <td className="px-3 py-2">{member.name || "-"}</td>
                       <td className="px-3 py-2">{member.email}</td>
                       <td className="px-3 py-2">{formatRole(member.role)}</td>
@@ -581,9 +1164,10 @@ export default function StaffPage() {
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-2">
                           <button
-                            className={`btn flex items-center gap-1 ${member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin" ? "opacity-60 cursor-not-allowed border border-sky-100" : "border border-sky-200 bg-sky-50 text-sky-700"}`}
+                            className={`btn flex items-center gap-1 ${adminLocked ? "opacity-60 cursor-not-allowed border border-sky-100" : "border border-sky-200 bg-sky-50 text-sky-700"}`}
                             onClick={() => toggleEdit(member)}
-                            disabled={member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin"}
+                            disabled={adminLocked}
+                            title={adminLocked ? "You cannot edit another admin." : undefined}
                           >
                             <span>Edit</span>
                             <svg
@@ -595,16 +1179,7 @@ export default function StaffPage() {
                               <path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.17l3.71-2.94a.75.75 0 0 1 .94 1.17l-4.19 3.33a.75.75 0 0 1-.94 0l-4.19-3.33a.75.75 0 0 1-.02-1.06z" />
                             </svg>
                           </button>
-                          {currentAdminId === member.adminid ? (
-                            <>
-                              <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
-                                Deactivate
-                              </button>
-                              <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
-                                Disable
-                              </button>
-                            </>
-                          ) : member.role?.toLowerCase() === "admin" && currentAdminRole !== "admin" ? (
+                          {adminLocked || currentAdminId === member.adminid ? (
                             <>
                               <button className="btn btn-ghost opacity-60 cursor-not-allowed" disabled>
                                 Deactivate
@@ -740,7 +1315,8 @@ export default function StaffPage() {
                       </tr>
                     )}
                   </Fragment>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

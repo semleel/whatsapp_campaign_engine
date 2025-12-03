@@ -7,16 +7,22 @@ import {
   listCampaigns,
   restoreCampaign,
   updateCampaign,
+  hardDeleteArchivedCampaign,
+  hardDeleteArchivedCampaigns,
 } from "../controllers/campaignController.js";
+import authMiddleware from "../middleware/auth.js";
+import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
-router.post("/create", createCampaign);
-router.get("/list", listCampaigns);
-router.get("/archive", listArchivedCampaigns);
-router.get("/:id", getCampaignById);
-router.put("/update/:id", updateCampaign);
-router.put("/archive/:id", archiveCampaign);
-router.put("/restore/:id", restoreCampaign);
+router.use(authMiddleware);
+
+router.post("/create", requirePrivilege("campaigns", "create"), createCampaign);
+router.get("/list", requirePrivilege("campaigns", "view"), listCampaigns);
+router.get("/archive", requirePrivilege("campaigns", "view"), listArchivedCampaigns);
+router.get("/:id", requirePrivilege("campaigns", "view"), getCampaignById);
+router.put("/update/:id", requirePrivilege("campaigns", "update"), updateCampaign);
+router.put("/archive/:id", requirePrivilege("campaigns", "archive"), archiveCampaign);
+router.put("/restore/:id", requirePrivilege("campaigns", "update"), restoreCampaign);
 
 export default router;

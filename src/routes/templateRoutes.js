@@ -7,7 +7,10 @@ import {
   attachTagsToTemplate,
   setTemplateExpiry,
   softDeleteTemplate,
+  deleteTemplate,
 } from "../controllers/templateController.js";
+import authMiddleware from "../middleware/auth.js";
+import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
@@ -15,12 +18,13 @@ router.post("/create", createTemplate);
 router.get("/list", listTemplates);
 router.get("/:id", getTemplate);
 router.put("/:id", updateTemplate);
+router.delete("/:id", deleteTemplate);
 
 // Soft delete / archive endpoint used by the UI
-router.post("/:id/delete", softDeleteTemplate);
+router.post("/:id/delete", requirePrivilege("content", "archive"), softDeleteTemplate);
 
 // Tag + expiry endpoints
-router.post("/:id/tags", attachTagsToTemplate);
-router.post("/:id/expire", setTemplateExpiry);
+router.post("/:id/tags", requirePrivilege("content", "update"), attachTagsToTemplate);
+router.post("/:id/expire", requirePrivilege("content", "update"), setTemplateExpiry);
 
 export default router;

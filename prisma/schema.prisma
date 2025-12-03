@@ -19,15 +19,29 @@ model admin {
   campaign        campaign[]
   sessiontoken    sessiontoken[]
   whatsapp_config whatsapp_config[]
+  staff_privilege staff_privilege[]
+}
+
+model staff_privilege {
+  privilegeid Int     @id @default(autoincrement())
+  adminid     Int
+  resource    String  @db.VarChar(100)
+  view        Boolean @default(false)
+  create      Boolean @default(false)
+  update      Boolean @default(false)
+  archive     Boolean @default(false)
+  admin       admin   @relation(fields: [adminid], references: [adminid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([adminid, resource], map: "ux_staff_privilege_admin_resource")
 }
 
 model allowedinput {
   allowedinputid Int        @id @default(autoincrement())
   triggerkey     String     @db.VarChar(100)
   allowedvalue   String     @db.VarChar(100)
-  userflowid     Int?
-  keymapping     keymapping @relation(fields: [triggerkey], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  userflow       userflow?  @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  userflowid     Int
+  keymapping     keymapping @relation(fields: [triggerkey, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "allowedinput_triggerkey_fkey")
+  userflow       userflow   @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model api {
@@ -87,11 +101,13 @@ model branchrule {
   inputvalue                                    String     @db.VarChar(100)
   nextkey                                       String     @db.VarChar(100)
   priority                                      Int?       @default(1)
-  userflowid                                    Int?
+  userflowid                                    Int
   next_userflowid                               Int?
   userflow_branchrule_next_userflowidTouserflow userflow?  @relation("branchrule_next_userflowidTouserflow", fields: [next_userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
-  keymapping                                    keymapping @relation(fields: [triggerkey], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  userflow                                      userflow?  @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  keymapping                                    keymapping @relation(fields: [triggerkey, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "branchrule_triggerkey_fkey")
+  userflow_branchrule_userflowidTouserflow      userflow   @relation("branchrule_userflowidTouserflow", fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([userflowid, triggerkey, inputvalue], map: "ux_branchrule_unique")
 }
 
 model campaign {
@@ -106,29 +122,42 @@ model campaign {
   start_at             DateTime?              @db.Timestamp(6)
   end_at               DateTime?              @db.Timestamp(6)
   contentkeyid         String?                @db.VarChar(100)
+  userflowid           Int?
+  userflow             userflow?              @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
   api_log              api_log[]
-  keymapping           keymapping?            @relation(fields: [contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
+  keymapping           keymapping?            @relation(fields: [contentkeyid, userflowid], references: [contentkeyid, userflowid], onUpdate: NoAction, map: "campaign_contentkeyid_fkey")
   admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onDelete: NoAction, onUpdate: NoAction)
   targetregion         targetregion?          @relation(fields: [targetregionid], references: [regionid], onDelete: NoAction, onUpdate: NoAction)
   campaign_api_mapping campaign_api_mapping[]
+  campaign_content     campaign_content[]
   campaignsession      campaignsession[]
   keyword              keyword[]
-  message              message[]
 }
 
 model campaign_api_mapping {
-  mappingid                                                        Int         @id @default(autoincrement())
-  campaignid                                                       Int
-  contentkeyid                                                     String      @db.VarChar(100)
-  apiid                                                            Int
-  success_contentkeyid                                             String?     @db.VarChar(100)
-  error_contentkeyid                                               String?     @db.VarChar(100)
-  is_active                                                        Boolean?    @default(true)
-  api                                                              api         @relation(fields: [apiid], references: [apiid], onDelete: NoAction, onUpdate: NoAction)
-  campaign                                                         campaign    @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
-  keymapping_campaign_api_mapping_contentkeyidTokeymapping         keymapping  @relation("campaign_api_mapping_contentkeyidTokeymapping", fields: [contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  keymapping_campaign_api_mapping_error_contentkeyidTokeymapping   keymapping? @relation("campaign_api_mapping_error_contentkeyidTokeymapping", fields: [error_contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  keymapping_campaign_api_mapping_success_contentkeyidTokeymapping keymapping? @relation("campaign_api_mapping_success_contentkeyidTokeymapping", fields: [success_contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
+  mappingid                                                                   Int         @id @default(autoincrement())
+  campaignid                                                                  Int
+  contentkeyid                                                                String      @db.VarChar(100)
+  apiid                                                                       Int
+  success_contentkeyid                                                        String?     @db.VarChar(100)
+  error_contentkeyid                                                          String?     @db.VarChar(100)
+  is_active                                                                   Boolean?    @default(true)
+  api                                                                         api         @relation(fields: [apiid], references: [apiid], onDelete: NoAction, onUpdate: NoAction)
+  campaign                                                                    campaign    @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
+  keymapping_campaign_api_mapping_contentkeyid_campaignidTokeymapping         keymapping  @relation("campaign_api_mapping_contentkeyid_campaignidTokeymapping", fields: [contentkeyid, campaignid], references: [contentkeyid, userflowid], onDelete: NoAction, onUpdate: NoAction, map: "campaign_api_mapping_contentkeyid_fkey")
+  keymapping_campaign_api_mapping_error_contentkeyid_campaignidTokeymapping   keymapping? @relation("campaign_api_mapping_error_contentkeyid_campaignidTokeymapping", fields: [error_contentkeyid, campaignid], references: [contentkeyid, userflowid], onDelete: NoAction, onUpdate: NoAction, map: "campaign_api_mapping_error_contentkeyid_fkey")
+  keymapping_campaign_api_mapping_success_contentkeyid_campaignidTokeymapping keymapping? @relation("campaign_api_mapping_success_contentkeyid_campaignidTokeymapping", fields: [success_contentkeyid, campaignid], references: [contentkeyid, userflowid], onDelete: NoAction, onUpdate: NoAction, map: "campaign_api_mapping_success_contentkeyid_fkey")
+}
+
+model campaign_content {
+  campaigncontentid Int    @id @default(autoincrement())
+  campaignid        Int
+  contentkeyid      String @db.VarChar(100)
+  contentid         Int
+
+  campaign campaign @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([campaignid, contentkeyid])
 }
 
 model campaignsession {
@@ -209,24 +238,26 @@ model fallback {
   scope        String     @db.VarChar(20)
   value        String?    @db.VarChar(100)
   contentkeyid String     @db.VarChar(100)
-  userflowid   Int?
-  keymapping   keymapping @relation(fields: [contentkeyid], references: [contentkeyid], onDelete: NoAction, onUpdate: NoAction)
-  userflow     userflow?  @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  userflowid   Int
+  keymapping   keymapping @relation(fields: [contentkeyid, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "fallback_contentkeyid_fkey")
+  userflow     userflow   @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
 }
 
 model keymapping {
-  contentkeyid                                                               String                 @id @db.VarChar(100)
-  contentid                                                                  Int
-  userflowid                                                                 Int?
-  allowedinput                                                               allowedinput[]
-  branchrule                                                                 branchrule[]
-  campaign                                                                   campaign[]
-  campaign_api_mapping_campaign_api_mapping_contentkeyidTokeymapping         campaign_api_mapping[] @relation("campaign_api_mapping_contentkeyidTokeymapping")
-  campaign_api_mapping_campaign_api_mapping_error_contentkeyidTokeymapping   campaign_api_mapping[] @relation("campaign_api_mapping_error_contentkeyidTokeymapping")
-  campaign_api_mapping_campaign_api_mapping_success_contentkeyidTokeymapping campaign_api_mapping[] @relation("campaign_api_mapping_success_contentkeyidTokeymapping")
-  fallback                                                                   fallback[]
-  content                                                                    content                @relation(fields: [contentid], references: [contentid], onDelete: NoAction, onUpdate: NoAction)
-  userflow                                                                   userflow?              @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
+  contentkeyid                                                                          String                 @db.VarChar(100)
+  contentid                                                                             Int
+  userflowid                                                                            Int
+  allowedinput                                                                          allowedinput[]
+  branchrule                                                                            branchrule[]
+  campaign                                                                              campaign[]
+  campaign_api_mapping_campaign_api_mapping_contentkeyid_campaignidTokeymapping         campaign_api_mapping[] @relation("campaign_api_mapping_contentkeyid_campaignidTokeymapping")
+  campaign_api_mapping_campaign_api_mapping_error_contentkeyid_campaignidTokeymapping   campaign_api_mapping[] @relation("campaign_api_mapping_error_contentkeyid_campaignidTokeymapping")
+  campaign_api_mapping_campaign_api_mapping_success_contentkeyid_campaignidTokeymapping campaign_api_mapping[] @relation("campaign_api_mapping_success_contentkeyid_campaignidTokeymapping")
+  fallback                                                                              fallback[]
+  content                                                                               content                @relation(fields: [contentid], references: [contentid], onDelete: NoAction, onUpdate: NoAction)
+  userflow                                                                              userflow               @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([contentkeyid, userflowid])
 }
 
 model keyword {
@@ -253,7 +284,6 @@ model message {
   error_message     String?
   timestamp         DateTime?        @default(now()) @db.Timestamp(6)
   deliverlog        deliverlog[]
-  campaign          campaign?        @relation(fields: [campaignid], references: [campaignid], onDelete: NoAction, onUpdate: NoAction)
   campaignsession   campaignsession? @relation(fields: [campaignsessionid], references: [campaignsessionid], onDelete: NoAction, onUpdate: NoAction)
   contact           contact?         @relation(fields: [contactid], references: [contactid], onDelete: NoAction, onUpdate: NoAction)
 }
@@ -312,9 +342,16 @@ model token_log {
 model userflow {
   userflowid                                      Int               @id @default(autoincrement())
   userflowname                                    String            @db.VarChar(100)
+  description                                     String?
+  status                                          String?           @default("Draft") @db.VarChar(20)
+  createdat                                       DateTime?         @default(now()) @db.Timestamp(6)
+  updatedat                                       DateTime?         @db.Timestamp(6)
+  entry_contentkeyid                              String?           @db.VarChar(100)
+  fallback_contentkeyid                           String?           @db.VarChar(100)
   allowedinput                                    allowedinput[]
   branchrule_branchrule_next_userflowidTouserflow branchrule[]      @relation("branchrule_next_userflowidTouserflow")
-  branchrule                                      branchrule[]
+  branchrule_branchrule_userflowidTouserflow      branchrule[]      @relation("branchrule_userflowidTouserflow")
+  campaign                                        campaign[]
   campaignsession                                 campaignsession[]
   fallback                                        fallback[]
   keymapping                                      keymapping[]

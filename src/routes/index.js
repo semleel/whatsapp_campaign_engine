@@ -16,6 +16,7 @@ import reportRoutes from "./reportRoutes.js";
 import conversationRoutes from "./conversationRoutes.js";
 import authRoutes from "./authRoutes.js";
 import adminRoutes from "./adminRoutes.js";
+import privilegeRoutes from "./privilegeRoutes.js";
 
 const router = express.Router();
 
@@ -34,5 +35,6 @@ router.use("/report", reportRoutes);
 router.use("/conversation", conversationRoutes);
 router.use("/auth", authRoutes);
 router.use("/admin", adminRoutes);
+router.use("/privilege", privilegeRoutes);
 
 export default router;
