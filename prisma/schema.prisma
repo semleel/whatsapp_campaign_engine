@@ -18,7 +18,6 @@ model admin {
   is_active       Boolean?          @default(true)
   campaign        campaign[]
   sessiontoken    sessiontoken[]
-  staff_privilege staff_privilege[]
   whatsapp_config whatsapp_config[]
   staff_privilege staff_privilege[]
 }

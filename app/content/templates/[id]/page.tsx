@@ -431,7 +431,6 @@ export default function EditTemplatePage() {
         type: form.type,
         category: form.category || null,
         status: form.status,
-        defaultLang: form.lang,
         lang: form.lang,
         defaultLang: form.lang, // ✅ match TemplatePayload
         body: form.body,
@@ -1204,4 +1203,5 @@ export default function EditTemplatePage() {
     </div>
   );
 }
+
 

@@ -3,10 +3,7 @@ import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import prisma from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
-import {
-  findOrCreateSession,
-  getEntryContentKeyForCampaign,
-} from "../services/flowEngine.js";
+import { findOrCreateSession } from "../services/flowEngine.js";
 import { upsertStatus } from "../services/whatsappStatusService.js";
 import {
   handleFlowOrKeyword,

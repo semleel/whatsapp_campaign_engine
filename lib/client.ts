@@ -90,7 +90,9 @@ import type {
   SystemKeyword,
   CampaignSession,
   SystemFlowActivationRef,
-  FlowStatus
+  FlowStatus,
+  FlowStat,
+  ReportSummary
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -369,27 +371,11 @@ export const Api = {
       body: JSON.stringify(payload),
     }),
 
-  softDeleteTemplate: (id: number | string) =>
-    http<{ message: string }>(`/api/template/${id}/delete`, {
-      method: "POST",
-    }),
-
-  attachTagsToTemplate: (id: number | string, tags: string[]) =>
-    http<{ message: string; tagIds: number[] }>(`/api/template/${id}/tags`, {
-      method: "POST",
-      body: JSON.stringify({ tags }),
-    }),
-
   setTemplateExpiry: (id: number | string, expiresAt: string) =>
     http<{ message: string }>(`/api/template/${id}/expire`, {
       method: "POST",
       body: JSON.stringify({ expiresAt }),
     }),
-
-  listTags: (includeDeleted = false) =>
-    http<{ tagid: number; name: string; isdeleted?: boolean | null }[]>(
-      `/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`
-    ),
 
   deleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}`, {
@@ -401,12 +387,6 @@ export const Api = {
     http(`/api/template/${templateId}/tags`, {
       method: "POST",
       body: JSON.stringify({ tags }),
-    }),
-
-  setTemplateExpiry: (templateId: number, expiresAt: string) =>
-    http(`/api/template/${templateId}/expire`, {
-      method: "POST",
-      body: JSON.stringify({ expiresAt }),
     }),
 
   softDeleteTemplate: (id: number | string) =>

@@ -481,7 +481,7 @@ function FlowBuilderCanvas() {
                     target: newNodeId,
                     label: "New Option", // Label appears on the line
                     type: "step",
-                    data: { edgeKind: "branch" }, // CRITICAL: This ensures it is NOT treated as fallback
+                    data: { edgeKind: "branch" as const }, // CRITICAL: This ensures it is NOT treated as fallback
                     style: { stroke: "#94a3b8", strokeWidth: 2 },
                 },
             ];
