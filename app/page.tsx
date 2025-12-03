@@ -2,17 +2,65 @@
 
 import { usePrivilege } from "@/lib/permissions";
 
+type StatCard = {
+  label: string;
+  value: string;
+  desc: string;
+  tone?: "alert" | "info";
+};
+
+type TimelineEvent = {
+  title: string;
+  time: string;
+};
+
+type HealthRow = {
+  name: string;
+  pct: number;
+  warn?: boolean;
+};
+
+const statCards: StatCard[] = [
+  { label: "Active Campaigns", value: "12", desc: "Running right now" },
+  { label: "Messages Sent", value: "24.1k", desc: "Last 30 days" },
+  { label: "Delivery Rate", value: "98.4%", desc: "Across all channels" },
+  { label: "Conversion Rate", value: "4.8%", desc: "Click to goal", tone: "alert" },
+  { label: "Opt-outs", value: "1.2%", desc: "Last 30 days" },
+];
+
+const recentEvents: TimelineEvent[] = [
+  { title: "Campaign \"Diwali Blast\" scheduled", time: "2h ago" },
+  { title: "Flow \"Onboarding\" updated", time: "4h ago" },
+  { title: "New template approved", time: "Yesterday" },
+];
+
+const campaignHealth: HealthRow[] = [
+  { name: "Opt-in freshness", pct: 78 },
+  { name: "Template approvals", pct: 92 },
+  { name: "Spam reports", pct: 3, warn: true },
+];
+
+const channelPerformance: HealthRow[] = [
+  { name: "WhatsApp", pct: 88 },
+  { name: "Email", pct: 64 },
+  { name: "SMS", pct: 52 },
+];
+
+const flowDropoffs: HealthRow[] = [
+  { name: "Welcome flow", pct: 6 },
+  { name: "Reactivation", pct: 12, warn: true },
+  { name: "Win-back", pct: 9 },
+];
+
 export default function Home() {
   const {
     canView,
     canCreate: canCreateCampaign,
-    canUpdate: canUpdateCampaign,
     loading: campaignLoading,
   } = usePrivilege("campaigns");
   const {
     canCreate: canCreateContent,
     canUpdate: canUpdateContent,
-    loading: contentLoading,
   } = usePrivilege("content");
   const {
     canCreate: canCreateIntegration,

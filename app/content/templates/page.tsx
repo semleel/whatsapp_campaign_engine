@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
-import { Api } from "@/lib/client";
 import type { TemplateDetail, TemplateListItem } from "@/lib/types";
 
 type TemplateSummary = TemplateListItem & {

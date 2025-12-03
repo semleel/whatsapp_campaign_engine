@@ -24,9 +24,24 @@ const app = express();
 
 // --- Security & Middleware ---
 app.use(helmet());
+
+// Allow localhost and LAN origins by default; override with CORS_ORIGINS (comma-separated)
+const allowedOrigins =
+  (process.env.CORS_ORIGINS || "http://localhost:3001,http://127.0.0.1:3001")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
 app.use(
   cors({
-    origin: "http://localhost:3001", // frontend origin
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      const lanOrigin = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1]))/.test(origin);
+      if (allowedOrigins.includes(origin) || lanOrigin) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"), false);
+    },
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })

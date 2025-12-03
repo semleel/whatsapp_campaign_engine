@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { showCenteredAlert } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
 import TagSelector from "../../../../components/TagSelector";
 
 const SUPPORTED_LOCALES = [
@@ -41,19 +42,19 @@ const TEMPLATE_CATEGORY_OPTIONS: {
     value: "Marketing",
     label: "Marketing",
     subtitle: "One-to-many bulk broadcast marketing messages",
-    icon: "📣",
+    icon: "[M]",
   },
   {
     value: "Utility",
     label: "Utility",
     subtitle: "Transactional updates triggered by a user action",
-    icon: "🔔",
+    icon: "[U]",
   },
   {
     value: "Authentication",
     label: "Authentication",
     subtitle: "One-time passwords and login verification",
-    icon: "🔐",
+    icon: "[A]",
   },
 ];
 
@@ -814,3 +815,4 @@ export default function ContentCreatePage() {
     </div>
   );
 }
+

@@ -6,7 +6,6 @@ import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
-import { Api } from "@/lib/client";
 
 type Tag = {
   tagid: number;
@@ -166,8 +165,9 @@ export default function TagsPage() {
     setEditName("");
   };
 
-  const saveEdit = async () => {
-    if (!editingId) return;
+  const saveEdit = async (tagId?: number) => {
+    const targetId = tagId ?? editingId;
+    if (!targetId) return;
     if (!canUpdate) {
       showMsg("You do not have permission to edit tags.");
       return;
@@ -178,7 +178,7 @@ export default function TagsPage() {
       return;
     }
     try {
-      await Api.updateTag(tagid, { name: editName.trim() });
+      await Api.updateTag(targetId, { name: editName.trim() });
 
       showMsg("Tag updated");
       setEditingId(null);
@@ -220,7 +220,10 @@ export default function TagsPage() {
       title: "Archive tag?",
       message: `Archive tag "${tag.name}"?`,
       confirmLabel: "Archive",
-      onConfirm: () => doArchive(tag.tagid),
+      onConfirm: () => {
+        closeConfirm();
+        void performArchive(tag);
+      },
     });
   };
 
@@ -482,7 +485,7 @@ export default function TagsPage() {
                                   <button
                                     type="button"
                                     className="text-emerald-600 hover:underline"
-                                    onClick={() => recoverTag(tag)}
+                                  onClick={() => handleRecover(tag)}
                                   >
                                     Recover
                                   </button>
