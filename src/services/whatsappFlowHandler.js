@@ -18,6 +18,7 @@ function makeResult({
     campaignid = null,
     contentkeyid = null,
     extraReplies = [],
+    skipSend = false,
 }) {
     return {
         replyText,
@@ -26,6 +27,7 @@ function makeResult({
         campaignid,
         contentkeyid,
         extraReplies,
+        skipSend,
     };
 }
 
@@ -195,6 +197,16 @@ export async function handleFlowOrKeyword({ from, text, contact }) {
                 replyMessageObj: { type: "text", text: { body: replyText } },
                 sessionid: flow.sessionid || null,
                 campaignid: flow.campaignid || null,
+            });
+        }
+
+        if (flow.action === "menu_resent") {
+            return makeResult({
+                replyText: null,
+                replyMessageObj: null,
+                sessionid: flow.sessionid || null,
+                campaignid: flow.campaignid || null,
+                skipSend: true,
             });
         }
 

@@ -7,10 +7,16 @@ import { loadContentByKey } from "./whatsappContentService.js";
  * Resolve system flow ENTRY content by system_flow.code
  */
 async function loadSystemFlowEntryContent(code, contact) {
-    const sf = await prisma.system_flow.findFirst({
+    let sf = await prisma.system_flow.findFirst({
         where: { code, is_active: true },
         select: { userflowid: true },
     });
+    if (!sf && code === "GLOBAL_FALLBACK") {
+        sf = await prisma.system_flow.findFirst({
+            where: { code: "START", is_active: true },
+            select: { userflowid: true },
+        });
+    }
     if (!sf) throw new Error(`Missing active system_flow: ${code}`);
 
     const entryFb = await prisma.fallback.findFirst({

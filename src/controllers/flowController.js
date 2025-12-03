@@ -228,6 +228,11 @@ export async function createFlowDefinition(req, res) {
                 const placeholders = buildPlaceholdersFromNode(n);
                 const ui_metadata = normalizeUiMetadata(n.ui_metadata) || {};
                 const body = String(n.body || "").trim();
+                const uiTitleRaw =
+                    ui_metadata && typeof ui_metadata.title === "string"
+                        ? ui_metadata.title.trim()
+                        : "";
+                const effectiveTitle = uiTitleRaw || key;
                 const safeType =
                     n.type === "wait_input"
                         ? "message"
@@ -239,6 +244,7 @@ export async function createFlowDefinition(req, res) {
                     data: {
                         type: safeType,
                         body,
+                        title: effectiveTitle,
                         description: body || `Node ${key}`,
                         status: "Active",
                         placeholders, // ✅ extra UI fields
@@ -327,6 +333,34 @@ export async function createFlowDefinition(req, res) {
                     userflowid: ufid,
                 },
             });
+
+            if (normalizedFlowType === "START") {
+                await tx.system_flow.upsert({
+                    where: { code: "START" },
+                    update: {
+                        userflowid: ufid,
+                        is_active: true,
+                    },
+                    create: {
+                        code: "START",
+                        userflowid: ufid,
+                        is_active: true,
+                    },
+                });
+
+                await tx.system_flow.upsert({
+                    where: { code: "GLOBAL_FALLBACK" },
+                    update: {
+                        userflowid: ufid,
+                        is_active: true,
+                    },
+                    create: {
+                        code: "GLOBAL_FALLBACK",
+                        userflowid: ufid,
+                        is_active: true,
+                    },
+                });
+            }
 
             return flow;
             },
@@ -555,6 +589,11 @@ export async function updateFlowDefinition(req, res) {
                 const placeholders = buildPlaceholdersFromNode(n);
                 const ui_metadata = normalizeUiMetadata(n.ui_metadata) || {};
                 const body = String(n.body || "").trim();
+                const uiTitleRaw =
+                    ui_metadata && typeof ui_metadata.title === "string"
+                        ? ui_metadata.title.trim()
+                        : "";
+                const effectiveTitle = uiTitleRaw || key;
                 const safeType =
                     n.type === "wait_input"
                         ? "message"
@@ -566,6 +605,7 @@ export async function updateFlowDefinition(req, res) {
                     data: {
                         type: safeType,
                         body,
+                        title: effectiveTitle,
                         description: body || `Node ${key}`,
                         status: "Active",
                         placeholders,
@@ -662,6 +702,34 @@ export async function updateFlowDefinition(req, res) {
                     userflowid,
                 },
             });
+
+            if (normalizedFlowType === "START") {
+                await tx.system_flow.upsert({
+                    where: { code: "START" },
+                    update: {
+                        userflowid,
+                        is_active: true,
+                    },
+                    create: {
+                        code: "START",
+                        userflowid,
+                        is_active: true,
+                    },
+                });
+
+                await tx.system_flow.upsert({
+                    where: { code: "GLOBAL_FALLBACK" },
+                    update: {
+                        userflowid,
+                        is_active: true,
+                    },
+                    create: {
+                        code: "GLOBAL_FALLBACK",
+                        userflowid,
+                        is_active: true,
+                    },
+                });
+            }
         },
             { maxWait: 5000, timeout: 20000 }
         );
@@ -785,3 +853,4 @@ export async function deleteFlowDefinition(req, res) {
         });
     }
 }
+

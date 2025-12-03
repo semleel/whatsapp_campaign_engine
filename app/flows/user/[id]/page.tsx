@@ -1501,8 +1501,11 @@ function FlowBuilderCanvas() {
                                                 }
                                             >
                                                 <option value="">Select endpoint...</option>
-                                                {endpoints.map((ep) => (
-                                                    <option key={ep.apiid} value={ep.apiid}>
+                                                {endpoints.map((ep, idx) => (
+                                                    <option
+                                                        key={ep.apiid ?? `${ep.name ?? "endpoint"}-${idx}`}
+                                                        value={ep.apiid ?? ""}
+                                                    >
                                                         {ep.name}
                                                     </option>
                                                 ))}

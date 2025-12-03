@@ -1,5 +1,9 @@
 // src/services/flowEngine.js
 import { prisma } from "../config/prismaClient.js";
+import { sendWhatsAppMessage } from "./whatsappService.js";
+import { buildWhatsappMessageFromContent } from "./whatsappContentService.js";
+import { log, error as logError } from "../utils/logger.js";
+import { SESSION_EXPIRY_MINUTES } from "../config/index.js";
 
 export const SESSION_STATUS = {
   ACTIVE: "ACTIVE",
@@ -9,13 +13,129 @@ export const SESSION_STATUS = {
   CANCELLED: "CANCELLED",
 };
 
-const EXPIRY_MS = 2 * 60 * 60 * 1000;
+// Global start + menu handling
+const GLOBAL_START_CODE = "START";
+const GLOBAL_END_CODE = "END";
+const MAIN_MENU_TITLE = "START_MENU";
+const EXPIRY_MS = SESSION_EXPIRY_MINUTES * 60 * 1000;
 const ENTRY_AUTO_PATH_MAX_STEPS = 50;
 
 function normalizeNodeType(rawType = "") {
   const safe = String(rawType || "").toLowerCase();
   if (safe === "wait_input" || safe === "question") return "message";
   return safe || "message";
+}
+
+function buildTemplateContext(contact) {
+  return {
+    contact_name: contact?.name || contact?.phonenum || "there",
+    phone: contact?.phonenum || "",
+  };
+}
+
+async function sendContentKey({
+  contact,
+  session,
+  contentKey,
+  userflowid,
+  updateCheckpoint = true,
+}) {
+  if (!contact || !session || !contentKey) return null;
+
+  const mapping = await prisma.keymapping.findFirst({
+    where: {
+      contentkeyid: contentKey,
+      userflowid: Number(userflowid || session.current_userflowid),
+    },
+    include: { content: true },
+  });
+
+  if (!mapping?.content || mapping.content.isdeleted) return null;
+
+  const ctx = buildTemplateContext(contact);
+  const built = buildWhatsappMessageFromContent(mapping.content, ctx);
+  const messagePayload =
+    built?.message || { type: "text", text: { body: built?.replyText || "" } };
+
+  const msgRecord = await prisma.message.create({
+    data: {
+      direction: "outbound",
+      content_type: messagePayload.type || "text",
+      message_content: built?.replyText || "",
+      senderid: "whatsapp-engine",
+      receiverid: contact.phonenum,
+      provider_msg_id: null,
+      timestamp: new Date(),
+      message_status: "pending",
+      payload_json: JSON.stringify(messagePayload),
+      contactid: contact.contactid,
+      campaignsessionid: session.campaignsessionid,
+      campaignid: session.campaignid || null,
+      contentkeyid: contentKey,
+    },
+  });
+
+  let providerId = null;
+  try {
+    const sendRes = await sendWhatsAppMessage(
+      contact.phonenum,
+      messagePayload,
+      msgRecord
+    );
+    providerId = sendRes?.messages?.[0]?.id ?? null;
+  } catch (err) {
+    log("ERROR", "Failed to send content key", contentKey, err?.message || err);
+  }
+
+  if (providerId) {
+    await prisma.message.update({
+      where: { messageid: msgRecord.messageid },
+      data: { provider_msg_id: providerId },
+    });
+  }
+
+  const sessionUpdate = {
+    lastactiveat: new Date(),
+    sessionstatus: SESSION_STATUS.ACTIVE,
+  };
+  if (updateCheckpoint) {
+    sessionUpdate.checkpoint = contentKey;
+  }
+
+  await prisma.campaignsession.update({
+    where: { campaignsessionid: session.campaignsessionid },
+    data: sessionUpdate,
+  });
+
+  // keep in-memory session up to date for caller loops
+  session.checkpoint = updateCheckpoint ? contentKey : session.checkpoint;
+  session.lastactiveat = sessionUpdate.lastactiveat;
+  session.current_userflowid = session.current_userflowid || userflowid;
+
+  return contentKey;
+}
+
+async function sendNodeFallbackIfAny(contact, session, currentNodeKey) {
+  if (!currentNodeKey) return false;
+  const fb = await prisma.fallback.findFirst({
+    where: {
+      scope: "NODE",
+      value: currentNodeKey,
+      userflowid: session.current_userflowid || undefined,
+    },
+  });
+
+  if (!fb?.contentkeyid) return false;
+
+  const sent = await sendContentKey({
+    contact,
+    session,
+    contentKey: fb.contentkeyid,
+    userflowid: session.current_userflowid,
+    updateCheckpoint: false,
+  });
+
+  return Boolean(sent);
 }
 
 // -------------------------
@@ -36,6 +156,7 @@ async function loadNodeWithContent(contentkeyid, userflowid) {
     type: normalizeNodeType(km.content.type),
     body: km.content.body || "",
     placeholders: km.content.placeholders || {},
+    ui_metadata: km.ui_metadata || {},
   };
 }
 
@@ -57,6 +178,34 @@ async function getBranchGroups({ userflowid, triggerkey }) {
   }
 
   return { anyBranches, specificBranches };
+}
+
+async function findAnyBranchFromNode(userflow, currentKey) {
+  if (!userflow?.userflowid || !currentKey) return null;
+  return prisma.branchrule.findFirst({
+    where: {
+      userflowid: userflow.userflowid,
+      triggerkey: currentKey,
+      inputvalue: "ANY",
+    },
+    orderBy: { priority: "asc" },
+  });
+}
+
+async function loadNodeDefinition(userflow, contentKey) {
+  if (!userflow?.userflowid || !contentKey) return null;
+  const km = await prisma.keymapping.findFirst({
+    where: { contentkeyid: contentKey, userflowid: userflow.userflowid },
+    include: { content: true },
+  });
+  if (!km?.content) return null;
+  return {
+    key: km.contentkeyid,
+    type: normalizeNodeType(km.content.type),
+    interactiveType:
+      (km.content.placeholders?.interactiveType || km.ui_metadata?.interactiveType || "none").toLowerCase(),
+    content: km.content,
+  };
 }
 
 // -------------------------
@@ -202,9 +351,156 @@ export function getEntryContentKeyForCampaign(campaign) {
 
 async function getActiveStartSystemFlow() {
   return prisma.system_flow.findFirst({
-    where: { code: "START", is_active: true },
+    where: { code: GLOBAL_START_CODE, is_active: true },
     select: { systemflowid: true, userflowid: true },
   });
+}
+
+export async function getOrCreateActiveSessionForGlobalStart(contactId) {
+  if (!contactId) return null;
+
+  const systemStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+  });
+  if (!systemStart) {
+    throw new Error("No active GLOBAL_START system flow configured.");
+  }
+
+  const activeSession = await prisma.campaignsession.findFirst({
+    where: {
+      contactid: contactId,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      campaignid: null,
+      current_userflowid: systemStart.userflowid,
+    },
+    orderBy: { createdat: "desc" },
+  });
+
+  if (activeSession) {
+    // One active session per contact: expire older ACTIVE sessions
+    await prisma.campaignsession.updateMany({
+      where: {
+        contactid: contactId,
+        sessionstatus: SESSION_STATUS.ACTIVE,
+        campaignsessionid: { not: activeSession.campaignsessionid },
+      },
+      data: { sessionstatus: SESSION_STATUS.EXPIRED },
+    });
+    return activeSession;
+  }
+
+  const newSession = await prisma.campaignsession.create({
+    data: {
+      contactid: contactId,
+      campaignid: null,
+      checkpoint: null,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      current_userflowid: systemStart.userflowid,
+      lastactiveat: new Date(),
+    },
+  });
+
+  return newSession;
+}
+
+export async function findGlobalStartMainMenuKey() {
+  const systemStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+  });
+  if (!systemStart) return null;
+
+  const km = await prisma.keymapping.findFirst({
+    where: {
+      userflowid: systemStart.userflowid,
+      ui_metadata: {
+        path: ["title"],
+        equals: MAIN_MENU_TITLE,
+      },
+    },
+  });
+
+  return km ? km.contentkeyid : null;
+}
+
+export async function sendGlobalStartMainMenu(contact, session) {
+  if (!contact || !session) return null;
+  const menuKey = await findGlobalStartMainMenuKey();
+  if (!menuKey) {
+    log("WARN", "No START_MENU key found; cannot send main menu.");
+    return null;
+  }
+
+  const sentKey = await sendContentKey({
+    contact,
+    session,
+    contentKey: menuKey,
+    userflowid: session.current_userflowid,
+    updateCheckpoint: true,
+  });
+
+  if (!sentKey) {
+    log("WARN", `No content found for main menu key ${menuKey}`);
+  }
+
+  return sentKey;
+}
+
+export async function resetAndRunGlobalStart(contact) {
+  if (!contact?.contactid) return null;
+
+  await prisma.campaignsession.updateMany({
+    where: {
+      contactid: contact.contactid,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+    },
+    data: { sessionstatus: SESSION_STATUS.EXPIRED },
+  });
+
+  const systemStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+  });
+  if (!systemStart) {
+    throw new Error("No active GLOBAL_START system flow configured.");
+  }
+
+  const session = await prisma.campaignsession.create({
+    data: {
+      contactid: contact.contactid,
+      campaignid: null,
+      checkpoint: null,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      current_userflowid: systemStart.userflowid,
+      lastactiveat: new Date(),
+    },
+  });
+
+  const autoPath = await computeEntryAutoPath({ userflowid: systemStart.userflowid });
+  const keysToSend = [];
+  if (Array.isArray(autoPath.keysToSend)) {
+    keysToSend.push(...autoPath.keysToSend);
+  }
+  if (autoPath.checkpointKey && !keysToSend.includes(autoPath.checkpointKey)) {
+    keysToSend.push(autoPath.checkpointKey);
+  }
+
+  for (const key of keysToSend) {
+    await sendContentKey({
+      contact,
+      session,
+      contentKey: key,
+      userflowid: systemStart.userflowid,
+      updateCheckpoint: true,
+    });
+  }
+
+  return session;
+}
+
+export async function jumpToGlobalStartMainMenu(contact) {
+  if (!contact?.contactid) return null;
+  const session = await getOrCreateActiveSessionForGlobalStart(contact.contactid);
+  await sendGlobalStartMainMenu(contact, session);
+  return session;
 }
 
 export async function ensureResetKeywordPointsToStart() {
@@ -249,7 +545,7 @@ async function findSystemFlowByKeyword(text) {
         type: "SYSTEM",
         systemflowid: resetTarget.systemflowid,
         userflowid: resetTarget.userflowid,
-        code: "START",
+        code: GLOBAL_START_CODE,
       };
     }
   }
@@ -386,16 +682,462 @@ async function computeEntryAutoPath({ userflowid }) {
   return { entryKey, keysToSend, checkpointKey };
 }
 
+export async function getSystemStartFlowAndEntryKey() {
+  const sysStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+  });
+  if (!sysStart) return null;
+
+  const userflowid = sysStart.userflowid;
+  const entryFallback = await prisma.fallback.findFirst({
+    where: {
+      scope: "FLOW",
+      value: "ENTRY",
+      userflowid,
+    },
+  });
+
+  if (!entryFallback) {
+    return { userflowid, entryKey: null };
+  }
+
+  return { userflowid, entryKey: entryFallback.contentkeyid };
+}
+
+export async function getActiveSessionForContact(contactid) {
+  if (!contactid) return null;
+  return prisma.campaignsession.findFirst({
+    where: { contactid, sessionstatus: SESSION_STATUS.ACTIVE },
+    orderBy: { campaignsessionid: "desc" },
+  });
+}
+
+export async function expireActiveSessionsForContact(contactid) {
+  if (!contactid) return;
+  await prisma.campaignsession.updateMany({
+    where: { contactid, sessionstatus: SESSION_STATUS.ACTIVE },
+    data: { sessionstatus: SESSION_STATUS.EXPIRED },
+  });
+}
+
+export async function getOrCreateGlobalMenuSession(contactid) {
+  if (!contactid) return null;
+
+  const existing = await getActiveSessionForContact(contactid);
+  if (existing) return existing;
+
+  const sysStart = await getSystemStartFlowAndEntryKey();
+  if (!sysStart || !sysStart.userflowid) {
+    return null;
+  }
+
+  const now = new Date();
+  return prisma.campaignsession.create({
+    data: {
+      contactid,
+      campaignid: null,
+      checkpoint: sysStart.entryKey || null,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      createdat: now,
+      lastactiveat: now,
+      current_userflowid: sysStart.userflowid,
+    },
+  });
+}
+
+export async function runFlowFromNodeKey({ userflowid, contentkeyid, session, contact }) {
+  if (!userflowid || !contentkeyid || !session || !contact) return null;
+  await sendContentKey({
+    contact,
+    session,
+    contentKey: contentkeyid,
+    userflowid,
+    updateCheckpoint: true,
+  });
+  return contentkeyid;
+}
+
+export async function runFlowNode({ session, userflow, currentKey, incoming, contact }) {
+  if (!session || !userflow || !currentKey) return null;
+  const nodeDef = await loadNodeDefinition(userflow, currentKey);
+  if (!nodeDef) return null;
+
+  await sendContentKey({
+    contact: contact || incoming?.contact || incoming?.contactInfo || incoming?.contactObj || incoming?.contactRef || incoming?.contactData || incoming?.contact || null,
+    session,
+    contentKey: currentKey,
+    userflowid: userflow.userflowid,
+    updateCheckpoint: true,
+  });
+
+  return {
+    nodeType: nodeDef.type,
+    interactiveType: nodeDef.interactiveType,
+    currentKey,
+  };
+}
+
+export async function runFlowNodeWithAutoAdvance({ session, userflow, startKey, incoming, contact }) {
+  if (!session || !userflow || !startKey) return null;
+
+  let currentKey = startKey;
+  let guard = 0;
+  let stopReason = "unknown";
+
+  while (currentKey && guard < 20) {
+    guard += 1;
+
+    const node = await loadNodeDefinition(userflow, currentKey);
+    if (!node) {
+      stopReason = "no_node";
+      break;
+    }
+
+    const result = await runFlowNode({
+      session,
+      userflow,
+      currentKey,
+      incoming,
+      contact,
+    });
+
+    const nodeType = result?.nodeType || node.type || "message";
+    const interactiveType = (result?.interactiveType || node.interactiveType || "none").toLowerCase();
+
+    const expectsUserReply =
+      nodeType === "decision" ||
+      nodeType === "wait_input" ||
+      nodeType === "jump" ||
+      nodeType === "api" ||
+      interactiveType === "buttons" ||
+      interactiveType === "list";
+
+    if (expectsUserReply) {
+      stopReason = "await_input";
+      break;
+    }
+
+    const anyBranch = await findAnyBranchFromNode(userflow, currentKey);
+    if (!anyBranch?.nextkey) {
+      stopReason = "no_next";
+      await runSystemEndFlowOnce(contact, session);
+      break;
+    }
+
+    currentKey = anyBranch.nextkey;
+    incoming = null;
+  }
+
+  return { lastKey: currentKey, stopReason };
+}
+
+export async function runFlowFromNode({
+  contact,
+  session,
+  userflow,
+  startKey,
+  campaign = null,
+  fromKeyword = false,
+}) {
+  if (!contact || !session || !userflow || !startKey) return null;
+
+  const result = await runFlowNodeWithAutoAdvance({
+    session,
+    userflow,
+    startKey,
+    incoming: { contact },
+    contact,
+  });
+
+  const lastKey = result?.lastKey || startKey;
+  const stopReason = result?.stopReason || "unknown";
+
+  // If flow ended (no_next) and this is a campaign, mark completed
+  if (stopReason === "no_next" && session.campaignid) {
+    await prisma.campaignsession.update({
+      where: { campaignsessionid: session.campaignsessionid },
+      data: {
+        sessionstatus: SESSION_STATUS.COMPLETED,
+        checkpoint: lastKey,
+        lastactiveat: new Date(),
+        current_userflowid: userflow.userflowid,
+      },
+    });
+  }
+
+  return lastKey;
+}
+
+// NEW: run END system_flow when a session is completed
+export async function runSystemEndFlowOnce(contact, session) {
+  if (!contact || !session) return;
+  try {
+    const endSystemFlow = await prisma.system_flow.findFirst({
+      where: { code: "END", is_active: true },
+      include: { userflow: true },
+    });
+
+    if (!endSystemFlow?.userflow) {
+      log?.("[END_FLOW] No active system_flow with code=END, skipping.");
+      return;
+    }
+
+    const endUserflow = endSystemFlow.userflow;
+    let entryKey = endUserflow.entry_contentkeyid || null;
+
+    if (!entryKey) {
+      const startKm = await prisma.keymapping.findFirst({
+        where: {
+          userflowid: endUserflow.userflowid,
+          contentkeyid: "START",
+        },
+        include: { content: true },
+      });
+
+      if (!startKm?.content) {
+        log?.(
+          "[END_FLOW] END userflow found but no entry key or START keymapping with content."
+        );
+        return;
+      }
+
+      entryKey = startKm.contentkeyid;
+
+      await sendWhatsAppMessage(contact.phonenum, {
+        type: "text",
+        text: { body: startKm.content.body || "" },
+      });
+    } else {
+      const entryKm = await prisma.keymapping.findFirst({
+        where: {
+          userflowid: endUserflow.userflowid,
+          contentkeyid: entryKey,
+        },
+        include: { content: true },
+      });
+
+      if (!entryKm?.content) {
+        log?.(
+          "[END_FLOW] END userflow entry_contentkeyid set, but no keymapping/content found."
+        );
+        return;
+      }
+
+      await sendWhatsAppMessage(contact.phonenum, {
+        type: "text",
+        text: { body: entryKm.content.body || "" },
+      });
+    }
+
+    await prisma.campaignsession.update({
+      where: { campaignsessionid: session.campaignsessionid },
+      data: {
+        sessionstatus: SESSION_STATUS.COMPLETED,
+        checkpoint: entryKey,
+        current_userflowid: endUserflow.userflowid,
+        lastactiveat: new Date(),
+      },
+    });
+
+    log?.(
+      `[END_FLOW] Sent END flow entry node (${entryKey}) for session ${session.campaignsessionid}.`
+    );
+  } catch (err) {
+    logError?.("[END_FLOW] Failed to run END flow:", err);
+  }
+}
+
+export async function resetAndRunGlobalMenu(contact) {
+  if (!contact?.contactid) return;
+
+  await expireActiveSessionsForContact(contact.contactid);
+
+  const sysStart = await getSystemStartFlowAndEntryKey();
+  if (!sysStart || !sysStart.userflowid || !sysStart.entryKey) {
+    log("WARN", "No START flow configured for global menu.");
+    return;
+  }
+
+  const now = new Date();
+  const session = await prisma.campaignsession.create({
+    data: {
+      contactid: contact.contactid,
+      campaignid: null,
+      checkpoint: sysStart.entryKey,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      createdat: now,
+      lastactiveat: now,
+      current_userflowid: sysStart.userflowid,
+    },
+  });
+
+  await runFlowFromNodeKey({
+    userflowid: sysStart.userflowid,
+    contentkeyid: sysStart.entryKey,
+    session,
+    contact,
+  });
+}
+
+export async function startCampaignFromMenuSelection({ contact, campaignId }) {
+  if (!contact?.contactid || !campaignId) return;
+
+  const campaign = await prisma.campaign.findUnique({
+    where: { campaignid: campaignId },
+    include: { userflow: true },
+  });
+
+  if (!campaign || !campaign.userflow) {
+    await sendWhatsAppMessage(contact.phonenum, {
+      type: "text",
+      text: { body: "Sorry, this campaign is not configured yet." },
+    });
+    return;
+  }
+
+  const userflow = campaign.userflow;
+
+  let entryKey = campaign.entry_contentkeyid || userflow.entry_contentkeyid || null;
+  if (!entryKey) {
+    const entryFallback = await prisma.fallback.findFirst({
+      where: {
+        scope: "FLOW",
+        value: "ENTRY",
+        userflowid: userflow.userflowid,
+      },
+    });
+    entryKey = entryFallback?.contentkeyid || null;
+  }
+
+  if (!entryKey) {
+    await sendWhatsAppMessage(contact.phonenum, {
+      type: "text",
+      text: { body: "Sorry, this campaign flow has no entry action configured." },
+    });
+    return;
+  }
+
+  await expireActiveSessionsForContact(contact.contactid);
+
+  const now = new Date();
+  const session = await prisma.campaignsession.create({
+    data: {
+      contactid: contact.contactid,
+      campaignid: campaign.campaignid,
+      checkpoint: entryKey,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      createdat: now,
+      lastactiveat: now,
+      current_userflowid: userflow.userflowid,
+    },
+  });
+
+  await runFlowFromNode({
+    contact,
+    session,
+    userflow,
+    campaign,
+    startKey: entryKey,
+    fromKeyword: false,
+  });
+}
+
+export async function createOrResetSessionForContact(contact, { reason = "start", defaultUserflowId }) {
+  if (!contact?.contactid) return null;
+
+  await expireActiveSessionsForContact(contact.contactid);
+
+  const session = await prisma.campaignsession.create({
+    data: {
+      contactid: contact.contactid,
+      campaignid: null,
+      checkpoint: null,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      createdat: new Date(),
+      lastactiveat: new Date(),
+      current_userflowid: defaultUserflowId || null,
+    },
+  });
+
+  return session;
+}
+
+export async function runSystemStartFlow({ contact, triggerReason }) {
+  const systemStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+    include: { userflow: true },
+  });
+  if (!systemStart?.userflow) {
+    throw new Error("System START flow is not configured");
+  }
+
+  const userflow = systemStart.userflow;
+  const session = await createOrResetSessionForContact(contact, {
+    reason: triggerReason || "start",
+    defaultUserflowId: userflow.userflowid,
+  });
+
+  const entryKey =
+    userflow.entry_contentkeyid ||
+    (await getEntryKeyForUserflow(userflow.userflowid)) ||
+    "START";
+
+  await runFlowNodeWithAutoAdvance({
+    session,
+    userflow,
+    startKey: entryKey,
+    incoming: { contact },
+    contact,
+  });
+
+  return session;
+}
+
+async function isGlobalStartFlow(userflowid) {
+  if (!userflowid) return false;
+  const systemStart = await prisma.system_flow.findFirst({
+    where: { code: GLOBAL_START_CODE, is_active: true },
+  });
+  if (!systemStart) return false;
+  return Number(systemStart.userflowid) === Number(userflowid);
+}
+
+async function handleUnmatchedDecisionInput({ contact, session, currentNodeKey, userText }) {
+  try {
+    await sendNodeFallbackIfAny(contact, session, currentNodeKey);
+  } catch (err) {
+    log("WARN", "Failed to send node-level fallback", err?.message || err);
+  }
+
+  await jumpToGlobalStartMainMenu(contact);
+
+  await prisma.sessionlog.create({
+    data: {
+      campaignsessionid: session.campaignsessionid,
+      contentkeyid: currentNodeKey ?? null,
+      detail: `unmatched input: ${String(userText || "").slice(0, 200)}`,
+    },
+  });
+
+  return {
+    action: "menu_resent",
+    sessionid: session.campaignsessionid,
+    campaignid: session.campaignid || null,
+    userflowid: session.current_userflowid,
+  };
+}
+
 /**
  * Find or create a session for:
  *  - CAMPAIGN flow: (contactid + campaignid)
  *  - SYSTEM flow: (contactid + current_userflowid, campaignid null)
  */
 export async function findOrCreateSession(contactid, { campaign, userflowid }) {
+  const contactIdNum = Number(contactid);
   if (campaign) {
     const existing = await prisma.campaignsession.findFirst({
       where: {
-        contactid: Number(contactid),
+        contactid: contactIdNum,
         campaignid: Number(campaign.campaignid),
       },
       orderBy: { createdat: "desc" },
@@ -408,9 +1150,9 @@ export async function findOrCreateSession(contactid, { campaign, userflowid }) {
       return existing;
     }
 
-    return prisma.campaignsession.create({
+    const session = await prisma.campaignsession.create({
       data: {
-        contactid: Number(contactid),
+        contactid: contactIdNum,
         campaignid: Number(campaign.campaignid),
         checkpoint: null,
         sessionstatus: SESSION_STATUS.ACTIVE,
@@ -418,12 +1160,23 @@ export async function findOrCreateSession(contactid, { campaign, userflowid }) {
         current_userflowid: campaign.userflowid,
       },
     });
+
+    await prisma.campaignsession.updateMany({
+      where: {
+        contactid: contactIdNum,
+        sessionstatus: SESSION_STATUS.ACTIVE,
+        campaignsessionid: { not: session.campaignsessionid },
+      },
+      data: { sessionstatus: SESSION_STATUS.EXPIRED },
+    });
+
+    return session;
   }
 
   // SYSTEM
   const existing = await prisma.campaignsession.findFirst({
     where: {
-      contactid: Number(contactid),
+      contactid: contactIdNum,
       campaignid: null,
       current_userflowid: Number(userflowid),
     },
@@ -437,9 +1190,9 @@ export async function findOrCreateSession(contactid, { campaign, userflowid }) {
     return existing;
   }
 
-  return prisma.campaignsession.create({
+  const session = await prisma.campaignsession.create({
     data: {
-      contactid: Number(contactid),
+      contactid: contactIdNum,
       campaignid: null,
       checkpoint: null,
       sessionstatus: SESSION_STATUS.ACTIVE,
@@ -447,6 +1200,17 @@ export async function findOrCreateSession(contactid, { campaign, userflowid }) {
       current_userflowid: Number(userflowid),
     },
   });
+
+  await prisma.campaignsession.updateMany({
+    where: {
+      contactid: contactIdNum,
+      sessionstatus: SESSION_STATUS.ACTIVE,
+      campaignsessionid: { not: session.campaignsessionid },
+    },
+    data: { sessionstatus: SESSION_STATUS.EXPIRED },
+  });
+
+  return session;
 }
 
 /**
@@ -473,6 +1237,7 @@ async function isTerminalNode(contentkeyid, userflowid) {
 export async function processIncomingMessage({ from, text }) {
   const phonenum = (from || "").trim();
   const messageText = (text || "").trim();
+  const normalizedLower = messageText.toLowerCase();
 
   const contact = await findOrCreateContactByPhone(phonenum);
 
@@ -498,7 +1263,7 @@ export async function processIncomingMessage({ from, text }) {
 
   if (!mode) {
     const startFlow = await prisma.system_flow.findFirst({
-      where: { code: "START", is_active: true },
+      where: { code: GLOBAL_START_CODE, is_active: true },
     });
     if (startFlow) {
       mode = { type: "SYSTEM", userflowid: startFlow.userflowid, system: startFlow };
@@ -567,6 +1332,9 @@ export async function processIncomingMessage({ from, text }) {
   const checkpoint = session.checkpoint;
   let nextKey = null;
   let keysToSend = [];
+  const currentNode = checkpoint
+    ? await loadNodeWithContent(checkpoint, userflowid)
+    : null;
 
   if (!checkpoint) {
     const autoPath = await computeEntryAutoPath({ userflowid });
@@ -589,6 +1357,23 @@ export async function processIncomingMessage({ from, text }) {
     if (br) {
       nextKey = br.nextkey;
     } else {
+      const isDecisionNode =
+        currentNode && normalizeNodeType(currentNode.type) === "decision";
+
+      if (
+        isDecisionNode &&
+        (await isGlobalStartFlow(userflowid)) &&
+        normalizedLower !== "/reset" &&
+        normalizedLower !== "/start"
+      ) {
+        return handleUnmatchedDecisionInput({
+          contact,
+          session,
+          currentNodeKey: checkpoint,
+          userText: messageText,
+        });
+      }
+
       const nodeFb = await prisma.fallback.findFirst({
         where: { scope: "NODE", value: checkpoint, userflowid },
       });
@@ -604,6 +1389,7 @@ export async function processIncomingMessage({ from, text }) {
   }
 
   if (!nextKey) {
+    await runSystemEndFlowOnce(contact, session);
     return { action: "no_campaign", reply: null, reason: "no nextKey determined" };
   }
 
@@ -713,6 +1499,7 @@ export async function processIncomingMessage({ from, text }) {
   });
 
   if (nextKeyIsTerminal) {
+    await runSystemEndFlowOnce(contact, session);
     await prisma.sessionlog.create({
       data: {
         campaignsessionid: session.campaignsessionid,
