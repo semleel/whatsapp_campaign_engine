@@ -1,7 +1,7 @@
-import { Request, Response, NextFunction } from "express";
-import { PrismaClient } from "@prisma/client";
+// src/middleware/permission.ts
 
-const prisma = new PrismaClient();
+import { Request, Response, NextFunction } from "express";
+import { prisma } from "../config/prismaClient.js";
 const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
 
 export function requirePrivilege(

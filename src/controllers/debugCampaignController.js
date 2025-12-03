@@ -2,7 +2,7 @@
 
 // Controller to provide debug info about campaign configurations
 // Move debug endpoint out of webhook controller.
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { error } from "../utils/logger.js";
 
 export async function debugCampaignConfig(req, res) {

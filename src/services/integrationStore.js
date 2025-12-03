@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const responseTemplateStore = new Map();
 const mappingStore = new Map();

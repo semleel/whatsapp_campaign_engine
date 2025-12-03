@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 // Helper: normalize and dedupe tag names
 function normalizeTags(rawTags) {

@@ -1,5 +1,5 @@
 // src/controllers/flowController.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const FLOW_TYPES = ["START", "CAMPAIGN", "END"];
 

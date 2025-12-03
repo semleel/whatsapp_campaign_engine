@@ -1,6 +1,6 @@
 // src/controllers/systemController.js
 
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 // GET /api/system/whatsapp-config
 export async function getWhatsAppConfig(req, res) {

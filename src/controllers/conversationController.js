@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error as logError } from "../utils/logger.js";
 

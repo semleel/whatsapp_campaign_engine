@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 // Return recent deliverylog entries (primary source), enriched with message/contact/campaign.
 export async function listDeliveryReport(req, res) {

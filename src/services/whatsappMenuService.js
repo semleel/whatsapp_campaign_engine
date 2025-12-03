@@ -1,5 +1,5 @@
 // Service to build WhatsApp LIST message showing active, launchable campaigns
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 /**
  * Build WhatsApp LIST message showing active, launchable campaigns

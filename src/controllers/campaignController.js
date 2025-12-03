@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { normalizeCampaignStatus, statusFromId, statusToId } from "../constants/campaignStatus.js";
 
 const DEFAULT_STATUS = "New";

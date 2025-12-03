@@ -1,5 +1,5 @@
 // src/services/whatsappFlowHandler.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { error } from "../utils/logger.js";
 import { ensureResetKeywordPointsToStart, processIncomingMessage } from "./flowEngine.js";
 import {

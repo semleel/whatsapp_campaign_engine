@@ -1,6 +1,6 @@
 // /src/controllers/privilegeController.js
 
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { Prisma } from "@prisma/client";
 
 const DEFAULT_BASELINE_PRIVILEGES = [

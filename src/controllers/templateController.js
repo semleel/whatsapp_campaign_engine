@@ -1,5 +1,5 @@
 // src/controllers/templateController.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const ensureArrayOrNull = (value) => {
   if (value == null || value === "") return null;

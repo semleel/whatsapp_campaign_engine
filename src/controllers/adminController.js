@@ -1,5 +1,5 @@
 import bcrypt from "bcrypt";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS || 10);
 const ALLOWED_ROLES = ["Admin", "Super", "Staff"];

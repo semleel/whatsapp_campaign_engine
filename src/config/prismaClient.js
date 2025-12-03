@@ -1,12 +1,4 @@
-import pkg from "@prisma/client";
-const { PrismaClient } = pkg;
+import { prisma } from "../lib/prisma.js";
 
-let prisma;
-if (!global._prisma) {
-  global._prisma = new PrismaClient({
-    log: ["error", "warn"],
-  });
-}
-prisma = global._prisma;
-
+export { prisma };
 export default prisma;

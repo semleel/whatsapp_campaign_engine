@@ -1,6 +1,6 @@
 // src/controllers/whatsappController.js
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { log, error as logError } from "../utils/logger.js";
 
 const describeMessage = (message) => {

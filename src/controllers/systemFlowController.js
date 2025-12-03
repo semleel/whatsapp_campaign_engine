@@ -1,5 +1,5 @@
 // src/controllers/systemFlowController.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 /**
  * SYSTEM FLOWS

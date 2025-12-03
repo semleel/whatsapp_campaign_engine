@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const FALLBACK_SECRET = "dev-secret-change-me";
 

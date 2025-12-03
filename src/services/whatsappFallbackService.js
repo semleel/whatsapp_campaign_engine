@@ -1,5 +1,5 @@
 // src/services/whatsappFallbackService.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { buildWhatsappMenuList } from "./whatsappMenuService.js";
 import { loadContentByKey } from "./whatsappContentService.js";
 

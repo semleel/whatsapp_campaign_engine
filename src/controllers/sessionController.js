@@ -1,6 +1,6 @@
 // src/controllers/sessionController.js
 
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 /**
  * Helper: map DB session to API shape

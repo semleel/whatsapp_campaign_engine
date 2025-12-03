@@ -1,6 +1,6 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const DEFAULT_ROLE = "Staff";
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me"; // fallback keeps dev login working

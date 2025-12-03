@@ -1,5 +1,5 @@
 // src/services/flowEngine.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 export const SESSION_STATUS = {
   ACTIVE: "ACTIVE",

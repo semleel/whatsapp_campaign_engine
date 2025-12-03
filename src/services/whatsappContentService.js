@@ -1,5 +1,5 @@
 // src/services/whatsappContentService.js
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 /**
  * Very small template renderer:

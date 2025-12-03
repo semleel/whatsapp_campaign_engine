@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
 

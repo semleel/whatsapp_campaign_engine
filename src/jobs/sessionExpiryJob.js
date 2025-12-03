@@ -1,5 +1,5 @@
 import cron from "node-cron";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { log } from "../utils/logger.js";
 
 export function startSessionExpiryJob() {

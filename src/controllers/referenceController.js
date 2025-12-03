@@ -1,6 +1,6 @@
 // src/controllers/referenceController.js
 
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { statusListWithIds } from "../constants/campaignStatus.js";
 
 export async function getRegions(_req, res) {

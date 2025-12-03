@@ -1,6 +1,6 @@
 // src/controllers/webhookController.js
 import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
 import { log, error } from "../utils/logger.js";
 import { findOrCreateSession } from "../services/flowEngine.js";

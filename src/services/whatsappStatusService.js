@@ -2,7 +2,7 @@
 
 // Service to build WhatsApp message status update handling
 // Status callback → DB.
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 /**
  * Map WA status callbacks (sent/delivered/read) onto your message & deliverlog tables

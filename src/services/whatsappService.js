@@ -2,7 +2,7 @@
 
 import axios from "axios";
 import config from "../config/index.js";
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 import { log, error } from "../utils/logger.js";
 
 // Delivery logging helpers

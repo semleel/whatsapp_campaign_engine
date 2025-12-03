@@ -1,4 +1,4 @@
-import prisma from "../config/prismaClient.js";
+import { prisma } from "../config/prismaClient.js";
 
 // Helper to parse integer safely
 const parseIntSafe = (value) => {
