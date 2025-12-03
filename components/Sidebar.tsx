@@ -57,7 +57,7 @@ export default function Sidebar() {
     };
   }, []);
 
-  const isStaff = (role || "").toLowerCase() === "staff";
+  const isStaff = (role || "").trim().toLowerCase() === "staff";
   const filteredMenu = useMemo(() => {
     if (!isStaff) return MENU;
     if (!accessReady) return [];
@@ -106,7 +106,8 @@ export default function Sidebar() {
           <SidebarSection
             key={section.id}
             section={section}
-            allowed={allowedSections.has(section.id)}
+            // Admin/Super bypass privilege filtering; staff respects allowedSections
+            allowed={!isStaff || allowedSections.has(section.id)}
           />
         ))}
       </nav>

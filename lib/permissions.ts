@@ -120,7 +120,8 @@ export async function refreshPrivilegesForCurrentUser(): Promise<Record<string, 
 export function usePrivilege(resourceId: string) {
   const adminProfile = getStoredAdmin();
   const adminId = adminProfile?.id ?? null;
-  const isAdmin = (adminProfile?.role || "").toLowerCase() === "admin";
+  const roleLower = (adminProfile?.role || "").trim().toLowerCase();
+  const isAdmin = roleLower === "admin" || roleLower === "super";
   const [flags, setFlags] = useState<PrivilegeFlags>(() =>
     isAdmin
       ? { view: true, create: true, update: true, archive: true }

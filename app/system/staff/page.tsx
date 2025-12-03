@@ -54,10 +54,10 @@ const PRIVILEGE_CATALOG: PrivilegeGroup[] = [
       { id: "content", label: "Content", actions: buildCrudActions() },
       { id: "flows", label: "Flows", actions: buildCrudActions() },
       { id: "contacts", label: "Contacts", actions: buildCrudActions() },
+      { id: "conversations", label: "Conversations", actions: buildCrudActions() },
       { id: "integration", label: "Integrations", actions: buildCrudActions() },
       { id: "reports", label: "Reports", actions: buildCrudActions() },
       { id: "system", label: "System", actions: buildCrudActions() },
-      { id: "conversations", label: "Conversations", actions: buildCrudActions() },
     ],
   },
 ];
@@ -78,10 +78,10 @@ const DEFAULT_PRIVILEGE_KEYS = new Set<string>(
     "content",
     "flows",
     "contacts",
+    "conversations",
     "integration",
     "reports",
     "system",
-    "conversations",
   ].map((id) => privilegeKey("core-access", id, "view"))
 );
 
@@ -108,7 +108,12 @@ type PrivilegeState = Record<string, boolean>;
 
 const GENERAL_PRIV_STORAGE_KEY = "general_staff_privileges_v1";
 const MANUAL_OVERRIDE_STORAGE_KEY = "staff_manual_overrides_v1";
-const BASELINE_ADMIN_ID = Number(process.env.NEXT_PUBLIC_BASELINE_ADMIN_ID || 1);
+const STAFF_CACHE_KEY = "staff_cache_v1";
+const BASELINE_ADMIN_ID = Number(process.env.NEXT_PUBLIC_BASELINE_ADMIN_ID || 0);
+const NEW_STAFF_TEMPLATE_ADMIN_ID = Number(
+  process.env.NEXT_PUBLIC_NEW_STAFF_TEMPLATE_ADMIN_ID || BASELINE_ADMIN_ID
+);
+const EXCLUDED_ADMIN_IDS = new Set([NEW_STAFF_TEMPLATE_ADMIN_ID]);
 
 function loadStoredGeneralPrivileges(): PrivilegeState {
   if (typeof window === "undefined") return buildPrivilegeState(true);
@@ -128,6 +133,27 @@ function loadStoredGeneralPrivileges(): PrivilegeState {
 function persistGeneralPrivileges(state: PrivilegeState) {
   if (typeof window === "undefined") return;
   localStorage.setItem(GENERAL_PRIV_STORAGE_KEY, JSON.stringify(state));
+}
+
+function loadStaffCache(): Staff[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(STAFF_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistStaffCache(staff: Staff[]) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(STAFF_CACHE_KEY, JSON.stringify(staff || []));
+  } catch {
+    // ignore
+  }
 }
 
 function loadManualOverrideIds(): Set<number> {
@@ -397,12 +423,15 @@ export default function StaffPage() {
       const data = await Api.listAdmins();
       const normalized =
         Array.isArray(data) && data.length
-          ? data.map((row: any) => ({
-              ...row,
-              has_privileges: Boolean(row?.has_privileges),
-            }))
+          ? data
+              .filter((row: any) => !EXCLUDED_ADMIN_IDS.has(Number(row?.adminid)))
+              .map((row: any) => ({
+                ...row,
+                has_privileges: Boolean(row?.has_privileges),
+              }))
           : [];
       setStaff(normalized);
+      persistStaffCache(normalized);
       const staffOnly = normalized.filter((row) => (row.role || "").toLowerCase() !== "admin");
       setStaffOnlyList(staffOnly);
 
@@ -421,6 +450,12 @@ export default function StaffPage() {
       });
     } catch (err: any) {
       setError(err.message || "Failed to load staff");
+      const cached = loadStaffCache();
+      if (cached.length) {
+        setStaff(cached);
+        const staffOnly = cached.filter((row) => (row.role || "").toLowerCase() !== "admin");
+        setStaffOnlyList(staffOnly);
+      }
     } finally {
       setLoading(false);
     }
@@ -507,85 +542,75 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
     return output;
   }
 
-  function handleSavePrivileges() {
+  async function saveBaseline() {
     if (!canUpdate) {
       setError("You do not have permission to update staff privileges.");
       return;
     }
-    const manualIds = new Set(manualOverrideIds);
-    const targets = selectedStaffId
-      ? [selectedStaffId]
-      : staffOnlyList
-          .map((s) => s.adminid)
-          .filter((id) => !manualIds.has(id));
+    if (!window.confirm("Save the baseline for future staff? (Existing staff are unchanged)")) return;
+    try {
+      setSavingPrivileges(true);
+      setError(null);
+      // Persist baseline (template id) for future staff; do not touch existing staff.
+      await Api.savePrivileges(
+        NEW_STAFF_TEMPLATE_ADMIN_ID,
+        normalizePrivilegesForApi(generalPrivileges)
+      );
+      persistGeneralPrivileges(generalPrivileges);
+      setMessage("Baseline saved. New staff will inherit this by default.");
+      window.dispatchEvent(new Event("privileges-changed"));
+    } catch (err: any) {
+      const msg = err?.message || "Failed to save baseline privileges";
+      setError(msg);
+    } finally {
+      setSavingPrivileges(false);
+    }
+  }
 
-    if (!targets.length) {
-      setError("No eligible staff to save privileges (manual overrides are skipped).");
+  async function saveSelectedOverride() {
+    if (!canUpdate) {
+      setError("You do not have permission to update staff privileges.");
       return;
     }
-    const confirmed = window.confirm(
-      selectedStaffId
-        ? "Save privilege changes for this staff member?"
-        : "Save the current baseline to all staff without manual overrides?"
-    );
-    if (!confirmed) return;
-    setSavingPrivileges(true);
-    // Always persist the general baseline (adminid = 0) so non-overridden staff inherit it.
-    const baselinePromise = Api.savePrivileges(
-      BASELINE_ADMIN_ID,
-      normalizePrivilegesForApi(generalPrivileges)
-    );
-
-    Promise.all([
-      baselinePromise,
-      ...targets.map((adminid) =>
-        Api.savePrivileges(
-          adminid,
-          normalizePrivilegesForApi(
-            selectedStaffId
-              ? staffPrivileges[adminid] || generalPrivileges
-              : generalPrivileges
-          )
+    if (!selectedStaffId) {
+      setError("Select a staff member to save an override.");
+      return;
+    }
+    if (!window.confirm("Save privilege changes for this staff member?")) return;
+    try {
+      setSavingPrivileges(true);
+      setError(null);
+      const state = staffPrivileges[selectedStaffId] || generalPrivileges;
+      await Api.savePrivileges(selectedStaffId, normalizePrivilegesForApi(state));
+      setManualOverrideIds((prev) => {
+        const next = new Set(prev);
+        next.add(selectedStaffId);
+        persistManualOverrideIds(next);
+        return next;
+      });
+      setStaff((list) =>
+        list.map((row) =>
+          row.adminid === selectedStaffId ? { ...row, has_privileges: true } : row
         )
-      ),
-    ])
-      .then(() => {
-        if (selectedStaffId) {
-          setManualOverrideIds((prev) => {
-            const next = new Set(prev);
-            next.add(selectedStaffId);
-            persistManualOverrideIds(next);
-            return next;
-          });
-          // Ensure staff entry reflects manual override
-          setStaff((list) =>
-            list.map((row) =>
-              row.adminid === selectedStaffId ? { ...row, has_privileges: true } : row
-            )
-          );
-        }
-        persistGeneralPrivileges(generalPrivileges);
-        setMessage(
-          selectedStaffId
-            ? "Privileges saved to server"
-            : `Baseline applied to ${targets.length} staff`
-        );
-        window.dispatchEvent(new Event("privileges-changed"));
-      })
-      .catch((err) => {
-        setError(err.message || "Failed to save privileges");
-      })
-      .finally(() => setSavingPrivileges(false));
+      );
+      setMessage("Override saved for selected staff");
+      window.dispatchEvent(new Event("privileges-changed"));
+    } catch (err: any) {
+      setError(err.message || "Failed to save override");
+    } finally {
+      setSavingPrivileges(false);
+    }
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
-    setError(null);
+    // Do not clear existing error for other actions (e.g., permission errors) unless create is allowed
     if (!canCreate) {
       setError("You do not have permission to create staff.");
       return;
     }
+    setError(null);
     try {
       setCreating(true);
       const token = getStoredToken();
@@ -906,26 +931,23 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
       </div>
 
       <div className="space-y-4 rounded-xl border p-4">
-        <div className="flex flex-wrap justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h4 className="text-base font-semibold">Access control</h4>
-            <p className="text-xs text-muted-foreground">
-              Set the default staff privilege baseline or override permissions for specific staff.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              New staff automatically inherit the general baseline. Create overrides here only when a specific staff member needs different access.
-            </p>
+          <h4 className="text-base font-semibold">Access control</h4>
+          <p className="text-xs text-muted-foreground">
+            Set the default staff privilege baseline for future staff and override permissions for specific staff.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            New staff automatically inherit the baseline below. Existing staff stay unchanged unless you set a per-staff override.
+          </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="rounded-full bg-slate-100 px-2 py-1">General baseline</span>
-            <span className="rounded-full bg-slate-100 px-2 py-1">Per-staff override</span>
-            <button
-              type="button"
-              onClick={handleSavePrivileges}
-              className="rounded-full bg-primary px-3 py-1 text-primary-foreground shadow-sm"
-            >
-              Save changes
-            </button>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600">
+              General baseline
+            </span>
+            <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600">
+              Per-staff override
+            </span>
           </div>
         </div>
 
@@ -934,15 +956,23 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  General staff privilege
+                  New staff privilege (baseline)
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  Baseline applied to all staff unless overridden.
+                  Baseline applied automatically to newly created staff (existing staff are unchanged).
                 </p>
               </div>
               <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                 Default
               </span>
+              <button
+                type="button"
+                onClick={saveBaseline}
+                disabled={savingPrivileges}
+                className="rounded-full bg-primary px-4 py-2 text-primary-foreground text-xs font-semibold shadow-sm disabled:opacity-50"
+              >
+                {savingPrivileges ? "Saving..." : "Save baseline"}
+              </button>
             </div>
             <div className="space-y-3">
               {PRIVILEGE_CATALOG.map((group) => (
@@ -982,6 +1012,14 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                       className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-700"
                     >
                       Remove override
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveSelectedOverride}
+                      disabled={!selectedStaffId || savingPrivileges}
+                      className="rounded-full border border-primary px-4 py-2 text-primary text-xs font-semibold shadow-sm disabled:opacity-50"
+                    >
+                      {savingPrivileges ? "Saving..." : "Save override"}
                     </button>
                   </>
                 )}

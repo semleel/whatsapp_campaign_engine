@@ -12,11 +12,13 @@ import { requirePrivilege } from "../middleware/permission.js";
 
 const router = express.Router();
 
-router.get("/list", listFlows);
-router.post("/create", createFlowDefinition);
-router.get("/:id", getFlowDefinition);
-router.put("/:id", updateFlowDefinition);
-router.patch("/:id/status", updateFlowStatus);
-router.delete("/:id", deleteFlowDefinition);
+router.use(authMiddleware);
+
+router.get("/list", requirePrivilege("flows", "view"), listFlows);
+router.post("/create", requirePrivilege("flows", "create"), createFlowDefinition);
+router.get("/:id", requirePrivilege("flows", "view"), getFlowDefinition);
+router.put("/:id", requirePrivilege("flows", "update"), updateFlowDefinition);
+router.patch("/:id/status", requirePrivilege("flows", "update"), updateFlowStatus);
+router.delete("/:id", requirePrivilege("flows", "archive"), deleteFlowDefinition);
 
 export default router;

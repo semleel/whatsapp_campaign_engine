@@ -5,6 +5,17 @@ import config from "../config/index.js";
 import { prisma } from "../config/prismaClient.js";
 import { log, error } from "../utils/logger.js";
 
+const BASE_BACKOFF_MINUTES = Number(process.env.WHATSAPP_RETRY_BASE_MINUTES || 5);
+const MAX_BACKOFF_MINUTES = Number(process.env.WHATSAPP_RETRY_MAX_MINUTES || 60);
+
+function calcNextRetryAt(currentRetryCount = 0) {
+  const minutes = Math.min(
+    BASE_BACKOFF_MINUTES * Math.pow(2, Math.max(currentRetryCount, 0)),
+    MAX_BACKOFF_MINUTES
+  );
+  return new Date(Date.now() + minutes * 60 * 1000);
+}
+
 // Delivery logging helpers
 async function createDeliveryAttempt(messageid) {
   if (!messageid) return null;
@@ -26,19 +37,22 @@ async function markDeliverySuccess(deliverid, providerId) {
       deliverstatus: "sent",
       provider_msg_id: providerId ?? null,
       error_message: null,
+      nextretryat: null,
+      lastattemptat: new Date(),
     },
   });
 }
 
-async function markDeliveryFailure(deliverid, err) {
-  if (!deliverid) return;
+async function markDeliveryFailure(deliverAttempt, err) {
+  if (!deliverAttempt?.deliverid) return;
+  const currentCount = deliverAttempt.retrycount ?? 0;
   await prisma.deliverlog.update({
-    where: { deliverid },
+    where: { deliverid: deliverAttempt.deliverid },
     data: {
       deliverstatus: "failed",
       error_message: (err?.message || "").slice(0, 500),
-      retrycount: { increment: 1 },
-      nextretryat: new Date(Date.now() + 5 * 60 * 1000), // simple 5m backoff
+      retrycount: currentCount + 1,
+      nextretryat: calcNextRetryAt(currentCount),
       lastattemptat: new Date(),
     },
   });
@@ -47,9 +61,10 @@ async function markDeliveryFailure(deliverid, err) {
 /**
  * Send a WhatsApp message.
  * If `messageRecord` is provided, also create/update deliverlog and message status.
+ * Optionally pass an existing deliverLog row to reuse its retry counters.
  */
-export async function sendWhatsAppMessage(to, messageObj, messageRecord = null) {
-  let deliverAttempt = null;
+export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, deliverLog = null) {
+  let deliverAttempt = deliverLog || null;
   try {
     if (!to || !messageObj) throw new Error("Invalid message payload");
 
@@ -77,9 +92,10 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null) 
       ...normalized,
     };
 
-    deliverAttempt = messageRecord
-      ? await createDeliveryAttempt(messageRecord.messageid)
-      : null;
+    // Only create a new delivery attempt for the first send; retries reuse the existing row.
+    if (!deliverAttempt && messageRecord) {
+      deliverAttempt = await createDeliveryAttempt(messageRecord.messageid);
+    }
 
     const res = await axios.post(
       `https://graph.facebook.com/v19.0/${config.whatsapp.phoneNumberId}/messages`,
@@ -103,6 +119,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null) 
         data: {
           provider_msg_id: providerId,
           message_status: "sent",
+          error_message: null,
         },
       });
     }
@@ -112,7 +129,9 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null) 
   } catch (err) {
     // Log failure into deliverlog + message table if we started an attempt
     if (messageRecord?.messageid) {
-      await markDeliveryFailure(deliverAttempt?.deliverid, err);
+      if (deliverAttempt) {
+        await markDeliveryFailure(deliverAttempt, err);
+      }
       await prisma.message.update({
         where: { messageid: messageRecord.messageid },
         data: {

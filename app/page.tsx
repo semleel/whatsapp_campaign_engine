@@ -54,7 +54,10 @@ const flowDropoffs: HealthRow[] = [
 
 export default function Home() {
   const {
-    canView,
+    canView: canViewOverview,
+    loading: overviewLoading,
+  } = usePrivilege("overview");
+  const {
     canCreate: canCreateCampaign,
     loading: campaignLoading,
   } = usePrivilege("campaigns");
@@ -66,7 +69,7 @@ export default function Home() {
     canCreate: canCreateIntegration,
   } = usePrivilege("integration");
 
-  if (!campaignLoading && !canView) {
+  if (!overviewLoading && !canViewOverview) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
         You do not have permission to view the overview.

@@ -1,10 +1,13 @@
 import bcrypt from "bcrypt";
-import { prisma } from "../config/prismaClient.js";
+import prisma from "../config/prismaClient.js";
 
 const SALT_ROUNDS = Number(process.env.PASSWORD_SALT_ROUNDS || 10);
 const ALLOWED_ROLES = ["Admin", "Super", "Staff"];
 
-const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
+const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 0);
+const NEW_STAFF_TEMPLATE_ADMIN_ID = Number(
+  process.env.NEW_STAFF_TEMPLATE_ADMIN_ID || BASELINE_ADMIN_ID
+);
 const toTitle = (role) => {
   if (!role) return null;
   const r = String(role).trim();
@@ -35,8 +38,82 @@ const DEFAULT_BASELINE_PRIVILEGES = [
   archive: false,
 }));
 
+async function ensureTemplateAdminExists(adminid) {
+  if (!Number.isFinite(adminid)) return null;
+  const existing = await prisma.admin.findUnique({ where: { adminid } });
+  if (existing) return existing;
+
+  const password_hash = await bcrypt.hash("template-placeholder", SALT_ROUNDS);
+  return prisma.admin.create({
+    data: {
+      adminid,
+      name: "New Staff Privilege Template",
+      email: `template-${adminid}@local`,
+      password_hash,
+      role: "Staff",
+      phonenum: null,
+      is_active: true,
+    },
+  });
+}
+
+async function ensureBaselinePrivileges() {
+  await ensureTemplateAdminExists(BASELINE_ADMIN_ID);
+  let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  if (!baseline.length) {
+    await prisma.staff_privilege.createMany({
+      data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
+        ...row,
+        adminid: BASELINE_ADMIN_ID,
+      })),
+      skipDuplicates: true,
+    });
+    baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  }
+  return baseline;
+}
+
+async function ensureTemplatePrivileges() {
+  const templateId = NEW_STAFF_TEMPLATE_ADMIN_ID;
+  await ensureTemplateAdminExists(templateId);
+  let template = await prisma.staff_privilege.findMany({ where: { adminid: templateId } });
+
+  if (!template.length) {
+    await prisma.staff_privilege.createMany({
+      data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
+        ...row,
+        adminid: templateId,
+      })),
+      skipDuplicates: true,
+    });
+    template = await prisma.staff_privilege.findMany({ where: { adminid: templateId } });
+  }
+
+  if (!template.length && templateId !== BASELINE_ADMIN_ID) {
+    const baseline = await ensureBaselinePrivileges();
+    template = baseline;
+  }
+
+  return { template, templateId };
+}
+
+async function syncAdminIdSequence() {
+  try {
+    await prisma.$executeRaw`
+      SELECT setval(
+        pg_get_serial_sequence('admin', 'adminid'),
+        COALESCE((SELECT MAX(adminid) FROM "admin"), 0)
+      )
+    `;
+  } catch (err) {
+    console.warn("Failed to sync admin id sequence:", err);
+  }
+}
+
 export async function listAdmins(req, res) {
+  const excludeIds = [NEW_STAFF_TEMPLATE_ADMIN_ID].filter((n) => Number.isFinite(n));
   const rows = await prisma.admin.findMany({
+    where: excludeIds.length ? { adminid: { notIn: excludeIds } } : undefined,
     select: {
       adminid: true,
       name: true,
@@ -85,72 +162,84 @@ export async function getAdmin(req, res) {
 }
 
 export async function createAdmin(req, res) {
-  const { name, email, password, phonenum, role } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: "email and password are required" });
-
-  const existing = await prisma.admin.findUnique({ where: { email } });
-  if (existing) return res.status(400).json({ error: "Email already in use" });
-
-  const normalizedRole = normalizeRole(role, "Staff");
-  if (!normalizedRole) return res.status(400).json({ error: "Invalid role" });
-
-  const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-  const admin = await prisma.admin.create({
-    data: {
-      name: name || null,
-      email,
-      password_hash,
-      role: normalizedRole,
-      phonenum: phonenum || null,
-      is_active: true,
-    },
-  });
-
-  // Apply general baseline privileges (adminid = 0) to new staff by default
-  let appliedBaseline = false;
   try {
-    let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+    const { name, email, password, phonenum, role } = req.body || {};
+    if (!email || !password) return res.status(400).json({ error: "email and password are required" });
 
-    // If no baseline exists yet, seed it with the default workspace access (view-only)
-    if (!baseline.length) {
-      await prisma.staff_privilege.createMany({
-        data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
-          ...row,
-          adminid: BASELINE_ADMIN_ID,
-        })),
-        skipDuplicates: true,
+    const existing = await prisma.admin.findUnique({ where: { email } });
+    if (existing) return res.status(400).json({ error: "Email already in use" });
+
+    const normalizedRole = normalizeRole(role, "Staff");
+    if (!normalizedRole) return res.status(400).json({ error: "Invalid role" });
+
+    const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
+
+    const createRow = () =>
+      prisma.admin.create({
+        data: {
+          name: name || null,
+          email,
+          password_hash,
+          role: normalizedRole,
+          phonenum: phonenum || null,
+          is_active: true,
+        },
       });
-      baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+
+    // Keep the adminid sequence in sync (DB imports can desync sequences).
+    await syncAdminIdSequence();
+
+    let admin;
+    try {
+      admin = await createRow();
+    } catch (err) {
+      if (err.code === "P2002" && Array.isArray(err.meta?.target) && err.meta.target.includes("adminid")) {
+        await syncAdminIdSequence();
+        admin = await createRow();
+      } else if (err.code === "P2002" && Array.isArray(err.meta?.target) && err.meta.target.includes("email")) {
+        return res.status(400).json({ error: "Email already in use" });
+      } else {
+        throw err;
+      }
     }
 
-    if (baseline.length) {
-      await prisma.staff_privilege.createMany({
-        data: baseline.map((row) => ({
-          adminid: admin.adminid,
-          resource: row.resource,
-          view: row.view,
-          create: row.create,
-          update: row.update,
-          archive: row.archive,
-        })),
-        skipDuplicates: true,
-      });
-      appliedBaseline = true;
+    // Apply general baseline privileges (adminid = BASELINE_ADMIN_ID) to new staff by default
+    let appliedBaseline = false;
+    try {
+      const { template } = await ensureTemplatePrivileges();
+
+      if (template.length) {
+        await prisma.staff_privilege.createMany({
+          data: template.map((row) => ({
+            adminid: admin.adminid,
+            resource: row.resource,
+            view: row.view,
+            create: row.create,
+            update: row.update,
+            archive: row.archive,
+          })),
+          skipDuplicates: true,
+        });
+        appliedBaseline = true;
+      }
+    } catch (err) {
+      // Do not fail staff creation if baseline copy fails
+      console.error("Failed to apply baseline privileges to new staff:", err);
     }
+
+    return res.status(201).json({
+      adminid: admin.adminid,
+      name: admin.name,
+      email: admin.email,
+      role: admin.role,
+      phonenum: admin.phonenum,
+      is_active: admin.is_active,
+      has_privileges: appliedBaseline,
+    });
   } catch (err) {
-    // Do not fail staff creation if baseline copy fails
-    console.error("Failed to apply baseline privileges to new staff:", err);
+    console.error("createAdmin error:", err);
+    return res.status(500).json({ error: err.message || "Failed to create admin" });
   }
-
-  return res.status(201).json({
-    adminid: admin.adminid,
-    name: admin.name,
-    email: admin.email,
-    role: admin.role,
-    phonenum: admin.phonenum,
-    is_active: admin.is_active,
-    has_privileges: appliedBaseline,
-  });
 }
 
 export async function updateAdmin(req, res) {

@@ -188,6 +188,18 @@ export async function findOrCreateContactByPhone(phonenum) {
   return contact;
 }
 
+/**
+ * Resolve the entry content key for a campaign.
+ * Preference order:
+ *   1) campaign.entry_contentkeyid (explicit entry)
+ *   2) campaign.contentkeyid (legacy field)
+ * Returns null if none exist.
+ */
+export function getEntryContentKeyForCampaign(campaign) {
+  if (!campaign) return null;
+  return campaign.entry_contentkeyid || campaign.contentkeyid || null;
+}
+
 async function getActiveStartSystemFlow() {
   return prisma.system_flow.findFirst({
     where: { code: "START", is_active: true },

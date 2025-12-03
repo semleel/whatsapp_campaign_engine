@@ -1,8 +1,8 @@
 // src/middleware/permission.ts
 
 import { Request, Response, NextFunction } from "express";
-import { prisma } from "../config/prismaClient.js";
-const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 1);
+import prisma from "../config/prismaClient.js";
+const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 0);
 
 export function requirePrivilege(
   resource: string,
@@ -15,44 +15,24 @@ export function requirePrivilege(
   ) {
     try {
       const role = (req.role || "").toLowerCase();
-      if (role === "admin") return next();
+      if (role === "admin" || role === "super") return next();
 
       if (!req.adminId) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      const priv = await prisma.staff_privilege.findUnique({
-        where: {
-          adminid_resource: {
-            adminid: req.adminId,
-            resource,
-          },
-        },
-        select: {
-          view: true,
-          create: true,
-          update: true,
-          archive: true,
-        },
+      const priv = await prisma.staff_privilege.findFirst({
+        where: { adminid: req.adminId, resource },
+        select: { view: true, create: true, update: true, archive: true },
       });
 
       let effectivePriv = priv;
 
       // Fallback to general baseline (adminid = BASELINE_ADMIN_ID) when no per-user privileges exist
       if (!effectivePriv) {
-        effectivePriv = await prisma.staff_privilege.findUnique({
-          where: {
-            adminid_resource: {
-              adminid: BASELINE_ADMIN_ID,
-              resource,
-            },
-          },
-          select: {
-            view: true,
-            create: true,
-            update: true,
-            archive: true,
-          },
+        effectivePriv = await prisma.staff_privilege.findFirst({
+          where: { adminid: BASELINE_ADMIN_ID, resource },
+          select: { view: true, create: true, update: true, archive: true },
         });
       }
 
