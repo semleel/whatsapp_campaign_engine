@@ -27,7 +27,7 @@ type TemplateButton = {
   phone?: string;
 };
 
-type TemplateInteractiveType = "buttons" | "menu";
+type TemplateInteractiveType = "buttons" | "menu" | "default";
 
 type TemplateMenuOption = {
   id: string;
@@ -53,6 +53,8 @@ type TemplateCategory =
   | "Authentication"
   | string
   | null;
+
+type TemplateActionType = "choice" | "message" | "input" | "api";
 
 const TEMPLATE_CATEGORY_OPTIONS: {
   value: TemplateCategory;
@@ -82,7 +84,7 @@ const TEMPLATE_CATEGORY_OPTIONS: {
 
 type TemplateForm = {
   title: string;
-  type: string;
+  type: TemplateActionType;
   category: TemplateCategory;
   status: string;
   lang: string;
@@ -95,7 +97,6 @@ type TemplateForm = {
   headerType: "none" | "text" | "media";
   headerMediaType: "image" | "video" | "document";
   headerText: string;
-  footerText: string;
   buttons: TemplateButton[];
   interactiveType: TemplateInteractiveType;
   menu: TemplateMenu | null;
@@ -278,9 +279,8 @@ function createEmptyForm(): TemplateForm {
     headerType: "none",
     headerMediaType: "image",
     headerText: "",
-    footerText: "",
     buttons: [],
-    interactiveType: "buttons",
+    interactiveType: "default",
     menu: null,
   };
 }
@@ -406,6 +406,14 @@ export default function ContentCreatePage() {
           interactiveType: "menu",
           buttons: [],
           menu: ensureMenu(prev.menu),
+        };
+      }
+      if (type === "default") {
+        return {
+          ...prev,
+          interactiveType: "default",
+          buttons: [],
+          menu: null,
         };
       }
       return {
@@ -640,7 +648,7 @@ export default function ContentCreatePage() {
           setSubmitting(false);
           return;
         }
-      } else {
+      } else if (form.interactiveType === "menu") {
         const menuToValidate = ensureMenu(form.menu);
         const err = validateMenu(menuToValidate);
         if (err) {
@@ -655,14 +663,16 @@ export default function ContentCreatePage() {
         ? new Date(form.expiresat).toISOString()
         : null;
 
+      const apiInteractiveType =
+        form.interactiveType === "default" ? undefined : form.interactiveType;
+
       const placeholderData = {
-        footerText: form.footerText || null,
         headerText: form.headerType === "text" ? form.headerText : null,
         headerType: form.headerType,
         headerMediaType:
           form.headerType === "media" ? form.headerMediaType : null,
         buttons: form.buttons,
-        interactiveType: form.interactiveType,
+        interactiveType: apiInteractiveType,
       };
 
       const payload = {
@@ -675,13 +685,12 @@ export default function ContentCreatePage() {
         description: form.description || form.body || null,
         mediaUrl: form.mediaurl?.trim() || null,
         expiresat: expiresAtIso,
-        footerText: placeholderData.footerText,
         headerText: placeholderData.headerText,
         headerType: placeholderData.headerType,
         headerMediaType: placeholderData.headerMediaType,
         buttons: form.interactiveType === "buttons" ? placeholderData.buttons : [],
         menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : null,
-        interactiveType: form.interactiveType,
+        interactiveType: apiInteractiveType,
         placeholders: {
           ...placeholderData,
           menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : undefined,
@@ -728,8 +737,6 @@ export default function ContentCreatePage() {
   };
 
   const previewBody = form.body.trim() || "Body text here";
-  const previewFooter =
-    form.footerText.trim() || "Sent via Campaign Engine";
 
   const quickReplyCount = form.buttons.filter((b) => b.type === "quick_reply").length;
   const hasWebsite = form.buttons.some((b) => b.type === "visit_website");
@@ -810,8 +817,9 @@ export default function ContentCreatePage() {
                 className="w-full rounded-md border px-3 py-2"
               >
                 <option value="message">Message</option>
-                <option value="media">Media</option>
-                <option value="flow">Flow</option>
+                <option value="choice">Choice</option>
+                <option value="input">Input</option>
+                <option value="api">Api</option>
               </select>
             </label>
           </div>
@@ -852,7 +860,7 @@ export default function ContentCreatePage() {
           <div className="border-t pt-4 space-y-2">
             <h4 className="text-sm font-semibold">Interaction Type</h4>
             <p className="text-xs text-muted-foreground">
-              Choose between WhatsApp buttons (quick replies / CTA) or a list-style menu.
+              Choose between WhatsApp buttons (quick replies / CTA), a list-style menu, or no interaction.
             </p>
             <div className="flex flex-wrap gap-2 text-sm">
               <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
@@ -874,6 +882,16 @@ export default function ContentCreatePage() {
                   onChange={() => handleInteractiveTypeChange("menu")}
                 />
                 Menu (List Message)
+              </label>
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
+                  checked={form.interactiveType === "default"}
+                  onChange={() => handleInteractiveTypeChange("default")}
+                />
+                Default (No interactions)
               </label>
             </div>
           </div>
@@ -1056,27 +1074,6 @@ export default function ContentCreatePage() {
               className="w-full rounded-md border px-3 py-2 min-h-32"
             />
           </label>
-
-          {/* Footer */}
-          <div className="space-y-3 border-t pt-4">
-            <h4 className="text-sm font-semibold">
-              Footer{" "}
-              <span className="text-xs text-muted-foreground">
-                (Optional)
-              </span>
-            </h4>
-            <label className="space-y-1 text-sm font-medium">
-              <span>Footer text</span>
-              <input
-                type="text"
-                name="footerText"
-                placeholder="Sent via Campaign Engine"
-                value={form.footerText}
-                onChange={handleChange}
-                className="w-full rounded-md border px-3 py-2"
-              />
-            </label>
-          </div>
 
           {/* Buttons (only when interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
@@ -1446,11 +1443,6 @@ export default function ContentCreatePage() {
               <div className="rounded-lg bg-background px-3 py-2 text-xs leading-relaxed shadow-sm">
                 {renderFormattedLines(previewBody, "Body text here")}
               </div>
-
-              {/* footer */}
-              <p className="mt-2 text-[10px] text-muted-foreground">
-                {previewFooter}
-              </p>
 
               {/* buttons */}
               {form.interactiveType === "buttons" && previewButtons.length > 0 && (

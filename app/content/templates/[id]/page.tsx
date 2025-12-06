@@ -31,16 +31,17 @@ type TemplateCategory =
   | string
   | null;
 
+type TemplateActionType = "choice" | "message" | "input" | "api";
+
 type TemplateData = {
   contentid: number;
   title: string;
-  type: string;
+  type: TemplateActionType;
   status: string;
   lang: string;
   category: TemplateCategory;
   body: string;
   description?: string | null;
-  footerText?: string | null;
   mediaurl?: string | null;
   expiresat?: string | null;
   placeholders?: Record<string, unknown> | null;
@@ -54,7 +55,7 @@ type TemplateData = {
   menu?: TemplateMenu | null;
 };
 
-type TemplateInteractiveType = "buttons" | "menu";
+type TemplateInteractiveType = "buttons" | "menu" | "default";
 
 type TemplateMenuOption = {
   id: string;
@@ -112,6 +113,32 @@ function normalizeStatus(status: string | null | undefined): string {
   if (lower === "archived") return "Archived";
   if (lower === "draft" || lower === "approved") return "Active";
   return value;
+}
+
+function normalizeInteractiveType(
+  value: string | null | undefined,
+  hasMenu: unknown,
+  buttons: ButtonItem[] | null | undefined
+): TemplateInteractiveType {
+  const lower = (value || "").toLowerCase();
+  if (lower === "default") return "default";
+  if (lower === "menu" || hasMenu) return "menu";
+  if (lower === "buttons") return "buttons";
+  if (Array.isArray(buttons) && buttons.length > 0) return "buttons";
+  return "default";
+}
+
+function normalizeTemplateType(value: string | null | undefined): TemplateActionType {
+  const normalized = (value || "").toLowerCase();
+  if (
+    normalized === "choice" ||
+    normalized === "message" ||
+    normalized === "input" ||
+    normalized === "api"
+  ) {
+    return normalized as TemplateActionType;
+  }
+  return "message";
 }
 
 function generateId() {
@@ -360,7 +387,6 @@ export default function EditTemplatePage() {
     category: "Marketing",
     body: "",
     description: "",
-    footerText: "",
     mediaurl: null,
     expiresat: "",
     placeholders: null,
@@ -370,7 +396,7 @@ export default function EditTemplatePage() {
     headerText: "",
     headerMediaType: "image",
     isdeleted: null,
-    interactiveType: "buttons",
+    interactiveType: "default",
     menu: null,
   });
 
@@ -445,9 +471,13 @@ export default function EditTemplatePage() {
         const data = await Api.getTemplate(templateId);
 
         const isdeleted: boolean | null = (data as any).isdeleted ?? null;
-        const placeholders =
+        const rawPlaceholders =
           ((data as any).placeholders as Record<string, unknown> | null) ||
           null;
+        const placeholders = rawPlaceholders ? { ...rawPlaceholders } : null;
+        if (placeholders) {
+          delete (placeholders as any).footerText;
+        }
 
         const headerType: TemplateData["headerType"] =
           (data as any).headerType ||
@@ -464,23 +494,19 @@ export default function EditTemplatePage() {
           (placeholders?.headerMediaType as TemplateData["headerMediaType"]) ||
           "image";
 
-        const footerText: string =
-          (data as any).footertext ||
-          (placeholders?.footerText as string | null) ||
-          "";
-
         const buttons: ButtonItem[] =
           (data as any).buttons ||
           ((placeholders?.buttons as ButtonItem[] | undefined) ?? []);
 
-        const interactiveType: TemplateInteractiveType =
-          (data as any).interactiveType === "menu" || placeholders?.menu
-            ? "menu"
-            : "buttons";
         const menuFromData =
           (data as any).menu ??
           (placeholders?.menu as TemplateMenu | null | undefined) ??
           null;
+        const interactiveType: TemplateInteractiveType = normalizeInteractiveType(
+          (data as any).interactiveType as string | null | undefined,
+          menuFromData,
+          buttons
+        );
         const normalizedMenu =
           interactiveType === "menu" ? ensureMenu(menuFromData) : null;
         const normalizedButtons =
@@ -489,7 +515,7 @@ export default function EditTemplatePage() {
         setForm({
           contentid: (data as any).contentid,
           title: (data as any).title || "",
-          type: (data as any).type,
+          type: normalizeTemplateType((data as any).type),
           status: normalizeStatus((data as any).status),
           lang:
             ((data as any).lang || (data as any).defaultlang || "en")?.trim() ||
@@ -497,7 +523,6 @@ export default function EditTemplatePage() {
           category: (data as any).category || "Marketing",
           body: (data as any).body || (data as any).description || "",
           description: (data as any).description || "",
-          footerText,
           mediaurl: (data as any).mediaurl || null,
           expiresat: (data as any).expiresat || "",
           placeholders,
@@ -624,6 +649,14 @@ export default function EditTemplatePage() {
           interactiveType: "menu",
           buttons: [],
           menu: ensureMenu(prev.menu),
+        };
+      }
+      if (type === "default") {
+        return {
+          ...prev,
+          interactiveType: "default",
+          buttons: [],
+          menu: null,
         };
       }
       return {
@@ -825,7 +858,7 @@ export default function EditTemplatePage() {
           setSaving(false);
           return;
         }
-      } else {
+      } else if (form.interactiveType === "menu") {
         const menuToValidate = ensureMenu(form.menu);
         const err = validateMenu(menuToValidate);
         if (err) {
@@ -847,15 +880,22 @@ export default function EditTemplatePage() {
         ? new Date(form.expiresat).toISOString()
         : null;
 
+      const apiInteractiveType =
+        form.interactiveType === "default" ? undefined : form.interactiveType;
+
       const placeholderData = {
-        footerText: form.footerText || null,
         headerText: form.headerType === "text" ? form.headerText || "" : null,
         headerType: form.headerType,
         headerMediaType:
           form.headerType === "media" ? form.headerMediaType : null,
         buttons: form.buttons,
-        interactiveType: form.interactiveType,
+        interactiveType: apiInteractiveType,
       };
+
+      const cleanedPlaceholders = form.placeholders
+        ? { ...form.placeholders }
+        : {};
+      delete (cleanedPlaceholders as any).footerText;
 
       const payload = {
         title: form.title,
@@ -868,7 +908,6 @@ export default function EditTemplatePage() {
         description: form.description || form.body || null,
         mediaUrl: finalMediaUrl,
         expiresat: expiresAtIso,
-        footerText: placeholderData.footerText,
         headerText: placeholderData.headerText,
         headerType: placeholderData.headerType,
         headerMediaType: placeholderData.headerMediaType,
@@ -877,9 +916,9 @@ export default function EditTemplatePage() {
             ? placeholderData.buttons?.slice(0, MAX_QUICK_REPLIES)
             : [],
         menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : null,
-        interactiveType: form.interactiveType || "buttons",
+        interactiveType: apiInteractiveType,
         placeholders: {
-          ...(form.placeholders || {}),
+          ...cleanedPlaceholders,
           ...placeholderData,
           menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : undefined,
         },
@@ -1155,12 +1194,13 @@ export default function EditTemplatePage() {
                 className="w-full border rounded px-3 py-2"
                 value={form.type}
                 onChange={(e) =>
-                  setForm({ ...form, type: e.target.value as string })
+                  setForm({ ...form, type: normalizeTemplateType(e.target.value) })
                 }
               >
                 <option value="message">Message</option>
-                <option value="media">Media</option>
-                <option value="flow">Flow</option>
+                <option value="choice">Choice</option>
+                <option value="input">Input</option>
+                <option value="api">Api</option>
               </select>
             </label>
           </div>
@@ -1169,7 +1209,7 @@ export default function EditTemplatePage() {
           <div className="border-t pt-4 space-y-2">
             <h4 className="text-sm font-semibold">Interaction Type</h4>
             <p className="text-xs text-muted-foreground">
-              Choose between WhatsApp buttons (quick replies / CTA) or a list-style menu.
+              Choose between WhatsApp buttons (quick replies / CTA), a list-style menu, or no interaction.
             </p>
             <div className="flex flex-wrap gap-2 text-sm">
               <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
@@ -1191,6 +1231,16 @@ export default function EditTemplatePage() {
                   onChange={() => handleInteractiveTypeChange("menu")}
                 />
                 Menu (List Message)
+              </label>
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
+                  checked={form.interactiveType === "default"}
+                  onChange={() => handleInteractiveTypeChange("default")}
+                />
+                Default (No interactions)
               </label>
             </div>
           </div>
@@ -1405,21 +1455,6 @@ export default function EditTemplatePage() {
               onChange={(e) => setForm({ ...form, body: e.target.value })}
             />
           </label>
-
-          {/* FOOTER */}
-          <div className="border-t pt-4 space-y-2">
-            <h4 className="font-semibold text-sm">
-              Footer{" "}
-              <span className="text-xs text-muted-foreground">(Optional)</span>
-            </h4>
-            <input
-              className="w-full border rounded px-3 py-2"
-              value={form.footerText || ""}
-              onChange={(e) =>
-                setForm({ ...form, footerText: e.target.value })
-              }
-            />
-          </div>
 
           {/* BUTTONS (interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
@@ -1790,12 +1825,6 @@ export default function EditTemplatePage() {
               <div className="bg-background rounded p-2 text-xs shadow">
                 {renderFormattedLines(form.body, " ")}
               </div>
-
-              {form.footerText && (
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  {form.footerText}
-                </p>
-              )}
 
               {form.interactiveType === "buttons" && previewButtons.length > 0 && (
                 <div className="border-t mt-2 pt-2 space-y-1">

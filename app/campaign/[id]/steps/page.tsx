@@ -229,6 +229,26 @@ export default function CampaignStepsPage() {
     }
   };
 
+  const activeStep =
+    expandedIndex !== null && expandedIndex >= 0 && expandedIndex < steps.length
+      ? steps[expandedIndex]
+      : steps[0] || null;
+  const activeStepNumber = activeStep ? steps.indexOf(activeStep) + 1 : null;
+  const nextLabel = (() => {
+    if (!activeStep) return "—";
+    if (activeStep.action_type === "choice") return "Per choice";
+    if (activeStep.is_end_step) return "End";
+    if (activeStep.next_step_id) return `Step ${activeStep.next_step_id}`;
+    if (activeStepNumber && activeStepNumber < steps.length) return `Step ${activeStepNumber + 1}`;
+    return "End";
+  })();
+  const failureLabel =
+    activeStep?.action_type === "api"
+      ? activeStep.failure_step_id
+        ? `Step ${activeStep.failure_step_id}`
+        : "None"
+      : "-";
+
   if (!privLoading && !canView) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
@@ -256,7 +276,8 @@ export default function CampaignStepsPage() {
         </div>
       </div>
 
-      <div className="rounded-lg border bg-card p-4">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,2.5fr)_minmax(320px,1fr)] items-start">
+        <div className="rounded-lg border bg-card p-4">
         <div className="mb-4">
           <p className="text-xs uppercase text-muted-foreground">Campaign</p>
           <p className="text-base font-semibold">{campaignName || "Loading..."}</p>
@@ -760,6 +781,112 @@ export default function CampaignStepsPage() {
             {saving ? "Saving..." : "Save changes"}
           </button>
         </div>
+        </div>
+
+        <aside className="rounded-lg border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold">Step Preview</h4>
+            {activeStep ? (
+              <span className="text-xs rounded-full bg-muted px-3 py-1 font-medium text-muted-foreground">
+                {activeStep.action_type || "message"}
+              </span>
+            ) : null}
+          </div>
+
+          {activeStep ? (
+            <div className="space-y-3 text-sm">
+              <div className="text-xs text-muted-foreground flex items-center gap-2">
+                <span className="font-semibold text-foreground">
+                  Step {activeStepNumber ?? "-"}
+                </span>
+                <span>-</span>
+                <span>{activeStep.step_code || "No code"}</span>
+              </div>
+
+              {activeStep.media_url?.trim() ? (
+                activeStep.media_type === "image" ? (
+                  <div className="rounded-md overflow-hidden border bg-muted">
+                    <img
+                      src={activeStep.media_url}
+                      alt="Step media"
+                      className="block w-full object-cover max-h-40"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    {activeStep.media_type
+                      ? `${activeStep.media_type.toUpperCase()} attachment`
+                      : "Attachment"}
+                  </div>
+                )
+              ) : null}
+              {activeStep.media_caption ? (
+                <p className="text-xs text-muted-foreground">{activeStep.media_caption}</p>
+              ) : null}
+
+              <div className="rounded-lg bg-background px-3 py-2 leading-relaxed shadow-sm whitespace-pre-line">
+                {activeStep.prompt_text?.trim() || "No prompt yet."}
+              </div>
+
+              {activeStep.action_type === "choice" && (
+                <div className="space-y-1">
+                  {(activeStep.campaign_step_choice || []).length ? (
+                    (activeStep.campaign_step_choice || []).map((c, idx) => (
+                      <button
+                        key={`${c.choice_id || idx}`}
+                        type="button"
+                        className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
+                      >
+                        {c.label || c.choice_code || `Option ${idx + 1}`}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Choices will appear here.</p>
+                  )}
+                </div>
+              )}
+
+              {activeStep.action_type === "input" && (
+                <div className="space-y-1">
+                  <input
+                    disabled
+                    className="w-full rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground"
+                    placeholder={`Expected input: ${activeStep.input_type || "text"}`}
+                  />
+                  {activeStep.error_message ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Error message: {activeStep.error_message}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
+              {activeStep.action_type === "api" && (
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                  <p>Calls API: {activeStep.api_id ? `#${activeStep.api_id}` : "Not selected"}</p>
+                  <p>On failure: {failureLabel}</p>
+                </div>
+              )}
+
+              {activeStep.action_type === "choice" && activeStep.error_message && (
+                <p className="text-[11px] text-muted-foreground">
+                  Fallback: {activeStep.error_message}
+                </p>
+              )}
+
+              <div className="text-xs text-muted-foreground">
+                <div>On success: {nextLabel}</div>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Add a step to see how it will look in WhatsApp.
+            </p>
+          )}
+        </aside>
       </div>
     </div>
   );
