@@ -1,3 +1,5 @@
+// app/content/templates/create/page.tsx
+
 "use client";
 
 import React, { useState } from "react";
@@ -6,7 +8,6 @@ import { useRouter } from "next/navigation";
 import { showCenteredAlert } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
-import TagSelector from "../../../../components/TagSelector";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
@@ -89,7 +90,6 @@ type TemplateForm = {
   body: string;
   description: string;
   mediaurl: string; // URL only
-  tags: string[];
   expiresat: string;
 
   headerType: "none" | "text" | "media";
@@ -273,7 +273,6 @@ function createEmptyForm(): TemplateForm {
     body: "",
     description: "",
     mediaurl: "",
-    tags: [],
     expiresat: "",
     headerType: "none",
     headerMediaType: "image",
@@ -693,15 +692,7 @@ export default function ContentCreatePage() {
       const created = (createdResponse as any)?.data;
       const contentId: number | undefined = created?.contentid;
 
-      // 2) Attach tags (join table)
-      const tags = form.tags;
-      if (contentId && tags.length) {
-        // Make sure these helpers exist in client.ts:
-        // attachTags(templateId: number, tags: string[])
-        await (Api as any).attachTags(contentId, tags);
-      }
-
-      // 3) Expiry – dedicated endpoint
+      // 2) Expiry – dedicated endpoint (optional)
       if (contentId && form.expiresat) {
         const iso = new Date(form.expiresat).toISOString();
         // Make sure this helper exists in client.ts:
@@ -768,8 +759,8 @@ export default function ContentCreatePage() {
         <div>
           <h3 className="text-lg font-semibold">Create Template</h3>
           <p className="text-sm text-muted-foreground">
-            Add a new WhatsApp-approved message, tag it with metadata, and
-            keep the versioning trail clean.
+            Define a reusable WhatsApp message layout for your campaigns. This
+            is stored only in your own database and does not create a Meta-approved template.
           </p>
         </div>
         <Link
@@ -929,24 +920,6 @@ export default function ContentCreatePage() {
           </div>
           */}
 
-          {/* TAGS – Wati-style picker */}
-          <div className="border-t pt-4 space-y-2">
-            <h4 className="font-semibold text-sm">Tags</h4>
-            <p className="text-xs text-muted-foreground">
-              Use tags to group similar templates. Start typing to search and
-              select from your existing tags.
-            </p>
-
-            <TagSelector
-              selected={form.tags}
-              onChange={(tags: string[]) =>
-                setForm((prev) => ({
-                  ...prev,
-                  tags,
-                }))
-              }
-            />
-          </div>
 
           {/* EXPIRY */}
           <div className="border-t pt-4 space-y-2">
@@ -1060,17 +1033,20 @@ export default function ContentCreatePage() {
           {/* Footer */}
           <div className="space-y-3 border-t pt-4">
             <h4 className="text-sm font-semibold">
-              Footer{" "}
+              Footer note{" "}
               <span className="text-xs text-muted-foreground">
                 (Optional)
               </span>
             </h4>
+            <p className="text-xs text-muted-foreground">
+              A short signature or disclaimer shown at the bottom of this message.
+            </p>
             <label className="space-y-1 text-sm font-medium">
-              <span>Footer text</span>
+              <span>Footer note text</span>
               <input
                 type="text"
                 name="footerText"
-                placeholder="Sent via Campaign Engine"
+                placeholder="e.g. Sent via Campaign Engine"
                 value={form.footerText}
                 onChange={handleChange}
                 className="w-full rounded-md border px-3 py-2"
@@ -1419,6 +1395,9 @@ export default function ContentCreatePage() {
           {/* Preview card */}
           <div className="rounded-xl border bg-card p-4 space-y-3">
             <h4 className="text-sm font-semibold">Template Preview</h4>
+            <p className="text-xs text-muted-foreground">
+              Preview of how this saved message block may look when sent as a normal WhatsApp session message.
+            </p>
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
               {/* header media preview (URL-based) */}
               {form.headerType === "media" && form.mediaurl.trim() && (

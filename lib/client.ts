@@ -435,12 +435,6 @@ export const Api = {
     }),
 
 
-  attachTags: (templateId: number, tags: string[]) =>
-    http(`/api/template/${templateId}/tags`, {
-      method: "POST",
-      body: JSON.stringify({ tags }),
-    }),
-
   softDeleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}/delete`, {
       method: "POST",

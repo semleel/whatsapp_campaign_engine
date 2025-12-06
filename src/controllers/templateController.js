@@ -183,9 +183,8 @@ export async function deleteTemplate(req, res) {
       return res.status(400).json({ error: "Invalid template id" });
     }
 
-    // Remove dependent records (e.g., tags, key mappings) before deleting the template.
+    // Remove dependent records (e.g., key mappings) before deleting the template.
     await prisma.$transaction([
-      prisma.contenttag.deleteMany({ where: { contentid: id } }),
       prisma.keymapping.deleteMany({ where: { contentid: id } }),
       prisma.content.delete({ where: { contentid: id } }),
     ]);
@@ -209,84 +208,8 @@ export async function deleteTemplate(req, res) {
 }
 
 // -----------------------------
-// TAGS & EXPIRY HELPERS
+// EXPIRY HELPER
 // -----------------------------
-
-// helper: upsert tag names -> return tag IDs
-async function upsertTagsByNames(tagNames = []) {
-  const names = Array.from(
-    new Set(
-      tagNames
-        .map((n) => (typeof n === "string" ? n.trim() : ""))
-        .filter(Boolean),
-    ),
-  );
-
-  if (!names.length) return [];
-
-  const now = new Date();
-
-  const tagRecords = await Promise.all(
-    names.map((name) =>
-      prisma.tag.upsert({
-        where: { name },
-        update: { updatedat: now, isdeleted: false },
-        create: {
-          name,
-          isdeleted: false,
-          createdat: now,
-          updatedat: now,
-        },
-      }),
-    ),
-  );
-
-  return tagRecords.map((t) => t.tagid);
-}
-
-// POST /api/template/:id/tags
-export async function attachTagsToTemplate(req, res) {
-  try {
-    const id = parseInt(req.params.id, 10);
-    if (Number.isNaN(id)) {
-      return res.status(400).json({ error: "Invalid template id" });
-    }
-
-    const { tags } = req.body || {};
-    if (!Array.isArray(tags)) {
-      return res
-        .status(400)
-        .json({ error: "tags must be an array of strings" });
-    }
-
-    // ensure content exists
-    const content = await prisma.content.findUnique({
-      where: { contentid: id },
-    });
-    if (!content) {
-      return res.status(404).json({ error: "Template not found" });
-    }
-
-    const tagIds = await upsertTagsByNames(tags);
-
-    // remove existing tag links, then create new ones
-    await prisma.contenttag.deleteMany({ where: { contentid: id } });
-
-    if (tagIds.length) {
-      await prisma.contenttag.createMany({
-        data: tagIds.map((tagid) => ({ contentid: id, tagid })),
-        skipDuplicates: true,
-      });
-    }
-
-    return res
-      .status(200)
-      .json({ message: "Tags updated for template", tagIds });
-  } catch (err) {
-    console.error("attachTagsToTemplate error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-}
 
 // POST /api/template/:id/expire
 export async function setTemplateExpiry(req, res) {

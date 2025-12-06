@@ -8,7 +8,6 @@ import dotenv from "dotenv";
 import apiRoutes from "./routes/index.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import { startJobs } from "./jobs/index.js";
-import tagRoutes from "./routes/tagRoutes.js";
 import systemCommandRoutes from "./routes/systemCommandRoutes.js";
 
 // --- Middleware ---
@@ -52,7 +51,6 @@ const PORT = config.server.port || process.env.PORT || 3000;
 
 // --- API Routes ---
 // Register independent routes first
-app.use("/api/tags", tagRoutes);
 app.use("/api/system/commands", systemCommandRoutes);
 
 // Then mount the grouped /api routes
