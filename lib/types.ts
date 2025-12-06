@@ -87,6 +87,11 @@ export interface ApiLogEntry {
     error_message: string | null;
 
     called_at: string;                 // ISO datetime string
+    endpoint?: string | null;
+    status_code?: number | string | null;
+    method?: string | null;
+    path?: string | null;
+    createdat?: string | null;
 }
 
 // Delivery report row (message + latest deliverlog)
@@ -225,7 +230,7 @@ export interface CampaignListItem {
     campaignname: string;
     objective: string | null;
     regionname: string;
-    userflowname: string;
+    userflowname?: string;
     currentstatus: string;
     status: string;
     camstatusid: number | null;
@@ -238,7 +243,6 @@ export interface CampaignDetail {
     campaignname: string;
     objective: string | null;
     targetregionid: number | null;
-    userflowid: number | null;
     status: string | null;
     start_at: string | null;
     end_at: string | null;
@@ -249,23 +253,74 @@ export interface CampaignDetail {
 
 export type CampaignCreatePayload = {
     campaignName: string;
-    objective?: string | null;
-    targetRegionID?: string | number | null;
-    userFlowID?: string | number | null;
-    status?: string | null;
-    startAt?: string | null;
-    endAt?: string | null;
+    objective: string | null;
+    targetRegionID: string | number | null;
+    startAt: string | null;
+    endAt: string | null;
 };
 
 export type CampaignUpdatePayload = {
     campaignName?: string;
     objective?: string | null;
     targetRegionID?: string | number | null;
-    userFlowID?: string | number | null;
     camStatusID?: string | number | null;
     status?: string | null;
     startAt?: string | null;
     endAt?: string | null;
+};
+
+// Campaign engine enums/types
+export type ActionType = "message" | "choice" | "input" | "api" | "end";
+export type JumpMode = "next" | "custom";
+export type ExpectedInput = "none" | "choice" | "text" | "number" | "email";
+export type InputType = "text" | "number" | "email";
+
+export type CampaignStep = {
+    step_id: number;
+    campaign_id: number;
+    step_number: number;
+    step_code: string | null;
+    prompt_text: string;
+    error_message: string | null;
+    expected_input: ExpectedInput;
+    action_type: ActionType;
+    api_id: number | null;
+    next_step_id: number | null;
+    failure_step_id: number | null;
+    is_end_step: boolean;
+};
+
+export type CampaignStepChoice = {
+    choice_id: number;
+    campaign_id: number;
+    step_id: number;
+    choice_code: string;
+    label: string;
+    description?: string | null;
+    next_step_id: number | null;
+    is_correct?: boolean | null;
+};
+
+export type CampaignStepWithChoices = CampaignStep & {
+    input_type?: InputType | null;
+    // Optional UI-only jump mode: "next" = natural next, "custom" = jump to specific step number
+    jump_mode?: JumpMode;
+    // Optional media per step (hosted in your own storage, linked via URL)
+    media_type?: "image" | "video" | "audio" | "document" | null;
+    media_url?: string | null;
+    media_caption?: string | null;
+    campaign_step_choice: CampaignStepChoice[];
+};
+
+export type CampaignWithStepsResponse = {
+    campaign: CampaignDetail;
+    steps: CampaignStepWithChoices[];
+};
+
+export type ApiListItem = {
+    api_id: number;
+    name: string;
+    is_active?: boolean | null;
 };
 
 // =============================================
@@ -324,6 +379,17 @@ export interface TemplateDetail extends TemplateListItem {
     mediaurl?: string | null;
     body?: string | null;
     tags?: string[];
+    lang?: string | null;
+    createdat?: string | null;
+    expiresat?: string | null;
+    placeholders?: Record<string, unknown> | null;
+    headerType?: "none" | "text" | "media" | string | null;
+    headerText?: string | null;
+    headerMediaType?: string | null;
+    interactiveType?: "buttons" | "menu" | string | null;
+    buttons?: unknown[] | null;
+    menu?: unknown;
+    footertext?: string | null;
 }
 
 export type TemplatePayload = {
@@ -541,3 +607,14 @@ export interface ReportSummary {
     deliveredRate: number;
   }>;
 }
+
+// =============================================
+// System Commands (system_command table)
+// =============================================
+export type SystemCommand = {
+  command: string;
+  description: string | null;
+  is_enabled: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};

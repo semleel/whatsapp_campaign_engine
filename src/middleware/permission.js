@@ -17,8 +17,8 @@ export function requirePrivilege(resource, action) {
       }
 
       const priv = await prisma.staff_privilege.findFirst({
-        where: { adminid: Number(req.adminId), resource },
-        select: { view: true, create: true, update: true, archive: true },
+        where: { admin_id: Number(req.adminId), resource },
+        select: { can_view: true, can_create: true, can_update: true, can_archive: true },
       });
 
       let effectivePriv = priv;
@@ -26,12 +26,19 @@ export function requirePrivilege(resource, action) {
       // Fallback to general baseline (adminid = BASELINE_ADMIN_ID) when no per-user privileges exist
       if (!effectivePriv) {
         effectivePriv = await prisma.staff_privilege.findFirst({
-          where: { adminid: BASELINE_ADMIN_ID, resource },
-          select: { view: true, create: true, update: true, archive: true },
+          where: { admin_id: BASELINE_ADMIN_ID, resource },
+          select: { can_view: true, can_create: true, can_update: true, can_archive: true },
         });
       }
 
-      if (!effectivePriv?.[action]) {
+      const map = {
+        view: effectivePriv?.can_view,
+        create: effectivePriv?.can_create,
+        update: effectivePriv?.can_update,
+        archive: effectivePriv?.can_archive,
+      };
+
+      if (!map[action]) {
         return res.status(403).json({
           error: `You do not have permission to ${action} ${resource}. Please contact an admin to request access.`,
           code: "FORBIDDEN_PRIVILEGE",

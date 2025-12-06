@@ -26,9 +26,9 @@ export async function sendMessage(req, res) {
   try {
     // Ensure contact exists so conversations can link messages reliably
     const contact = await prisma.contact.upsert({
-      where: { phonenum: to },
+      where: { phone_num: to },
       update: {},
-      create: { phonenum: to },
+      create: { phone_num: to },
     });
 
     const msgRecord = await prisma.message.create({
@@ -36,13 +36,13 @@ export async function sendMessage(req, res) {
         direction: "outbound",
         content_type: message.type,
         message_content: describeMessage(message),
-        senderid: "server-api",
-        receiverid: to,
+        sender_id: "server-api",
+        receiver_id: to,
         provider_msg_id: null,
-        timestamp: new Date(),
+        created_at: new Date(),
         message_status: "pending",
         payload_json: JSON.stringify(message),
-        contactid: contact.contactid,
+        contact_id: contact.contact_id,
       },
     });
 
@@ -50,7 +50,7 @@ export async function sendMessage(req, res) {
     const providerId = response?.messages?.[0]?.id ?? null;
     if (providerId) {
       await prisma.message.update({
-        where: { messageid: msgRecord.messageid },
+        where: { message_id: msgRecord.message_id },
         data: { provider_msg_id: providerId },
       });
     }

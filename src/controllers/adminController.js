@@ -40,18 +40,18 @@ const DEFAULT_BASELINE_PRIVILEGES = [
 
 async function ensureTemplateAdminExists(adminid) {
   if (!Number.isFinite(adminid)) return null;
-  const existing = await prisma.admin.findUnique({ where: { adminid } });
+  const existing = await prisma.admin.findUnique({ where: { admin_id: adminid } });
   if (existing) return existing;
 
   const password_hash = await bcrypt.hash("template-placeholder", SALT_ROUNDS);
   return prisma.admin.create({
     data: {
-      adminid,
+      admin_id: adminid,
       name: "New Staff Privilege Template",
       email: `template-${adminid}@local`,
       password_hash,
       role: "Staff",
-      phonenum: null,
+      phone_num: null,
       is_active: true,
     },
   });
@@ -59,16 +59,16 @@ async function ensureTemplateAdminExists(adminid) {
 
 async function ensureBaselinePrivileges() {
   await ensureTemplateAdminExists(BASELINE_ADMIN_ID);
-  let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  let baseline = await prisma.staff_privilege.findMany({ where: { admin_id: BASELINE_ADMIN_ID } });
   if (!baseline.length) {
     await prisma.staff_privilege.createMany({
       data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
         ...row,
-        adminid: BASELINE_ADMIN_ID,
+        admin_id: BASELINE_ADMIN_ID,
       })),
       skipDuplicates: true,
     });
-    baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+    baseline = await prisma.staff_privilege.findMany({ where: { admin_id: BASELINE_ADMIN_ID } });
   }
   return baseline;
 }
@@ -76,17 +76,17 @@ async function ensureBaselinePrivileges() {
 async function ensureTemplatePrivileges() {
   const templateId = NEW_STAFF_TEMPLATE_ADMIN_ID;
   await ensureTemplateAdminExists(templateId);
-  let template = await prisma.staff_privilege.findMany({ where: { adminid: templateId } });
+  let template = await prisma.staff_privilege.findMany({ where: { admin_id: templateId } });
 
   if (!template.length) {
     await prisma.staff_privilege.createMany({
       data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
         ...row,
-        adminid: templateId,
+        admin_id: templateId,
       })),
       skipDuplicates: true,
     });
-    template = await prisma.staff_privilege.findMany({ where: { adminid: templateId } });
+    template = await prisma.staff_privilege.findMany({ where: { admin_id: templateId } });
   }
 
   if (!template.length && templateId !== BASELINE_ADMIN_ID) {
@@ -101,8 +101,8 @@ async function syncAdminIdSequence() {
   try {
     await prisma.$executeRaw`
       SELECT setval(
-        pg_get_serial_sequence('admin', 'adminid'),
-        COALESCE((SELECT MAX(adminid) FROM "admin"), 0)
+        pg_get_serial_sequence('admin', 'admin_id'),
+        COALESCE((SELECT MAX(admin_id) FROM "admin"), 0)
       )
     `;
   } catch (err) {
@@ -113,23 +113,29 @@ async function syncAdminIdSequence() {
 export async function listAdmins(req, res) {
   const excludeIds = [NEW_STAFF_TEMPLATE_ADMIN_ID].filter((n) => Number.isFinite(n));
   const rows = await prisma.admin.findMany({
-    where: excludeIds.length ? { adminid: { notIn: excludeIds } } : undefined,
+    where: excludeIds.length ? { admin_id: { notIn: excludeIds } } : undefined,
     select: {
-      adminid: true,
+      admin_id: true,
       name: true,
       email: true,
       role: true,
-      phonenum: true,
+      phone_num: true,
       is_active: true,
-      createdat: true,
+      created_at: true,
       _count: { select: { staff_privilege: true } },
     },
-    orderBy: { adminid: "asc" },
+    orderBy: { admin_id: "asc" },
   });
   const normalized = rows.map((r) => {
     const { _count, ...rest } = r;
     return {
-      ...rest,
+      adminid: r.admin_id,
+      name: r.name,
+      email: r.email,
+      role: toTitle(r.role),
+      phonenum: r.phone_num,
+      is_active: r.is_active,
+      createdat: r.created_at,
       role: toTitle(r.role),
       has_privileges: (_count?.staff_privilege || 0) > 0,
     };
@@ -140,23 +146,28 @@ export async function listAdmins(req, res) {
 export async function getAdmin(req, res) {
   const id = Number(req.params.id);
   const admin = await prisma.admin.findUnique({
-    where: { adminid: id },
+    where: { admin_id: id },
     select: {
-      adminid: true,
+      admin_id: true,
       name: true,
       email: true,
       role: true,
-      phonenum: true,
+      phone_num: true,
       is_active: true,
-      createdat: true,
+      created_at: true,
       _count: { select: { staff_privilege: true } },
     },
   });
   if (!admin) return res.status(404).json({ error: "Admin not found" });
   const { _count, ...rest } = admin;
   return res.json({
-    ...rest,
+    adminid: admin.admin_id,
+    name: admin.name,
+    email: admin.email,
     role: toTitle(admin.role),
+    phonenum: admin.phone_num,
+    is_active: admin.is_active,
+    createdat: admin.created_at,
     has_privileges: (_count?.staff_privilege || 0) > 0,
   });
 }

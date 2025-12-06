@@ -9,6 +9,7 @@ import apiRoutes from "./routes/index.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import { startJobs } from "./jobs/index.js";
 import tagRoutes from "./routes/tagRoutes.js";
+import systemCommandRoutes from "./routes/systemCommandRoutes.js";
 
 // --- Middleware ---
 import errorHandler from "./middleware/errorHandler.js";
@@ -27,7 +28,7 @@ app.use(helmet());
 
 // Allow localhost and LAN origins by default; override with CORS_ORIGINS (comma-separated)
 const allowedOrigins =
-  (process.env.CORS_ORIGINS || "http://localhost:3001,http://127.0.0.1:3001,http://192.168.100.60:3001")
+  (process.env.CORS_ORIGINS || "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://192.168.100.60:3001")
     .split(",")
     .map((o) => o.trim())
     .filter(Boolean);
@@ -52,6 +53,7 @@ const PORT = config.server.port || process.env.PORT || 3000;
 // --- API Routes ---
 // Register independent routes first
 app.use("/api/tags", tagRoutes);
+app.use("/api/system/commands", systemCommandRoutes);
 
 // Then mount the grouped /api routes
 app.use("/api", apiRoutes);

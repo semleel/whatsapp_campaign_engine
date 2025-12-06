@@ -19,54 +19,54 @@ export async function listConversations(req, res) {
 
     // Recent messages to build threads
     const recentMessages = await prisma.message.findMany({
-      orderBy: { timestamp: "desc" },
+      orderBy: { created_at: "desc" },
       take: limit * 10, // capture more messages than conversations
       include: {
-        contact: { select: { contactid: true, name: true, phonenum: true } },
-        campaignsession: {
+        contact: { select: { contact_id: true, name: true, phone_num: true } },
+        campaign_session: {
           select: {
-            sessionstatus: true,
-            campaign: { select: { campaignname: true } },
+            session_status: true,
+            campaign: { select: { campaign_name: true } },
           },
         },
       },
     });
 
     // Recent sessions per contact to infer status/campaign
-    const recentSessions = await prisma.campaignsession.findMany({
-      orderBy: [{ lastactiveat: "desc" }, { createdat: "desc" }],
+    const recentSessions = await prisma.campaign_session.findMany({
+      orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
       take: limit * 3,
       include: {
-        campaign: { select: { campaignname: true } },
+        campaign: { select: { campaign_name: true } },
       },
     });
     const sessionByContact = new Map();
     for (const s of recentSessions) {
-      if (sessionByContact.has(s.contactid)) continue;
-      sessionByContact.set(s.contactid, s);
+      if (sessionByContact.has(s.contact_id)) continue;
+      sessionByContact.set(s.contact_id, s);
     }
 
     const conversations = new Map();
 
     for (const msg of recentMessages) {
-      const cid = msg.contactid;
+      const cid = msg.contact_id;
       if (!cid) continue;
 
       if (!conversations.has(cid)) {
         const session = sessionByContact.get(cid);
         conversations.set(cid, {
           contactId: cid,
-          contactName: msg.contact?.name || msg.contact?.phonenum || "Unknown",
-          phone: msg.contact?.phonenum || "Unknown",
+          contactName: msg.contact?.name || msg.contact?.phone_num || "Unknown",
+          phone: msg.contact?.phone_num || "Unknown",
           status:
-            session?.sessionstatus ||
-            msg.campaignsession?.sessionstatus ||
+            session?.session_status ||
+            msg.campaign_session?.session_status ||
             SESSION_STATUS.ACTIVE,
           lastMessage: msg.message_content || "",
-          updatedAt: msg.timestamp || msg.createdat || new Date(),
+          updatedAt: msg.created_at || new Date(),
           campaign:
-            session?.campaign?.campaignname ||
-            msg.campaignsession?.campaign?.campaignname ||
+            session?.campaign?.campaign_name ||
+            msg.campaign_session?.campaign?.campaign_name ||
             null,
           messages: [],
         });
@@ -75,10 +75,10 @@ export async function listConversations(req, res) {
       const conv = conversations.get(cid);
       if (conv.messages.length < 50) {
         conv.messages.push({
-          id: msg.messageid,
+          id: msg.message_id,
           author: msg.direction === "outbound" ? "agent" : "customer",
           text: msg.message_content || "",
-          timestamp: msg.timestamp || msg.createdat || new Date(),
+          timestamp: msg.created_at || new Date(),
         });
       }
     }
@@ -118,11 +118,11 @@ export async function sendConversationMessage(req, res) {
 
   try {
     const contact = await prisma.contact.findUnique({
-      where: { contactid: contactId },
-      select: { contactid: true, phonenum: true, name: true },
+      where: { contact_id: contactId },
+      select: { contact_id: true, phone_num: true, name: true },
     });
 
-    if (!contact?.phonenum) {
+    if (!contact?.phone_num) {
       return res.status(404).json({ error: "Contact not found or missing phone number" });
     }
 
@@ -131,18 +131,17 @@ export async function sendConversationMessage(req, res) {
         direction: "outbound",
         content_type: "text",
         message_content: text,
-        senderid: "agent-ui",
-        receiverid: contact.phonenum,
+        sender_id: "agent-ui",
+        receiver_id: contact.phone_num,
         provider_msg_id: null,
-        timestamp: new Date(),
         message_status: "pending",
         payload_json: JSON.stringify({ type: "text", text: { body: text } }),
-        contactid: contact.contactid,
+        contact_id: contact.contact_id,
       },
     });
 
     const response = await sendWhatsAppMessage(
-      contact.phonenum,
+      contact.phone_num,
       { type: "text", text: { body: text } },
       msgRecord
     );
@@ -150,16 +149,16 @@ export async function sendConversationMessage(req, res) {
     const providerId = response?.messages?.[0]?.id ?? null;
     if (providerId) {
       await prisma.message.update({
-        where: { messageid: msgRecord.messageid },
+        where: { message_id: msgRecord.message_id },
         data: { provider_msg_id: providerId },
       });
     }
 
-    log(`Conversation reply sent to ${contact.phonenum} | provider_id=${providerId}`);
+    log(`Conversation reply sent to ${contact.phone_num} | provider_id=${providerId}`);
     return res.status(200).json({
       success: true,
       provider_msg_id: providerId,
-      contactId: contact.contactid,
+      contactId: contact.contact_id,
     });
   } catch (err) {
     const details = err?.response?.data ?? err?.message ?? err;

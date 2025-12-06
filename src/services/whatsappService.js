@@ -17,43 +17,43 @@ function calcNextRetryAt(currentRetryCount = 0) {
 }
 
 // Delivery logging helpers
-async function createDeliveryAttempt(messageid) {
-  if (!messageid) return null;
-  return prisma.deliverlog.create({
+async function createDeliveryAttempt(messageId) {
+  if (!messageId) return null;
+  return prisma.delivery_log.create({
     data: {
-      messageid,
-      deliverstatus: "pending",
-      retrycount: 0,
-      lastattemptat: new Date(),
+      message_id: messageId,
+      delivery_status: "pending",
+      retry_count: 0,
+      last_attempt_at: new Date(),
     },
   });
 }
 
-async function markDeliverySuccess(deliverid, providerId) {
-  if (!deliverid) return;
-  await prisma.deliverlog.update({
-    where: { deliverid },
+async function markDeliverySuccess(deliveryId, providerId) {
+  if (!deliveryId) return;
+  await prisma.delivery_log.update({
+    where: { delivery_id: deliveryId },
     data: {
-      deliverstatus: "sent",
+      delivery_status: "sent",
       provider_msg_id: providerId ?? null,
       error_message: null,
-      nextretryat: null,
-      lastattemptat: new Date(),
+      next_retry_at: null,
+      last_attempt_at: new Date(),
     },
   });
 }
 
 async function markDeliveryFailure(deliverAttempt, err) {
-  if (!deliverAttempt?.deliverid) return;
-  const currentCount = deliverAttempt.retrycount ?? 0;
-  await prisma.deliverlog.update({
-    where: { deliverid: deliverAttempt.deliverid },
+  if (!deliverAttempt?.delivery_id) return;
+  const currentCount = deliverAttempt.retry_count ?? 0;
+  await prisma.delivery_log.update({
+    where: { delivery_id: deliverAttempt.delivery_id },
     data: {
-      deliverstatus: "failed",
+      delivery_status: "failed",
       error_message: (err?.message || "").slice(0, 500),
-      retrycount: currentCount + 1,
-      nextretryat: calcNextRetryAt(currentCount),
-      lastattemptat: new Date(),
+      retry_count: currentCount + 1,
+      next_retry_at: calcNextRetryAt(currentCount),
+      last_attempt_at: new Date(),
     },
   });
 }
@@ -94,7 +94,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
 
     // Only create a new delivery attempt for the first send; retries reuse the existing row.
     if (!deliverAttempt && messageRecord) {
-      deliverAttempt = await createDeliveryAttempt(messageRecord.messageid);
+      deliverAttempt = await createDeliveryAttempt(messageRecord.message_id);
     }
 
     const res = await axios.post(
@@ -111,11 +111,11 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
     const providerId = res.data?.messages?.[0]?.id ?? null;
 
     if (deliverAttempt) {
-      await markDeliverySuccess(deliverAttempt.deliverid, providerId);
+      await markDeliverySuccess(deliverAttempt.delivery_id, providerId);
     }
-    if (messageRecord?.messageid) {
+    if (messageRecord?.message_id) {
       await prisma.message.update({
-        where: { messageid: messageRecord.messageid },
+        where: { message_id: messageRecord.message_id },
         data: {
           provider_msg_id: providerId,
           message_status: "sent",
@@ -128,12 +128,12 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
     return res.data;
   } catch (err) {
     // Log failure into deliverlog + message table if we started an attempt
-    if (messageRecord?.messageid) {
+    if (messageRecord?.message_id) {
       if (deliverAttempt) {
         await markDeliveryFailure(deliverAttempt, err);
       }
       await prisma.message.update({
-        where: { messageid: messageRecord.messageid },
+        where: { message_id: messageRecord.message_id },
         data: {
           message_status: "error",
           error_message: (err?.message || "").slice(0, 500),

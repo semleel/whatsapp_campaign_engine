@@ -28,11 +28,11 @@ const NEW_STAFF_TEMPLATE_ADMIN_ID = Number(
 
 async function ensureTemplateAdminExists(adminid) {
   if (!Number.isFinite(adminid)) return null;
-  const existing = await prisma.admin.findUnique({ where: { adminid } });
+  const existing = await prisma.admin.findUnique({ where: { admin_id: adminid } });
   if (existing) return existing;
   return prisma.admin.create({
     data: {
-      adminid,
+      admin_id: adminid,
       name: "Privilege Template",
       email: `template-${adminid}@local`,
       password_hash: "template", // placeholder
@@ -44,16 +44,16 @@ async function ensureTemplateAdminExists(adminid) {
 
 async function ensureBaselinePrivileges() {
   await ensureTemplateAdminExists(BASELINE_ADMIN_ID);
-  let baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+  let baseline = await prisma.staff_privilege.findMany({ where: { admin_id: BASELINE_ADMIN_ID } });
   if (!baseline.length) {
     await prisma.staff_privilege.createMany({
       data: DEFAULT_BASELINE_PRIVILEGES.map((row) => ({
         ...row,
-        adminid: BASELINE_ADMIN_ID,
+        admin_id: BASELINE_ADMIN_ID,
       })),
       skipDuplicates: true,
     });
-    baseline = await prisma.staff_privilege.findMany({ where: { adminid: BASELINE_ADMIN_ID } });
+    baseline = await prisma.staff_privilege.findMany({ where: { admin_id: BASELINE_ADMIN_ID } });
   }
   return baseline;
 }
@@ -72,7 +72,7 @@ export async function getPrivileges(req, res) {
   try {
     await ensureTemplateAdminExists(adminid);
     let rows = await prisma.staff_privilege.findMany({
-      where: { adminid }
+      where: { admin_id: adminid }
     });
 
     // Fallback to general baseline (adminid = 0) when no rows for this user
@@ -81,16 +81,16 @@ export async function getPrivileges(req, res) {
       if (baseline.length) {
         await prisma.staff_privilege.createMany({
           data: baseline.map((row) => ({
-            adminid,
+            admin_id: adminid,
             resource: row.resource,
-            view: row.view,
-            create: row.create,
-            update: row.update,
-            archive: row.archive,
+            can_view: row.view,
+            can_create: row.create,
+            can_update: row.update,
+            can_archive: row.archive,
           })),
           skipDuplicates: true,
         });
-        rows = await prisma.staff_privilege.findMany({ where: { adminid } });
+        rows = await prisma.staff_privilege.findMany({ where: { admin_id: adminid } });
       } else {
         rows = [];
       }
@@ -99,10 +99,10 @@ export async function getPrivileges(req, res) {
     const map = {};
     rows.forEach((r) => {
       map[r.resource] = {
-        view: !!r.view,
-        create: !!r.create,
-        update: !!r.update,
-        archive: !!r.archive,
+        view: !!r.can_view,
+        create: !!r.can_create,
+        update: !!r.can_update,
+        archive: !!r.can_archive,
       };
     });
 
@@ -125,11 +125,11 @@ export async function upsertPrivileges(req, res) {
   try {
     await ensureTemplateAdminExists(adminid);
     // Remove previous privileges
-    await prisma.$executeRaw`DELETE FROM staff_privilege WHERE adminid = ${adminid}`;
+    await prisma.$executeRaw`DELETE FROM staff_privilege WHERE admin_id = ${adminid}`;
 
     // Insert new privileges
     const inserts = Object.entries(privileges).map(([resource, actions]) => ({
-      adminid,
+      admin_id: adminid,
       resource,
       view: !!actions.view,
       create: !!actions.create,
@@ -140,10 +140,10 @@ export async function upsertPrivileges(req, res) {
     if (inserts.length > 0) {
       const values = Prisma.join(
         inserts.map((i) =>
-          Prisma.sql`(${i.adminid}, ${i.resource}, ${i.view}, ${i.create}, ${i.update}, ${i.archive})`
+          Prisma.sql`(${i.admin_id}, ${i.resource}, ${i.view}, ${i.create}, ${i.update}, ${i.archive})`
         )
       );
-      await prisma.$executeRaw`INSERT INTO staff_privilege (adminid, resource, "view", "create", "update", archive) VALUES ${values}`;
+      await prisma.$executeRaw`INSERT INTO staff_privilege (admin_id, resource, can_view, can_create, can_update, can_archive) VALUES ${values}`;
     }
 
     res.json({ success: true, count: inserts.length });

@@ -31,16 +31,17 @@ type TemplateCategory =
   | string
   | null;
 
+type TemplateActionType = "choice" | "message" | "input" | "api";
+
 type TemplateData = {
   contentid: number;
   title: string;
-  type: string;
+  type: TemplateActionType;
   status: string;
   lang: string;
   category: TemplateCategory;
   body: string;
   description?: string | null;
-  footerText?: string | null;
   mediaurl?: string | null;
   expiresat?: string | null;
   placeholders?: Record<string, unknown> | null;
@@ -50,6 +51,27 @@ type TemplateData = {
   headerText?: string | null;
   headerMediaType?: "image" | "video" | "document";
   isdeleted?: boolean | null;
+  interactiveType?: TemplateInteractiveType;
+  menu?: TemplateMenu | null;
+};
+
+type TemplateInteractiveType = "buttons" | "menu" | "default";
+
+type TemplateMenuOption = {
+  id: string;
+  title: string;
+  description?: string;
+};
+
+type TemplateMenuSection = {
+  id: string;
+  title?: string;
+  options: TemplateMenuOption[];
+};
+
+type TemplateMenu = {
+  buttonLabel: string;
+  sections: TemplateMenuSection[];
 };
 
 const TEMPLATE_CATEGORY_OPTIONS: {
@@ -84,8 +106,168 @@ const SUPPORTED_LOCALES = [
   { value: "cn", label: "Chinese" },
 ];
 
+function normalizeStatus(status: string | null | undefined): string {
+  const value = (status || "").trim();
+  if (!value) return "Active";
+  const lower = value.toLowerCase();
+  if (lower === "archived") return "Archived";
+  if (lower === "draft" || lower === "approved") return "Active";
+  return value;
+}
+
+function normalizeInteractiveType(
+  value: string | null | undefined,
+  hasMenu: unknown,
+  buttons: ButtonItem[] | null | undefined
+): TemplateInteractiveType {
+  const lower = (value || "").toLowerCase();
+  if (lower === "default") return "default";
+  if (lower === "menu" || hasMenu) return "menu";
+  if (lower === "buttons") return "buttons";
+  if (Array.isArray(buttons) && buttons.length > 0) return "buttons";
+  return "default";
+}
+
+function normalizeTemplateType(value: string | null | undefined): TemplateActionType {
+  const normalized = (value || "").toLowerCase();
+  if (
+    normalized === "choice" ||
+    normalized === "message" ||
+    normalized === "input" ||
+    normalized === "api"
+  ) {
+    return normalized as TemplateActionType;
+  }
+  return "message";
+}
+
 function generateId() {
   return Math.random().toString(36).substring(2, 10);
+}
+
+const MAX_QUICK_REPLIES = 3;
+const MAX_MENU_OPTIONS = 10;
+const MAX_MENU_BUTTON_LABEL = 24;
+const MAX_MENU_OPTION_TITLE = 24;
+const MAX_MENU_OPTION_DESC = 72;
+const BUTTON_LABEL_SOFT_LIMIT = 20;
+const BUTTON_LABEL_HARD_LIMIT = 24;
+const BUTTON_CONFIG_ERROR =
+  "Invalid button configuration: WhatsApp allows up to 3 reply buttons OR up to 2 CTA buttons (1 website + 1 phone). Mixing types is not allowed.";
+const MENU_CONFIG_ERROR =
+  "List message is invalid. Provide a button label, at least one section, and 1-10 options in total. Every option must have a title.";
+
+const countTotalOptions = (sections: TemplateMenuSection[]) =>
+  sections.reduce((sum, sec) => sum + (sec.options?.length || 0), 0);
+
+function ensureMenu(existing: TemplateMenu | null | undefined): TemplateMenu {
+  const normalizeOption = (opt: TemplateMenuOption) => ({
+    id: opt?.id || generateId(),
+    title: (opt?.title || "").slice(0, MAX_MENU_OPTION_TITLE),
+    description: (opt?.description || "").slice(0, MAX_MENU_OPTION_DESC),
+  });
+
+  const normalizeSections = (sections?: TemplateMenuSection[] | null) =>
+    (sections || []).map((sec) => ({
+      id: sec?.id || generateId(),
+      title: (sec?.title || "").slice(0, MAX_MENU_BUTTON_LABEL),
+      options: Array.isArray(sec?.options)
+        ? sec.options.map((opt) => normalizeOption(opt))
+        : [],
+    }));
+
+  const legacyOptions = Array.isArray((existing as any)?.options)
+    ? (((existing as any).options as TemplateMenuOption[]) || []).map((opt) =>
+        normalizeOption(opt)
+      )
+    : [];
+
+  let sections = normalizeSections((existing as any)?.sections);
+
+  if (!sections.length && legacyOptions.length) {
+    sections = [
+      {
+        id: generateId(),
+        title: "",
+        options: legacyOptions,
+      },
+    ];
+  }
+
+  if (!sections.length) {
+    return {
+      buttonLabel: "Main Menu",
+      sections: [
+        {
+          id: generateId(),
+          title: "",
+          options: [{ id: generateId(), title: "Option 1", description: "" }],
+        },
+      ],
+    };
+  }
+
+  return {
+    buttonLabel:
+      (existing?.buttonLabel || "Main Menu").slice(0, MAX_MENU_BUTTON_LABEL) ||
+      "Main Menu",
+    sections,
+  };
+}
+
+function validateButtons(buttons: ButtonItem[]): string | null {
+  const quickReplies = buttons.filter((b) => b.type === "quick_reply");
+  const websiteButtons = buttons.filter((b) => b.type === "visit_website");
+  const callButtons = buttons.filter((b) => b.type === "call_phone");
+
+  const hasQuick = quickReplies.length > 0;
+  const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
+
+  if (hasQuick && hasCTA) {
+    return BUTTON_CONFIG_ERROR;
+  }
+  if (quickReplies.length > MAX_QUICK_REPLIES) {
+    return BUTTON_CONFIG_ERROR;
+  }
+  if (websiteButtons.length > 1 || callButtons.length > 1) {
+    return BUTTON_CONFIG_ERROR;
+  }
+  if (hasCTA && websiteButtons.length + callButtons.length > 2) {
+    return BUTTON_CONFIG_ERROR;
+  }
+  if (buttons.some((b) => (b.label || "").length > BUTTON_LABEL_HARD_LIMIT)) {
+    return "Button text is too long. Max 20 characters recommended (24 hard limit).";
+  }
+  return null;
+}
+
+function validateMenu(menu: TemplateMenu | null | undefined): string | null {
+  if (!menu) return "Menu is required.";
+  const label = (menu.buttonLabel || "").trim();
+  if (!label) return "Menu button label is required.";
+  if (label.length > MAX_MENU_BUTTON_LABEL) {
+    return `Menu button label must be at most ${MAX_MENU_BUTTON_LABEL} characters.`;
+  }
+  const sections = Array.isArray(menu.sections) ? menu.sections : [];
+  if (sections.length < 1) return "At least one section is required.";
+  const totalOptions = countTotalOptions(sections);
+  if (totalOptions < 1) return "At least one menu option is required.";
+  if (totalOptions > MAX_MENU_OPTIONS) return "A WhatsApp list message can contain up to 10 options.";
+  for (const sec of sections) {
+    const opts = Array.isArray(sec.options) ? sec.options : [];
+    if (opts.length < 1) return "Each section needs at least one option.";
+    for (const opt of opts) {
+      const title = (opt.title || "").trim();
+      if (!title) return "Every menu option needs a title.";
+      if (title.length > MAX_MENU_OPTION_TITLE) {
+        return `Option titles must be at most ${MAX_MENU_OPTION_TITLE} characters.`;
+      }
+      if ((opt.description || "").length > MAX_MENU_OPTION_DESC) {
+        return `Descriptions must be at most ${MAX_MENU_OPTION_DESC} characters.`;
+      }
+    }
+  }
+  return null;
 }
 
 // Small helpers for modals
@@ -193,17 +375,18 @@ export default function EditTemplatePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [buttonError, setButtonError] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState<string | null>(null);
 
   const [form, setForm] = useState<TemplateData>({
     contentid: 0,
     title: "",
     type: "message",
-    status: "Draft",
+    status: "Active",
     lang: "en",
     category: "Marketing",
     body: "",
     description: "",
-    footerText: "",
     mediaurl: null,
     expiresat: "",
     placeholders: null,
@@ -213,6 +396,8 @@ export default function EditTemplatePage() {
     headerText: "",
     headerMediaType: "image",
     isdeleted: null,
+    interactiveType: "default",
+    menu: null,
   });
 
   // Modal states
@@ -286,9 +471,13 @@ export default function EditTemplatePage() {
         const data = await Api.getTemplate(templateId);
 
         const isdeleted: boolean | null = (data as any).isdeleted ?? null;
-        const placeholders =
+        const rawPlaceholders =
           ((data as any).placeholders as Record<string, unknown> | null) ||
           null;
+        const placeholders = rawPlaceholders ? { ...rawPlaceholders } : null;
+        if (placeholders) {
+          delete (placeholders as any).footerText;
+        }
 
         const headerType: TemplateData["headerType"] =
           (data as any).headerType ||
@@ -305,36 +494,46 @@ export default function EditTemplatePage() {
           (placeholders?.headerMediaType as TemplateData["headerMediaType"]) ||
           "image";
 
-        const footerText: string =
-          (data as any).footertext ||
-          (placeholders?.footerText as string | null) ||
-          "";
-
         const buttons: ButtonItem[] =
           (data as any).buttons ||
           ((placeholders?.buttons as ButtonItem[] | undefined) ?? []);
 
+        const menuFromData =
+          (data as any).menu ??
+          (placeholders?.menu as TemplateMenu | null | undefined) ??
+          null;
+        const interactiveType: TemplateInteractiveType = normalizeInteractiveType(
+          (data as any).interactiveType as string | null | undefined,
+          menuFromData,
+          buttons
+        );
+        const normalizedMenu =
+          interactiveType === "menu" ? ensureMenu(menuFromData) : null;
+        const normalizedButtons =
+          interactiveType === "buttons" ? buttons : [];
+
         setForm({
           contentid: (data as any).contentid,
           title: (data as any).title || "",
-          type: (data as any).type,
-          status: (data as any).status,
+          type: normalizeTemplateType((data as any).type),
+          status: normalizeStatus((data as any).status),
           lang:
             ((data as any).lang || (data as any).defaultlang || "en")?.trim() ||
             "en",
           category: (data as any).category || "Marketing",
           body: (data as any).body || (data as any).description || "",
           description: (data as any).description || "",
-          footerText,
           mediaurl: (data as any).mediaurl || null,
           expiresat: (data as any).expiresat || "",
           placeholders,
           tags: ((data as any).tags as string[]) ?? [],
-          buttons,
+          buttons: normalizedButtons,
           headerType,
           headerText,
           headerMediaType,
           isdeleted,
+          interactiveType,
+          menu: normalizedMenu,
         });
       } catch (e: any) {
         console.error(e);
@@ -352,31 +551,83 @@ export default function EditTemplatePage() {
   // ------------------------------
 
   const addButton = (type: ButtonItem["type"]) => {
+    setButtonError(null);
+    setMenuError(null);
     setForm((prev) => ({
       ...prev,
-      buttons: [
-        ...(prev.buttons || []),
-        {
-          id: generateId(),
-          type,
-          label:
-            type === "visit_website"
-              ? "Visit website"
-              : type === "call_phone"
-              ? "Call now"
-              : "Quick reply",
-          url: type === "visit_website" ? "" : undefined,
-          phone: type === "call_phone" ? "" : undefined,
-        },
-      ],
+      interactiveType: "buttons",
     }));
+
+    setForm((prev) => {
+      const quickReplies = prev.buttons?.filter((b) => b.type === "quick_reply") || [];
+      const websiteButtons = prev.buttons?.filter((b) => b.type === "visit_website") || [];
+      const callButtons = prev.buttons?.filter((b) => b.type === "call_phone") || [];
+
+      const hasQuick = quickReplies.length > 0;
+      const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
+
+      if (type === "quick_reply") {
+        if (hasCTA) {
+          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
+          return prev;
+        }
+        if (quickReplies.length >= MAX_QUICK_REPLIES) {
+          setButtonError("WhatsApp only allows up to 3 quick reply buttons.");
+          return prev;
+        }
+      } else {
+        if (hasQuick) {
+          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
+          return prev;
+        }
+        if (type === "visit_website" && websiteButtons.length >= 1) {
+          setButtonError("You can only have one website and one phone button per template.");
+          return prev;
+        }
+        if (type === "call_phone" && callButtons.length >= 1) {
+          setButtonError("You can only have one website and one phone button per template.");
+          return prev;
+        }
+        if (websiteButtons.length + callButtons.length >= 2) {
+          setButtonError("You can only have one website and one phone button per template.");
+          return prev;
+        }
+      }
+
+      const nextButton: ButtonItem = {
+        id: generateId(),
+        type,
+        label:
+          type === "visit_website"
+            ? "Visit website"
+            : type === "call_phone"
+            ? "Call now"
+            : "Quick reply",
+        url: type === "visit_website" ? "" : undefined,
+        phone: type === "call_phone" ? "" : undefined,
+      };
+
+      return {
+        ...prev,
+        buttons: [...(prev.buttons || []), nextButton],
+      };
+    });
   };
 
   const updateButton = (id: string, changes: Partial<ButtonItem>) => {
     setForm((prev) => ({
       ...prev,
       buttons: prev.buttons!.map((btn) =>
-        btn.id === id ? { ...btn, ...changes } : btn
+        btn.id === id
+          ? {
+              ...btn,
+              ...changes,
+              label:
+                changes.label !== undefined
+                  ? changes.label.slice(0, BUTTON_LABEL_HARD_LIMIT)
+                  : btn.label,
+            }
+          : btn
       ),
     }));
   };
@@ -386,6 +637,191 @@ export default function EditTemplatePage() {
       ...prev,
       buttons: prev.buttons!.filter((btn) => btn.id !== id),
     }));
+  };
+
+  const handleInteractiveTypeChange = (type: TemplateInteractiveType) => {
+    setButtonError(null);
+    setMenuError(null);
+    setForm((prev) => {
+      if (type === "menu") {
+        return {
+          ...prev,
+          interactiveType: "menu",
+          buttons: [],
+          menu: ensureMenu(prev.menu),
+        };
+      }
+      if (type === "default") {
+        return {
+          ...prev,
+          interactiveType: "default",
+          buttons: [],
+          menu: null,
+        };
+      }
+      return {
+        ...prev,
+        interactiveType: "buttons",
+        menu: null,
+      };
+    });
+  };
+
+  // ------------------------------
+  // Menu helpers
+  // ------------------------------
+
+  const addMenuSection = () => {
+    setMenuError(null);
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: [
+            ...menu.sections,
+            { id: generateId(), title: "", options: [] },
+          ],
+        },
+      };
+    });
+  };
+
+  const removeMenuSection = (sectionId: string) => {
+    setMenuError(null);
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      if (menu.sections.length <= 1) {
+        return prev;
+      }
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: menu.sections.filter((sec) => sec.id !== sectionId),
+        },
+      };
+    });
+  };
+
+  const updateMenuSection = (
+    sectionId: string,
+    changes: Partial<TemplateMenuSection>
+  ) => {
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: menu.sections.map((sec) =>
+            sec.id === sectionId
+              ? {
+                  ...sec,
+                  ...changes,
+                  title:
+                    changes.title !== undefined
+                      ? changes.title.slice(0, MAX_MENU_BUTTON_LABEL)
+                      : sec.title,
+                }
+              : sec
+          ),
+        },
+      };
+    });
+  };
+
+  const addMenuOption = (sectionId: string) => {
+    setMenuError(null);
+    setButtonError(null);
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      const total = countTotalOptions(menu.sections);
+      if (total >= MAX_MENU_OPTIONS) {
+        setMenuError("A WhatsApp list message can contain up to 10 options.");
+        return prev;
+      }
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: menu.sections.map((sec) =>
+            sec.id === sectionId
+              ? {
+                  ...sec,
+                  options: [
+                    ...(sec.options || []),
+                    { id: generateId(), title: "", description: "" },
+                  ],
+                }
+              : sec
+          ),
+        },
+      };
+    });
+  };
+
+  const updateMenuOption = (
+    sectionId: string,
+    id: string,
+    changes: Partial<TemplateMenuOption>
+  ) => {
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: menu.sections.map((sec) =>
+            sec.id === sectionId
+              ? {
+                  ...sec,
+                  options: (sec.options || []).map((opt) =>
+                    opt.id === id
+                      ? {
+                          ...opt,
+                          title:
+                            changes.title !== undefined
+                              ? changes.title.slice(0, MAX_MENU_OPTION_TITLE)
+                              : opt.title,
+                          description:
+                            changes.description !== undefined
+                              ? changes.description.slice(
+                                  0,
+                                  MAX_MENU_OPTION_DESC
+                                )
+                              : opt.description,
+                        }
+                      : opt
+                  ),
+                }
+              : sec
+          ),
+        },
+      };
+    });
+  };
+
+  const removeMenuOption = (sectionId: string, id: string) => {
+    setMenuError(null);
+    setForm((prev) => {
+      const menu = ensureMenu(prev.menu);
+      return {
+        ...prev,
+        menu: {
+          ...menu,
+          sections: menu.sections.map((sec) =>
+            sec.id === sectionId
+              ? {
+                  ...sec,
+                  options: (sec.options || []).filter((opt) => opt.id !== id),
+                }
+              : sec
+          ),
+        },
+      };
+    });
   };
 
   // ------------------------------
@@ -406,8 +842,35 @@ export default function EditTemplatePage() {
       return;
     }
 
+    setButtonError(null);
+    setMenuError(null);
     setSaving(true);
     try {
+      if (form.interactiveType === "buttons") {
+        const err = validateButtons(form.buttons || []);
+        if (err) {
+          setButtonError(err);
+          await showCenteredAlert(
+            err === BUTTON_CONFIG_ERROR
+              ? BUTTON_CONFIG_ERROR
+              : err
+          );
+          setSaving(false);
+          return;
+        }
+      } else if (form.interactiveType === "menu") {
+        const menuToValidate = ensureMenu(form.menu);
+        const err = validateMenu(menuToValidate);
+        if (err) {
+          setMenuError(err);
+          await showCenteredAlert(
+            MENU_CONFIG_ERROR
+          );
+          setSaving(false);
+          return;
+        }
+      }
+
       const finalMediaUrl =
         form.headerType === "media" && form.mediaurl?.trim()
           ? form.mediaurl.trim()
@@ -417,14 +880,22 @@ export default function EditTemplatePage() {
         ? new Date(form.expiresat).toISOString()
         : null;
 
+      const apiInteractiveType =
+        form.interactiveType === "default" ? undefined : form.interactiveType;
+
       const placeholderData = {
-        footerText: form.footerText || null,
         headerText: form.headerType === "text" ? form.headerText || "" : null,
         headerType: form.headerType,
         headerMediaType:
           form.headerType === "media" ? form.headerMediaType : null,
         buttons: form.buttons,
+        interactiveType: apiInteractiveType,
       };
+
+      const cleanedPlaceholders = form.placeholders
+        ? { ...form.placeholders }
+        : {};
+      delete (cleanedPlaceholders as any).footerText;
 
       const payload = {
         title: form.title,
@@ -437,14 +908,19 @@ export default function EditTemplatePage() {
         description: form.description || form.body || null,
         mediaUrl: finalMediaUrl,
         expiresat: expiresAtIso,
-        footerText: placeholderData.footerText,
         headerText: placeholderData.headerText,
         headerType: placeholderData.headerType,
         headerMediaType: placeholderData.headerMediaType,
-        buttons: placeholderData.buttons,
+        buttons:
+          form.interactiveType === "buttons"
+            ? placeholderData.buttons?.slice(0, MAX_QUICK_REPLIES)
+            : [],
+        menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : null,
+        interactiveType: apiInteractiveType,
         placeholders: {
-          ...(form.placeholders || {}),
+          ...cleanedPlaceholders,
           ...placeholderData,
+          menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : undefined,
         },
         isdeleted: form.isdeleted,
         expiresAt: expiresAtIso || undefined,
@@ -627,6 +1103,33 @@ export default function EditTemplatePage() {
     });
   };
 
+  // Derived button/menu state for UI
+  const quickReplyCount = (form.buttons || []).filter(
+    (b) => b.type === "quick_reply"
+  ).length;
+  const hasWebsite = (form.buttons || []).some(
+    (b) => b.type === "visit_website"
+  );
+  const hasCall = (form.buttons || []).some((b) => b.type === "call_phone");
+  const hasCTA = hasWebsite || hasCall;
+
+  const disableQuickReply =
+    form.interactiveType !== "buttons" ||
+    quickReplyCount >= MAX_QUICK_REPLIES ||
+    hasCTA;
+  const disableVisitWebsite =
+    form.interactiveType !== "buttons" || hasWebsite || quickReplyCount > 0;
+  const disableCallPhone =
+    form.interactiveType !== "buttons" || hasCall || quickReplyCount > 0;
+
+  const activeMenu =
+    form.interactiveType === "menu" ? ensureMenu(form.menu) : null;
+  const totalMenuOptions = activeMenu
+    ? countTotalOptions(activeMenu.sections)
+    : 0;
+  const hasMenuOptions = totalMenuOptions > 0;
+  const previewButtons = (form.buttons || []).slice(0, MAX_QUICK_REPLIES);
+
   // ------------------------------
   // UI: loading / error
   // ------------------------------
@@ -691,14 +1194,55 @@ export default function EditTemplatePage() {
                 className="w-full border rounded px-3 py-2"
                 value={form.type}
                 onChange={(e) =>
-                  setForm({ ...form, type: e.target.value as string })
+                  setForm({ ...form, type: normalizeTemplateType(e.target.value) })
                 }
               >
                 <option value="message">Message</option>
-                <option value="media">Media</option>
-                <option value="flow">Flow</option>
+                <option value="choice">Choice</option>
+                <option value="input">Input</option>
+                <option value="api">Api</option>
               </select>
             </label>
+          </div>
+
+          {/* Interaction type toggle */}
+          <div className="border-t pt-4 space-y-2">
+            <h4 className="text-sm font-semibold">Interaction Type</h4>
+            <p className="text-xs text-muted-foreground">
+              Choose between WhatsApp buttons (quick replies / CTA), a list-style menu, or no interaction.
+            </p>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
+                  checked={form.interactiveType === "buttons"}
+                  onChange={() => handleInteractiveTypeChange("buttons")}
+                />
+                Buttons (Quick Replies / Website / Call)
+              </label>
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
+                  checked={form.interactiveType === "menu"}
+                  onChange={() => handleInteractiveTypeChange("menu")}
+                />
+                Menu (List Message)
+              </label>
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
+                  checked={form.interactiveType === "default"}
+                  onChange={() => handleInteractiveTypeChange("default")}
+                />
+                Default (No interactions)
+              </label>
+            </div>
           </div>
 
           {/* Status + Language row */}
@@ -712,7 +1256,6 @@ export default function EditTemplatePage() {
                   setForm({ ...form, status: e.target.value as string })
                 }
               >
-                <option value="Draft">Draft</option>
                 <option value="Active">Active</option>
                 <option value="Archived">Archived</option>
               </select>
@@ -913,119 +1456,293 @@ export default function EditTemplatePage() {
             />
           </label>
 
-          {/* FOOTER */}
-          <div className="border-t pt-4 space-y-2">
-            <h4 className="font-semibold text-sm">
-              Footer{" "}
-              <span className="text-xs text-muted-foreground">(Optional)</span>
-            </h4>
-            <input
-              className="w-full border rounded px-3 py-2"
-              value={form.footerText || ""}
-              onChange={(e) =>
-                setForm({ ...form, footerText: e.target.value })
-              }
-            />
-          </div>
+          {/* BUTTONS (interactiveType = buttons) */}
+          {form.interactiveType === "buttons" && (
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-sm">
+                  Buttons{" "}
+                  <span className="text-xs text-muted-foreground">(Optional)</span>
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  Max 3 quick replies OR 1 website + 1 phone.
+                </p>
+              </div>
 
-          {/* BUTTONS */}
-          <div className="border-t pt-4 space-y-3">
-            <h4 className="font-semibold text-sm">
-              Buttons{" "}
-              <span className="text-xs text-muted-foreground">(Optional)</span>
-            </h4>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <button
+                  type="button"
+                  className="border rounded px-3 py-1 disabled:opacity-60"
+                  onClick={() => addButton("visit_website")}
+                  disabled={disableVisitWebsite}
+                >
+                  + Add Visit Website
+                </button>
 
-            <div className="flex flex-wrap gap-2 text-xs">
-              <button
-                type="button"
-                className="border rounded px-3 py-1"
-                onClick={() => addButton("visit_website")}
-              >
-                + Add Visit Website
-              </button>
+                <button
+                  type="button"
+                  className="border rounded px-3 py-1 disabled:opacity-60"
+                  onClick={() => addButton("call_phone")}
+                  disabled={disableCallPhone}
+                >
+                  + Add Call Phone
+                </button>
 
-              <button
-                type="button"
-                className="border rounded px-3 py-1"
-                onClick={() => addButton("call_phone")}
-              >
-                + Add Call Phone
-              </button>
+                <button
+                  type="button"
+                  className="border rounded px-3 py-1 disabled:opacity-60"
+                  onClick={() => addButton("quick_reply")}
+                  disabled={disableQuickReply}
+                >
+                  + Add Quick Reply
+                </button>
+              </div>
 
-              <button
-                type="button"
-                className="border rounded px-3 py-1"
-                onClick={() => addButton("quick_reply")}
-              >
-                + Add Quick Reply
-              </button>
-            </div>
+              {buttonError && (
+                <p className="text-xs text-red-500">{buttonError}</p>
+              )}
 
-            {form.buttons?.length > 0 && (
-              <div className="space-y-3">
-                {form.buttons.map((btn) => (
-                  <div key={btn.id} className="border rounded p-3 space-y-2">
-                    <div className="flex justify-between">
-                      <span className="font-medium text-sm">
-                        {btn.type === "visit_website"
-                          ? "Visit Website"
-                          : btn.type === "call_phone"
-                          ? "Call Phone"
-                          : "Quick Reply"}
-                      </span>
+              {form.buttons?.length > 0 && (
+                <div className="space-y-3">
+                  {form.buttons.slice(0, MAX_QUICK_REPLIES).map((btn) => (
+                    <div key={btn.id} className="border rounded p-3 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="font-medium text-sm">
+                          {btn.type === "visit_website"
+                            ? "Visit Website"
+                            : btn.type === "call_phone"
+                            ? "Call Phone"
+                            : "Quick Reply"}
+                        </span>
 
-                      <button
-                        type="button"
-                        className="text-red-500 text-xs"
-                        onClick={() => removeButton(btn.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
+                        <button
+                          type="button"
+                          className="text-red-500 text-xs"
+                          onClick={() => removeButton(btn.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <label className="text-xs space-y-1">
-                        <span className="font-medium">Label</span>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <label className="text-xs space-y-1">
+                          <span className="font-medium">Label</span>
                         <input
                           className="w-full border rounded px-2 py-1"
                           value={btn.label}
+                          maxLength={BUTTON_LABEL_HARD_LIMIT}
                           onChange={(e) =>
                             updateButton(btn.id, { label: e.target.value })
                           }
                         />
+                        <span className="text-[11px] text-muted-foreground">
+                          Max {BUTTON_LABEL_SOFT_LIMIT} chars recommended (hard limit {BUTTON_LABEL_HARD_LIMIT}).
+                        </span>
                       </label>
 
-                      {btn.type === "visit_website" && (
-                        <label className="col-span-1 md:col-span-2 text-xs space-y-1">
-                          <span className="font-medium">URL</span>
-                          <input
-                            className="w-full border rounded px-2 py-1"
-                            value={btn.url || ""}
-                            onChange={(e) =>
-                              updateButton(btn.id, { url: e.target.value })
-                            }
-                          />
-                        </label>
-                      )}
+                        {btn.type === "visit_website" && (
+                          <label className="col-span-1 md:col-span-2 text-xs space-y-1">
+                            <span className="font-medium">URL</span>
+                            <input
+                              className="w-full border rounded px-2 py-1"
+                              value={btn.url || ""}
+                              onChange={(e) =>
+                                updateButton(btn.id, { url: e.target.value })
+                              }
+                            />
+                          </label>
+                        )}
 
-                      {btn.type === "call_phone" && (
-                        <label className="col-span-1 md:col-span-2 text-xs space-y-1">
-                          <span className="font-medium">Phone</span>
-                          <input
-                            className="w-full border rounded px-2 py-1"
-                            value={btn.phone || ""}
-                            onChange={(e) =>
-                              updateButton(btn.id, { phone: e.target.value })
-                            }
-                          />
-                        </label>
+                        {btn.type === "call_phone" && (
+                          <label className="col-span-1 md:col-span-2 text-xs space-y-1">
+                            <span className="font-medium">Phone</span>
+                            <input
+                              className="w-full border rounded px-2 py-1"
+                              value={btn.phone || ""}
+                              onChange={(e) =>
+                                updateButton(btn.id, { phone: e.target.value })
+                              }
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MENU (interactiveType = menu) */}
+          {form.interactiveType === "menu" && activeMenu && (
+            <div className="border-t pt-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-semibold text-sm">Menu (List Message)</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Buttons are disabled in menu mode. Total options: {totalMenuOptions}/{MAX_MENU_OPTIONS}.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <label className="space-y-1 font-medium">
+                  <span>Menu Button Label</span>
+                  <input
+                    type="text"
+                    value={activeMenu.buttonLabel}
+                    maxLength={MAX_MENU_BUTTON_LABEL}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        menu: {
+                          ...ensureMenu(prev.menu),
+                          buttonLabel: e.target.value.slice(
+                            0,
+                            MAX_MENU_BUTTON_LABEL
+                          ),
+                        },
+                      }))
+                    }
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="Main Menu"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    This is the label of the list opener button (max {MAX_MENU_BUTTON_LABEL} characters).
+                  </span>
+                  {menuError && !activeMenu.buttonLabel.trim() && (
+                    <span className="text-[11px] text-red-500">
+                      Menu button label is required.
+                    </span>
+                  )}
+                </label>
+              </div>
+
+              {menuError && (
+                <p className="text-xs text-red-500">{menuError}</p>
+              )}
+
+              <div className="space-y-3">
+                {activeMenu.sections.map((section, sectionIdx) => (
+                  <div key={section.id} className="border rounded p-3 space-y-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-medium">Section {sectionIdx + 1}</span>
+                        <p className="text-[11px] text-muted-foreground">
+                          Optional section title. Add options below.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-xs text-red-500 disabled:opacity-60"
+                        onClick={() => removeMenuSection(section.id)}
+                        disabled={activeMenu.sections.length <= 1}
+                      >
+                        Remove Section
+                      </button>
+                    </div>
+
+                    <label className="text-xs space-y-1 block">
+                      <span className="font-medium">Section title (optional)</span>
+                      <input
+                        className="w-full border rounded px-2 py-1"
+                        value={section.title || ""}
+                        maxLength={MAX_MENU_BUTTON_LABEL}
+                        onChange={(e) =>
+                          updateMenuSection(section.id, { title: e.target.value })
+                        }
+                        placeholder="Section title"
+                      />
+                    </label>
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Options</span>
+                      <button
+                        type="button"
+                        className="rounded-md border px-3 py-1 text-xs hover:bg-muted disabled:opacity-60"
+                        onClick={() => addMenuOption(section.id)}
+                        disabled={totalMenuOptions >= MAX_MENU_OPTIONS}
+                      >
+                        + Add Option
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      1-10 options across all sections.
+                    </p>
+
+                    <div className="space-y-3">
+                      {section.options.length === 0 && (
+                        <p className="text-[11px] text-muted-foreground border rounded p-2">
+                          No options in this section yet. Add your first row.
+                        </p>
                       )}
+                      {section.options.map((opt, idx) => (
+                        <div key={opt.id} className="border rounded p-3 space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">Option {idx + 1}</span>
+                            <button
+                              type="button"
+                              className="text-xs text-red-500"
+                              onClick={() => removeMenuOption(section.id, opt.id)}
+                            >
+                              Remove Option
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <label className="text-xs space-y-1">
+                              <span className="font-medium">Title</span>
+                              <input
+                                className="w-full border rounded px-2 py-1"
+                                value={opt.title}
+                                maxLength={MAX_MENU_OPTION_TITLE}
+                                onChange={(e) =>
+                                  updateMenuOption(section.id, opt.id, {
+                                    title: e.target.value,
+                                  })
+                                }
+                                placeholder="Option title"
+                              />
+                              {menuError && !opt.title.trim() && (
+                                <span className="text-[11px] text-red-500">
+                                  Title is required.
+                                </span>
+                              )}
+                            </label>
+
+                            <label className="text-xs space-y-1">
+                              <span className="font-medium">Description (optional)</span>
+                              <input
+                                className="w-full border rounded px-2 py-1"
+                                value={opt.description || ""}
+                                maxLength={MAX_MENU_OPTION_DESC}
+                                onChange={(e) =>
+                                  updateMenuOption(section.id, opt.id, {
+                                    description: e.target.value,
+                                  })
+                                }
+                                placeholder="Short description"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+
+              <div className="flex">
+                <button
+                  type="button"
+                  className="rounded-md border px-3 py-1 text-xs hover:bg-muted"
+                  onClick={addMenuSection}
+                >
+                  + Add Section
+                </button>
+              </div>
+            </div>
+          )}
         </form>
 
         {/* RIGHT PANEL */}
@@ -1109,15 +1826,9 @@ export default function EditTemplatePage() {
                 {renderFormattedLines(form.body, " ")}
               </div>
 
-              {form.footerText && (
-                <p className="text-[10px] text-muted-foreground mt-2">
-                  {form.footerText}
-                </p>
-              )}
-
-              {form.buttons?.length > 0 && (
+              {form.interactiveType === "buttons" && previewButtons.length > 0 && (
                 <div className="border-t mt-2 pt-2 space-y-1">
-                  {form.buttons.map((btn) => (
+                  {previewButtons.map((btn) => (
                     <button
                       key={btn.id}
                       className="w-full rounded-full border px-3 py-1.5 text-[11px] text-primary"
@@ -1128,7 +1839,52 @@ export default function EditTemplatePage() {
                   ))}
                 </div>
               )}
+
+              {form.interactiveType === "menu" && activeMenu && (
+                <div className="border-t mt-2 pt-2 space-y-1">
+                  <button
+                    type="button"
+                    className="w-full rounded-full border px-3 py-1.5 text-[11px] text-primary"
+                  >
+                    {activeMenu.buttonLabel || "Main Menu"}
+                  </button>
+                </div>
+              )}
             </div>
+
+            {form.interactiveType === "menu" && activeMenu && hasMenuOptions && (
+              <div className="border rounded-lg bg-muted/40 p-3 space-y-2 text-[11px]">
+                {activeMenu.sections.map((section, sectionIdx) => (
+                  <div
+                    key={section.id}
+                    className="border-b last:border-b-0 border-slate-200/80 pb-2 last:pb-0 space-y-1"
+                  >
+                    <div className="font-semibold text-[10px] uppercase tracking-wide text-slate-700">
+                      {(section.title || "").trim() || `Section ${sectionIdx + 1}`}
+                    </div>
+                    {section.options.length === 0 ? (
+                      <div className="text-[10px] text-muted-foreground">
+                        No options in this section.
+                      </div>
+                    ) : (
+                      section.options.map((opt, optIdx) => {
+                        const title = opt.title?.trim() || `Option ${optIdx + 1}`;
+                        const desc = opt.description?.trim();
+                        return (
+                          <div key={opt.id} className="flex items-start gap-2">
+                            <span>-</span>
+                            <span>
+                              {title}
+                              {desc ? ` - ${desc}` : ""}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             <p className="text-xs text-muted-foreground">
               Visual preview of how your template appears in WhatsApp.

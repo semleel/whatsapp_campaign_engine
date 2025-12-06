@@ -52,7 +52,11 @@ export default function EndpointsPage() {
     );
     if (!confirmed) return;
     try {
-      await Api.deleteEndpoint?.(endpoint.apiid);
+      if (endpoint.apiid == null) {
+        setError("Endpoint id is missing.");
+        return;
+      }
+      await Api.deleteEndpoint(endpoint.apiid);
       await refresh();
     } catch (err: any) {
       setError(err?.message || "Failed to delete endpoint");

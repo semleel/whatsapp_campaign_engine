@@ -29,7 +29,7 @@ export const buildWhatsappMenuList = async () => {
         },
       },
     },
-    orderBy: { campaignid: "asc" },
+    orderBy: { campaign_id: "asc" },
   });
 
   // Filter to only those where the entry content really exists & is not deleted

@@ -17,6 +17,7 @@ import {
   updateMapping,
   updateResponseTemplate,
 } from "../controllers/integrationController.js";
+import { listApis } from "../controllers/apiCatalogController.js";
 import authMiddleware from "../middleware/auth.js";
 import { requirePrivilege } from "../middleware/permission.js";
 
@@ -47,5 +48,6 @@ router.delete("/mappings/:id", requirePrivilege("integration", "archive"), remov
 router.post("/test", requirePrivilege("integration", "update"), runTest);
 router.post("/dispatch", requirePrivilege("integration", "update"), dispatchMapping);
 router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
+router.get("/apis", requirePrivilege("integration", "view"), listApis);
 
 export default router;

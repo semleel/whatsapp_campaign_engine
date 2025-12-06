@@ -1,3 +1,5 @@
+// src/controllers/campaignController.js
+
 import { prisma } from "../config/prismaClient.js";
 import { normalizeCampaignStatus, statusFromId, statusToId } from "../constants/campaignStatus.js";
 
@@ -20,21 +22,20 @@ const parseNullableInt = (value) => {
 
 export async function createCampaign(req, res) {
   try {
-    const { campaignName, objective, targetRegionID, userFlowID, status, startAt, endAt } = req.body;
+    const { campaignName, objective, targetRegionID, status, startAt, endAt } = req.body;
 
     if (!campaignName) {
       return res.status(400).json({ error: "campaignName is required" });
     }
 
     const data = {
-      campaignname: campaignName,
+      campaign_name: campaignName,
       objective: objective || null,
-      targetregionid: parseNullableInt(targetRegionID),
-      userflowid: parseNullableInt(userFlowID),
+      target_region_id: parseNullableInt(targetRegionID),
       status: normalizeCampaignStatus(status, DEFAULT_STATUS),
       start_at: parseNullableDate(startAt),
       end_at: parseNullableDate(endAt),
-      createdby_adminid: req.adminId || null,
+      created_by_admin_id: req.adminId || null,
     };
 
     const campaign = await prisma.campaign.create({ data });
@@ -50,33 +51,24 @@ export async function listCampaigns(_req, res) {
     const campaigns = await prisma.campaign.findMany({
       where: { status: { not: "Archived" } },
       include: {
-        targetregion: { select: { regionname: true } },
-        keyword: { select: { keywordid: true } },
-        keymapping: {
-          select: {
-            content: { select: { contentid: true, isdeleted: true } },
-          },
-        },
+        target_region: { select: { region_name: true } },
+        campaign_keyword: { select: { keyword_id: true } },
       },
-      orderBy: { campaignid: "desc" },
+      orderBy: { campaign_id: "desc" },
     });
 
     const formatted = campaigns.map((campaign) => ({
-      campaignid: campaign.campaignid,
-      campaignname: campaign.campaignname,
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
       objective: campaign.objective,
-      regionname: campaign.targetregion?.regionname ?? "N/A",
-      userflowname: campaign.userflow?.userflowname ?? "N/A",
+      regionname: campaign.target_region?.region_name ?? "N/A",
       currentstatus: campaign.status ?? "Unknown",
       status: campaign.status ?? "Unknown",
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
-      hasKeyword: (campaign.keyword?.length ?? 0) > 0,
-      hasTemplate:
-        Boolean(campaign.contentkeyid) &&
-        Boolean(campaign.keymapping?.content?.contentid) &&
-        !campaign.keymapping?.content?.isdeleted,
+      hasKeyword: (campaign.campaign_keyword?.length ?? 0) > 0,
+      hasTemplate: false,
     }));
 
     return res.status(200).json(formatted);
@@ -91,18 +83,16 @@ export async function listArchivedCampaigns(_req, res) {
     const campaigns = await prisma.campaign.findMany({
       where: { status: "Archived" },
       include: {
-        targetregion: { select: { regionname: true } },
-        userflow: { select: { userflowname: true } },
+        target_region: { select: { region_name: true } },
       },
-      orderBy: { campaignid: "desc" },
+      orderBy: { campaign_id: "desc" },
     });
 
     const formatted = campaigns.map((campaign) => ({
-      campaignid: campaign.campaignid,
-      campaignname: campaign.campaignname,
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
       objective: campaign.objective,
-      regionname: campaign.targetregion?.regionname ?? "N/A",
-      userflowname: campaign.userflow?.userflowname ?? "N/A",
+      regionname: campaign.target_region?.region_name ?? "N/A",
       currentstatus: campaign.status ?? "Archived",
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
@@ -124,10 +114,9 @@ export async function getCampaignById(req, res) {
     }
 
     const campaign = await prisma.campaign.findUnique({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       include: {
-        targetregion: true,
-        userflow: true,
+        target_region: true,
       },
     });
 
@@ -136,7 +125,15 @@ export async function getCampaignById(req, res) {
     }
 
     return res.status(200).json({
-      ...campaign,
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
+      objective: campaign.objective,
+      targetregionid: campaign.target_region_id,
+      status: campaign.status,
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
+      createdat: campaign.created_at,
+      updatedat: campaign.updated_at,
       camstatusid: statusToId(campaign.status),
     });
   } catch (err) {
@@ -156,7 +153,6 @@ export async function updateCampaign(req, res) {
       campaignName,
       objective,
       targetRegionID,
-      userFlowID,
       camStatusID,
       status,
       startAt,
@@ -164,7 +160,7 @@ export async function updateCampaign(req, res) {
     } = req.body;
 
     const existing = await prisma.campaign.findUnique({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       select: {
         status: true,
         start_at: true,
@@ -195,16 +191,13 @@ export async function updateCampaign(req, res) {
     const data = {};
 
     if (typeof campaignName === "string" && campaignName.trim()) {
-      data.campaignname = campaignName;
+      data.campaign_name = campaignName;
     }
     if (typeof objective !== "undefined") {
       data.objective = objective || null;
     }
     if (typeof targetRegionID !== "undefined") {
-      data.targetregionid = parseNullableInt(targetRegionID);
-    }
-    if (typeof userFlowID !== "undefined") {
-      data.userflowid = parseNullableInt(userFlowID);
+      data.target_region_id = parseNullableInt(targetRegionID);
     }
     if (typeof startAt !== "undefined") {
       data.start_at = parseNullableDate(startAt);
@@ -239,7 +232,7 @@ export async function updateCampaign(req, res) {
     }
 
     await prisma.campaign.update({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       data,
     });
 
@@ -254,6 +247,626 @@ export async function updateCampaign(req, res) {
 }
 
 
+const parseStepPayload = (body = {}) => {
+  const toNullableInt = (val) => {
+    if (val === null || typeof val === "undefined" || val === "") return null;
+    const parsed = parseInt(val, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  return {
+    step_number: toNullableInt(body.step_number),
+    step_code: typeof body.step_code === "string" ? body.step_code : null,
+    prompt_text: body.prompt_text ?? "",
+    error_message: typeof body.error_message === "string" ? body.error_message : null,
+    expected_input: body.expected_input || "none",
+    action_type: body.action_type || "message",
+    api_id: toNullableInt(body.api_id),
+    next_step_id: toNullableInt(body.next_step_id),
+    failure_step_id: toNullableInt(body.failure_step_id),
+    is_end_step: !!body.is_end_step,
+
+    // Media fields (optional)
+    media_type:
+      typeof body.media_type === "string" && body.media_type.length ? body.media_type : null,
+    media_url:
+      typeof body.media_url === "string" && body.media_url.length ? body.media_url : null,
+    media_caption:
+      typeof body.media_caption === "string" && body.media_caption.length ? body.media_caption : null,
+  };
+};
+
+export async function getCampaignWithSteps(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
+
+    const campaign = await prisma.campaign.findUnique({
+      where: { campaign_id: campaignID },
+      include: {
+        target_region: true,
+        campaign_step: {
+          orderBy: { step_number: "asc" },
+          include: {
+            campaign_step_choice_campaign_step_choice_step_idTocampaign_step: {
+              orderBy: { choice_id: "asc" },
+            },
+          },
+        },
+      },
+    });
+
+    if (!campaign) return res.status(404).json({ error: "Campaign not found" });
+
+    const mappedCampaign = {
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
+      objective: campaign.objective,
+      targetregionid: campaign.target_region_id,
+      status: campaign.status,
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
+    };
+
+    const idToNumber = new Map();
+    (campaign.campaign_step || []).forEach((s) => {
+      idToNumber.set(s.step_id, s.step_number);
+    });
+
+    const mappedSteps = (campaign.campaign_step || []).map((step) => {
+      let inputType = null;
+      let expectedInput = step.expected_input;
+      if (step.action_type === "input") {
+        if (step.expected_input === "number" || step.expected_input === "email") {
+          inputType = step.expected_input;
+        } else {
+          inputType = "text";
+        }
+        expectedInput = inputType;
+      } else if (step.action_type === "choice") {
+        expectedInput = "choice";
+      } else {
+        expectedInput = "none";
+      }
+
+      const jumpMode = step.next_step_id ? "custom" : "next";
+
+      return {
+        step_id: step.step_id,
+        campaign_id: step.campaign_id,
+        step_number: step.step_number,
+        step_code: step.step_code,
+        prompt_text: step.prompt_text,
+        error_message: step.error_message,
+        expected_input: expectedInput,
+        input_type: inputType,
+        action_type: step.action_type,
+        api_id: step.api_id,
+        next_step_id: step.next_step_id,
+        failure_step_id: step.failure_step_id,
+        is_end_step: step.is_end_step,
+
+        media_type: step.media_type,
+        media_url: step.media_url,
+        media_caption: step.media_caption,
+        jump_mode: step.next_step_id ? "custom" : "next",
+        campaign_step_choice: (
+          step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
+        ).map((c) => ({
+          choice_id: c.choice_id,
+          campaign_id: c.campaign_id,
+          step_id: c.step_id,
+          choice_code: c.choice_code,
+          label: c.label,
+          description: c.description,
+          next_step_id: c.next_step_id,
+          next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
+          is_correct: c.is_correct,
+        })),
+      };
+    });
+
+    return res.status(200).json({
+      campaign: mappedCampaign,
+      steps: mappedSteps,
+    });
+  } catch (err) {
+    console.error("Fetch campaign steps error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function upsertCampaignStep(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
+
+    const {
+      step_id: incomingStepId,
+      stepId,
+      step_number,
+      step_code,
+      prompt_text,
+      expected_input,
+      action_type,
+      api_id,
+      next_step_id,
+      failure_step_id,
+      is_end_step,
+    } = req.body || {};
+
+    const stepIdValue = parseNullableInt(incomingStepId ?? stepId);
+    const payload = parseStepPayload({
+      step_number,
+      step_code,
+      prompt_text,
+      expected_input,
+      action_type,
+      api_id,
+      next_step_id,
+      failure_step_id,
+      is_end_step,
+    });
+
+    if (!payload.step_number) {
+      return res.status(400).json({ error: "step_number is required" });
+    }
+
+    const steps = await prisma.campaign_step.findMany({
+      where: { campaign_id: campaignID },
+      select: { step_id: true, step_number: true },
+    });
+    const stepNumberToId = new Map(steps.map((s) => [s.step_number, s.step_id]));
+    const resolveStepIdFromNumber = (num) => {
+      if (num == null) return null;
+      const id = stepNumberToId.get(num);
+      return id ?? null;
+    };
+
+    const nextNumber = payload.next_step_id;
+    const failureNumber = payload.failure_step_id;
+    payload.next_step_id = resolveStepIdFromNumber(nextNumber);
+    payload.failure_step_id = resolveStepIdFromNumber(failureNumber);
+
+    if (payload.is_end_step) {
+      payload.next_step_id = null;
+    }
+
+    let result = null;
+    if (stepIdValue) {
+      const existing = await prisma.campaign_step.findUnique({
+        where: { step_id: stepIdValue },
+        select: { campaign_id: true },
+      });
+      if (!existing || existing.campaign_id !== campaignID) {
+        return res.status(404).json({ error: "Step not found for this campaign" });
+      }
+
+      result = await prisma.campaign_step.update({
+        where: { step_id: stepIdValue },
+        data: payload,
+      });
+    } else {
+      result = await prisma.campaign_step.create({
+        data: { ...payload, campaign_id: campaignID },
+      });
+    }
+
+    return res.status(200).json({ message: "Step saved", step: result });
+  } catch (err) {
+    console.error("Upsert step error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function deleteCampaignStep(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    const stepId = parseInt(req.params.stepId, 10);
+    if (Number.isNaN(campaignID) || Number.isNaN(stepId)) {
+      return res.status(400).json({ error: "Invalid campaign/step id" });
+    }
+
+    const existing = await prisma.campaign_step.findUnique({
+      where: { step_id: stepId },
+      select: { campaign_id: true },
+    });
+    if (!existing || existing.campaign_id !== campaignID) {
+      return res.status(404).json({ error: "Step not found for this campaign" });
+    }
+
+    await prisma.$transaction([
+      prisma.campaign_response.deleteMany({ where: { step_id: stepId } }),
+      prisma.campaign_step_choice.deleteMany({ where: { step_id: stepId } }),
+      prisma.campaign_session.updateMany({
+        where: { current_step_id: stepId },
+        data: { current_step_id: null },
+      }),
+      prisma.campaign_step.delete({ where: { step_id: stepId } }),
+    ]);
+
+    return res.status(200).json({ message: "Step deleted" });
+  } catch (err) {
+    console.error("Delete step error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function saveStepChoices(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    const stepId = parseInt(req.params.stepId, 10);
+    const choices = Array.isArray(req.body?.choices) ? req.body.choices : [];
+
+    if (Number.isNaN(campaignID) || Number.isNaN(stepId)) {
+      return res.status(400).json({ error: "Invalid campaign/step id" });
+    }
+
+    const step = await prisma.campaign_step.findUnique({
+      where: { step_id: stepId },
+      select: { campaign_id: true },
+    });
+    if (!step || step.campaign_id !== campaignID) {
+      return res.status(404).json({ error: "Step not found for this campaign" });
+    }
+
+    // Debug once to confirm payload shape
+    console.log("[DEBUG saveStepChoices] choices payload:", JSON.stringify(choices, null, 2));
+
+    await prisma.$transaction(async (tx) => {
+      // 1) Load all steps in this campaign so we can map step_number -> step_id
+      const stepsForCampaign = await tx.campaign_step.findMany({
+        where: { campaign_id: campaignID },
+        select: { step_id: true, step_number: true },
+      });
+
+      const numberToId = new Map(stepsForCampaign.map((s) => [s.step_number, s.step_id]));
+
+      const resolveNextStepIdFromNumber = (raw) => {
+        if (raw == null || raw === "") return null;
+        const num = Number(raw);
+        if (Number.isNaN(num)) return null;
+        // Always interpret the input as a STEP NUMBER,
+        // then map it to the correct step_id for this campaign.
+        return numberToId.get(num) ?? null;
+      };
+
+      // 2) Existing choices for delete detection
+      const existing = await tx.campaign_step_choice.findMany({
+        where: { step_id: stepId },
+        select: { choice_id: true },
+      });
+      const existingIds = existing.map((c) => c.choice_id);
+
+      const incomingIds = choices
+        .map((c) => ("choice_id" in c ? parseInt(c.choice_id, 10) : parseInt(c.choiceid, 10)))
+        .filter((id) => !Number.isNaN(id));
+
+      // 3) Delete removed choices
+      const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
+      if (toDelete.length) {
+        await tx.campaign_step_choice.deleteMany({
+          where: { choice_id: { in: toDelete } },
+        });
+      }
+
+      // 4) Upsert all incoming choices
+      for (const c of choices) {
+        const choiceId = ("choice_id" in c ? c.choice_id : c.choiceid) || null;
+
+        // UI might send: next_step_number / nextStepNumber / next_step_id / nextStepId,
+        // but we ALWAYS treat it as a STEP NUMBER.
+        const rawNextStepNumber =
+          c.next_step_number ??
+          c.nextStepNumber ??
+          c.next_step_id ??
+          c.nextStepId ??
+          null;
+
+        const resolvedNextStepId = resolveNextStepIdFromNumber(rawNextStepNumber);
+
+        const data = {
+          campaign_id: campaignID,
+          step_id: stepId,
+          choice_code: c.choice_code || c.choicecode || "",
+          label: c.label || "",
+          description: c.description ?? null,
+          next_step_id: resolvedNextStepId,
+          is_correct:
+            typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
+        };
+
+        if (choiceId) {
+          await tx.campaign_step_choice.update({
+            where: { choice_id: Number(choiceId) },
+            data,
+          });
+        } else {
+          await tx.campaign_step_choice.create({ data });
+        }
+      }
+    });
+
+    return res.status(200).json({ message: "Choices saved" });
+  } catch (err) {
+    console.error("Save step choices error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+export async function saveCampaignStepsBulk(req, res) {
+  try {
+    const campaignID = parseInt(req.params.id, 10);
+    if (Number.isNaN(campaignID)) {
+      return res.status(400).json({ error: "Invalid campaign id" });
+    }
+
+    const incomingSteps = Array.isArray(req.body?.steps) ? req.body.steps : [];
+    const normalizedSteps = incomingSteps.map((s, idx) => ({
+      ...s,
+      step_number: idx + 1,
+      step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
+    }));
+
+    // Validate unique step_code (non-empty) per campaign
+    const seenCodes = new Set();
+    for (const s of normalizedSteps) {
+      const code = (s.step_code || "").trim().toLowerCase();
+      if (!code) continue;
+      if (seenCodes.has(code)) {
+        return res.status(400).json({ error: "Duplicate step_code detected" });
+      }
+      seenCodes.add(code);
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.campaign_step.findMany({
+        where: { campaign_id: campaignID },
+        select: { step_id: true },
+      });
+      const existingIds = existing.map((s) => s.step_id);
+      const incomingIds = normalizedSteps
+        .map((s) => Number(s.step_id))
+        .filter((v) => v && !Number.isNaN(v));
+
+      const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
+      if (toDelete.length) {
+        await tx.campaign_response.deleteMany({ where: { step_id: { in: toDelete } } });
+        await tx.campaign_step_choice.deleteMany({ where: { step_id: { in: toDelete } } });
+        await tx.campaign_session.updateMany({
+          where: { current_step_id: { in: toDelete } },
+          data: { current_step_id: null },
+        });
+        await tx.campaign_step.deleteMany({ where: { step_id: { in: toDelete } } });
+      }
+
+      const savedSteps = [];
+      for (const step of normalizedSteps) {
+        const computedExpected = (() => {
+          if (step.action_type === "message" || step.action_type === "api") return "none";
+          if (step.action_type === "choice") return "choice";
+          if (step.action_type === "input") {
+            if (step.input_type === "number" || step.input_type === "email") return step.input_type;
+            return "text";
+          }
+          return "none";
+        })();
+
+        const data = {
+          campaign_id: campaignID,
+          step_number: step.step_number,
+          step_code: step.step_code || null,
+          prompt_text: step.prompt_text || "",
+          error_message: step.error_message || null,
+          expected_input: computedExpected,
+          action_type: step.action_type || "message",
+          api_id: step.api_id ?? null,
+          failure_step_id: null,
+          next_step_id: null,
+          is_end_step: false,
+
+          // Media fields (one media per step)
+          media_type:
+            typeof step.media_type === "string" && step.media_type.length ? step.media_type : null,
+          media_url:
+            typeof step.media_url === "string" && step.media_url.length ? step.media_url : null,
+          media_caption:
+            typeof step.media_caption === "string" && step.media_caption.length
+              ? step.media_caption
+              : null,
+        };
+
+        let saved;
+        if (step.step_id && !Number.isNaN(step.step_id)) {
+          saved = await tx.campaign_step.update({
+            where: { step_id: step.step_id },
+            data,
+          });
+        } else {
+          saved = await tx.campaign_step.create({
+            data,
+          });
+        }
+        savedSteps.push({ saved, source: step, sourceChoices: step.campaign_step_choice || [] });
+      }
+
+      // Build mapping: step_number -> step_id
+      const stepNumberToId = new Map(savedSteps.map(({ saved }) => [saved.step_number, saved.step_id]));
+      const resolveFromStepNumber = (raw) => {
+        if (raw == null || raw === "") return null;
+        const num = Number(raw);
+        if (Number.isNaN(num)) return null;
+        return stepNumberToId.get(num) ?? null;
+      };
+
+      // Apply jump logic + failure mapping
+      for (const { saved, source } of savedSteps) {
+        const stepNumber = saved.step_number;
+
+        const jumpMode = source.jump_mode ?? source.jumpMode ?? (source.next_step_id ? "custom" : "next");
+
+        let dbNextStepId = null;
+        let dbIsEnd = false;
+
+        if (jumpMode === "custom" && source.next_step_id) {
+          // Treat next_step_id from payload as step NUMBER
+          dbNextStepId = resolveFromStepNumber(source.next_step_id);
+        } else if (source.is_end_step) {
+          dbNextStepId = null;
+          dbIsEnd = true;
+        } else {
+          // Default: sequential next step
+          const nextStepNumber = stepNumber + 1;
+          const seqTarget = stepNumberToId.get(nextStepNumber) ?? null;
+          if (seqTarget) {
+            dbNextStepId = seqTarget;
+          } else {
+            // Last step in flow
+            dbNextStepId = null;
+            dbIsEnd = true;
+          }
+        }
+
+        const dbFailureStepId = resolveFromStepNumber(source.failure_step_id);
+
+        await tx.campaign_step.update({
+          where: { step_id: saved.step_id },
+          data: {
+            next_step_id: dbNextStepId,
+            is_end_step: dbIsEnd,
+            failure_step_id: dbFailureStepId,
+          },
+        });
+      }
+
+      // Choices: replace per step, and map choice.next_step_id (step number -> step_id)
+      for (const { saved, sourceChoices } of savedSteps) {
+        const stepId = saved.step_id;
+        const existingChoices = await tx.campaign_step_choice.findMany({
+          where: { step_id: stepId },
+          select: { choice_id: true },
+        });
+        const choiceIds = existingChoices.map((c) => c.choice_id);
+        if (choiceIds.length) {
+          await tx.campaign_response.deleteMany({
+            where: { choice_id: { in: choiceIds } },
+          });
+        }
+        await tx.campaign_step_choice.deleteMany({ where: { step_id: stepId } });
+
+        const payloadChoices = Array.isArray(sourceChoices) ? sourceChoices : [];
+        if (payloadChoices.length) {
+          await tx.campaign_step_choice.createMany({
+            data: payloadChoices.map((c) => ({
+              campaign_id: campaignID,
+              step_id: stepId,
+              choice_code: c.choice_code || "",
+              label: c.label || "",
+              description: c.description ?? null,
+              next_step_id: resolveFromStepNumber(c.next_step_id),
+              is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
+            })),
+          });
+        }
+      }
+
+      // Return refreshed data
+      const refreshed = await tx.campaign.findUnique({
+        where: { campaign_id: campaignID },
+        include: {
+          campaign_step: {
+            orderBy: { step_number: "asc" },
+            include: {
+              campaign_step_choice_campaign_step_choice_step_idTocampaign_step: {
+                orderBy: { choice_id: "asc" },
+              },
+            },
+          },
+        },
+      });
+
+      return refreshed;
+    });
+
+    if (!result) return res.status(404).json({ error: "Campaign not found" });
+
+    const mappedCampaign = {
+      campaignid: result.campaign_id,
+      campaignname: result.campaign_name,
+      objective: result.objective,
+      targetregionid: result.target_region_id,
+      status: result.status,
+      start_at: result.start_at,
+      end_at: result.end_at,
+    };
+
+    const idToNumber = new Map();
+    (result.campaign_step || []).forEach((s) => {
+      idToNumber.set(s.step_id, s.step_number);
+    });
+
+    const mappedSteps = (result.campaign_step || []).map((step) => {
+      let inputType = null;
+      let expectedInput = step.expected_input;
+      if (step.action_type === "input") {
+        if (step.expected_input === "number" || step.expected_input === "email") {
+          inputType = step.expected_input;
+        } else {
+          inputType = "text";
+        }
+        expectedInput = inputType;
+      } else if (step.action_type === "choice") {
+        expectedInput = "choice";
+      } else {
+        expectedInput = "none";
+      }
+
+      return {
+        step_id: step.step_id,
+        campaign_id: step.campaign_id,
+        step_number: step.step_number,
+        step_code: step.step_code,
+        prompt_text: step.prompt_text,
+        error_message: step.error_message,
+        expected_input: expectedInput,
+        input_type: inputType,
+        action_type: step.action_type,
+        api_id: step.api_id,
+        next_step_id: step.next_step_id,
+        failure_step_id: step.failure_step_id,
+        is_end_step: step.is_end_step,
+        media_type: step.media_type,
+        media_url: step.media_url,
+        media_caption: step.media_caption,
+        jump_mode: step.next_step_id ? "custom" : "next",
+        campaign_step_choice: (
+          step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
+        ).map((c) => ({
+          choice_id: c.choice_id,
+          campaign_id: c.campaign_id,
+          step_id: c.step_id,
+          choice_code: c.choice_code,
+          label: c.label,
+          description: c.description,
+          next_step_id: c.next_step_id,
+          next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
+          is_correct: c.is_correct,
+        })),
+      };
+    });
+
+    return res.status(200).json({ campaign: mappedCampaign, steps: mappedSteps });
+  } catch (err) {
+    console.error("Save campaign steps (bulk) error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
 export async function archiveCampaign(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
@@ -262,7 +875,7 @@ export async function archiveCampaign(req, res) {
     }
 
     await prisma.campaign.update({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       data: { status: "Archived" },
     });
 
@@ -284,7 +897,7 @@ export async function restoreCampaign(req, res) {
     }
 
     await prisma.campaign.update({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       data: { status: "Inactive" },
     });
 
@@ -306,7 +919,7 @@ export async function hardDeleteArchivedCampaign(req, res) {
     }
 
     const campaign = await prisma.campaign.findUnique({
-      where: { campaignid: campaignID },
+      where: { campaign_id: campaignID },
       select: { status: true },
     });
 
@@ -320,7 +933,7 @@ export async function hardDeleteArchivedCampaign(req, res) {
         .json({ error: "Only archived campaigns can be permanently deleted." });
     }
 
-    await prisma.campaign.delete({ where: { campaignid: campaignID } });
+    await prisma.campaign.delete({ where: { campaign_id: campaignID } });
 
     return res
       .status(200)
@@ -343,7 +956,7 @@ export async function hardDeleteArchivedCampaigns(req, res) {
     }
 
     const result = await prisma.campaign.deleteMany({
-      where: { campaignid: { in: parsedIds }, status: "Archived" },
+      where: { campaign_id: { in: parsedIds }, status: "Archived" },
     });
 
     return res.status(200).json({
@@ -367,7 +980,7 @@ export async function autoCheckCampaignStatuses() {
         },
       },
       select: {
-        campaignid: true,
+        campaign_id: true,
         status: true,
         start_at: true,
         end_at: true,
@@ -401,7 +1014,7 @@ export async function autoCheckCampaignStatuses() {
 
       if (nextStatus && nextStatus !== currentStatus) {
         await prisma.campaign.update({
-          where: { campaignid: campaign.campaignid },
+          where: { campaign_id: campaign.campaign_id },
           data: { status: nextStatus },
         });
       }
@@ -410,4 +1023,5 @@ export async function autoCheckCampaignStatuses() {
     console.error("[CampaignStatusJob] error:", err);
   }
 }
+
 

@@ -30,7 +30,7 @@ export async function debugCampaignConfig(req, res) {
                     },
                 },
             },
-            orderBy: { campaignid: "asc" },
+            orderBy: { campaign_id: "asc" },
         });
 
         const result = campaigns.map((c) => {

@@ -75,8 +75,12 @@ export default function MappingsPage() {
       setError("You do not have permission to delete mappings.");
       return;
     }
-    await Api.removeMapping(mappingId);
-    await refresh();
+    try {
+      await Api.deleteMapping(mappingId);
+      await refresh();
+    } catch (err: any) {
+      setError(err?.message || "Failed to delete mapping");
+    }
   };
 
   if (!privLoading && !canView) {
@@ -177,7 +181,7 @@ export default function MappingsPage() {
           </thead>
           <tbody>
             {mappings.map((m) => (
-              <tr key={m.id} className="border-t">
+              <tr key={m.mappingid ?? `${m.campaignid}-${m.apiid}-${m.contentkeyid}`} className="border-t">
                 <td className="px-3 py-2">{m.campaignid}</td>
                 <td className="px-3 py-2 font-mono text-xs">{m.contentkeyid}</td>
                 <td className="px-3 py-2">{m.apiid}</td>
@@ -199,7 +203,11 @@ export default function MappingsPage() {
                   {canArchive && (
                     <button
                       type="button"
-                      onClick={() => handleDelete(m.id)}
+                  onClick={() =>
+                    m.mappingid != null
+                      ? handleDelete(m.mappingid)
+                      : setError("Mapping id is missing.")
+                  }
                       className="text-rose-600 hover:underline text-xs"
                     >
                       Delete

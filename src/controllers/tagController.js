@@ -15,13 +15,19 @@ export async function listTags(req, res) {
   try {
     const includeDeleted = req.query.includeDeleted === "true";
 
-    const where = includeDeleted ? {} : { isdeleted: false };
-
     const tags = await prisma.tag.findMany({
-      where: includeDeleted ? {} : { isdeleted: false },
-      orderBy: { tagid: "asc" },
+      where: includeDeleted ? {} : { is_deleted: false },
+      orderBy: { tag_id: "asc" },
     });
-    return res.json(tags);
+    return res.json(
+      tags.map((t) => ({
+        tagid: t.tag_id,
+        name: t.name,
+        isdeleted: t.is_deleted,
+        createdat: t.created_at,
+        updatedat: t.updated_at,
+      }))
+    );
   } catch (err) {
     console.error("Error listing tags:", err);
     return res.status(500).json({ error: "Failed to load tags" });
@@ -38,7 +44,7 @@ export async function getTag(req, res) {
       return res.status(400).json({ error: "Invalid tag id" });
     }
 
-    const tag = await prisma.tag.findUnique({ where: { tagid: id } });
+    const tag = await prisma.tag.findUnique({ where: { tag_id: id } });
     if (!tag) {
       return res.status(404).json({ error: "Tag not found" });
     }
@@ -64,9 +70,9 @@ export async function createTag(req, res) {
     const tag = await prisma.tag.create({
       data: {
         name: rawName,
-        isdeleted: false,
-        createdat: new Date(),
-        updatedat: new Date(),
+        is_deleted: false,
+        created_at: new Date(),
+        updated_at: new Date(),
       },
     });
 
@@ -121,8 +127,12 @@ export async function updateTag(req, res) {
     }
 
     const tag = await prisma.tag.update({
-      where: { tagid: id },
-      data,
+      where: { tag_id: id },
+      data: {
+        name: data.name,
+        is_deleted: typeof data.isdeleted !== "undefined" ? data.isdeleted : undefined,
+        updated_at: new Date(),
+      },
     });
 
     return res
@@ -154,10 +164,10 @@ export async function archiveTag(req, res) {
     }
 
     const tag = await prisma.tag.update({
-      where: { tagid: id },
+      where: { tag_id: id },
       data: {
-        isdeleted: true,
-        updatedat: new Date(),
+        is_deleted: true,
+        updated_at: new Date(),
       },
     });
 
@@ -217,8 +227,8 @@ export async function deleteTag(req, res) {
 
     // Remove tag links first to satisfy FK constraints before deleting the tag.
     await prisma.$transaction([
-      prisma.contenttag.deleteMany({ where: { tagid: id } }),
-      prisma.tag.delete({ where: { tagid: id } }),
+      prisma.contenttag.deleteMany({ where: { tag_id: id } }),
+      prisma.tag.delete({ where: { tag_id: id } }),
     ]);
 
     return res

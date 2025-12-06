@@ -22,7 +22,7 @@ function withBase(path: string) {
   return `${base}/${target}`;
 }
 
-import { getStoredToken } from "./auth";
+import { getStoredToken, clearStoredSession } from "./auth";
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
@@ -43,6 +43,18 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
       details = await res.json();
     } catch {
       // ignore
+    }
+    if (res.status === 401) {
+      // Token missing/expired/revoked; reset client session so the user can log back in cleanly.
+      if (typeof window !== "undefined") {
+        clearStoredSession();
+        // Optional navigation hint; we avoid throwing if push fails.
+        try {
+          window.location.href = "/login";
+        } catch {
+          // ignore navigation errors
+        }
+      }
     }
     const defaultMessage =
       res.status === 403
@@ -75,6 +87,9 @@ import type {
   CampaignDetail,
   CampaignCreatePayload,
   CampaignUpdatePayload,
+  CampaignWithStepsResponse,
+  CampaignStepWithChoices,
+  ApiListItem,
   KeywordEntry,
   KeywordListItem,
   KeywordCheckResponse,
@@ -92,7 +107,8 @@ import type {
   SystemFlowActivationRef,
   FlowStatus,
   FlowStat,
-  ReportSummary
+  ReportSummary,
+  SystemCommand,
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -158,6 +174,38 @@ export const Api = {
       method: "PUT",
     }),
 
+  listApis: () => http<ApiListItem[]>(`/api/integration/apis`),
+
+  getCampaignWithSteps: (id: number | string) =>
+    http<CampaignWithStepsResponse>(`/api/campaign/${id}/steps`),
+
+  saveCampaignStep: (campaignId: number | string, payload: Partial<CampaignStepWithChoices>) =>
+    http<{ message: string; step: CampaignStepWithChoices }>(`/api/campaign/${campaignId}/steps`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  saveCampaignStepsBulk: (campaignId: number | string, steps: CampaignStepWithChoices[]) =>
+    http<CampaignWithStepsResponse>(`/api/campaign/${campaignId}/steps/bulk`, {
+      method: "POST",
+      body: JSON.stringify({ steps }),
+    }),
+
+  deleteCampaignStep: (campaignId: number | string, stepId: number | string) =>
+    http<{ message: string }>(`/api/campaign/${campaignId}/steps/${stepId}`, {
+      method: "DELETE",
+    }),
+
+  saveStepChoices: (
+    campaignId: number | string,
+    stepId: number | string,
+    choices: Array<Partial<{ choice_id: number; choice_code: string; label: string; description?: string | null; next_step_id?: number | null; is_correct?: boolean }>>
+  ) =>
+    http<{ message: string }>(`/api/campaign/${campaignId}/steps/${stepId}/choices`, {
+      method: "POST",
+      body: JSON.stringify({ choices }),
+    }),
+
   deleteArchivedCampaign: (id: number | string) =>
     http<{ message: string }>(`/api/campaign/archive/${id}`, {
       method: "DELETE",
@@ -208,11 +256,15 @@ export const Api = {
     }),
 
   checkKeywordAvailability: async (value: string) => {
+    const token = typeof window !== "undefined" ? getStoredToken() : null;
     const url = withBase(
       `/api/keyword/check?value=${encodeURIComponent(value)}`
     );
     const res = await fetch(url, {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       cache: "no-store",
     });
     let data: KeywordCheckResponse | { error?: string } | null = null;
@@ -473,6 +525,22 @@ export const Api = {
   // =========================================================
   // System -> System Flows & Keywords
   // =========================================================
+
+  listSystemCommands: () =>
+    http<SystemCommand[]>("/api/system/commands"),
+
+  updateSystemCommand: (
+    command: string,
+    payload: Partial<SystemCommand>
+  ) =>
+    http<SystemCommand>(
+      `/api/system/commands/${encodeURIComponent(command)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    ),
 
   listSystemFlows: () => http<SystemFlow[]>("/api/system/flows"),
 

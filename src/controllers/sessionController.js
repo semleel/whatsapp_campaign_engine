@@ -16,15 +16,15 @@ const SESSION_STATUS = {
 
 function formatSession(s) {
     return {
-        id: s.campaignsessionid,
-        contactid: s.contactid,
-        campaignid: s.campaignid,
-        campaignname: s.campaign?.campaignname ?? null,
-        contact_phonenum: s.contact?.phonenum ?? null,
+        id: s.campaign_session_id,
+        contactid: s.contact_id,
+        campaignid: s.campaign_id,
+        campaignname: s.campaign?.campaign_name ?? null,
+        contact_phonenum: s.contact?.phone_num ?? null,
         checkpoint: s.checkpoint ?? null,
-        status: s.sessionstatus ?? "ACTIVE",
-        createdAt: s.createdat ?? null,
-        lastActiveAt: s.lastactiveat ?? null,
+        status: s.session_status ?? "ACTIVE",
+        createdAt: s.created_at ?? null,
+        lastActiveAt: s.last_active_at ?? null,
     };
 }
 
@@ -34,12 +34,12 @@ function formatSession(s) {
  */
 export async function listSessions(req, res) {
     try {
-        const sessions = await prisma.campaignsession.findMany({
+        const sessions = await prisma.campaign_session.findMany({
             include: {
-                campaign: { select: { campaignname: true } },
-                contact: { select: { phonenum: true } },
+                campaign: { select: { campaign_name: true } },
+                contact: { select: { phone_num: true } },
             },
-            orderBy: { lastactiveat: "desc" },
+            orderBy: { last_active_at: "desc" },
             take: 1000,
         });
 
@@ -58,13 +58,13 @@ export async function getSession(req, res) {
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
-        const s = await prisma.campaignsession.findUnique({
-            where: { campaignsessionid: id },
+        const s = await prisma.campaign_session.findUnique({
+            where: { campaign_session_id: id },
             include: {
                 campaign: true,
                 contact: true,
-                message: { orderBy: { timestamp: "asc" }, take: 500 },
-                sessionlog: { orderBy: { loggedat: "asc" }, take: 200 },
+                message: { orderBy: { created_at: "asc" }, take: 500 },
+                session_log: { orderBy: { logged_at: "asc" }, take: 200 },
             },
         });
 
@@ -93,24 +93,24 @@ export async function createSession(req, res) {
         // Because of unique constraint contactid+campaignid, try to upsert
         let session;
         try {
-            session = await prisma.campaignsession.create({
+            session = await prisma.campaign_session.create({
                 data: {
-                    contactid: Number(contactid),
-                    campaignid: Number(campaignid),
+                    contact_id: Number(contactid),
+                    campaign_id: Number(campaignid),
                     checkpoint: checkpoint ?? null,
-                    sessionstatus: "ACTIVE",
-                    lastactiveat: new Date(),
+                    session_status: "ACTIVE",
+                    last_active_at: new Date(),
                 },
                 include: { campaign: true, contact: true },
             });
         } catch (err) {
             // If already exists, return existing
             if (err.code === "P2002") {
-                session = await prisma.campaignsession.findUnique({
+                session = await prisma.campaign_session.findUnique({
                     where: {
-                        contactid_campaignid: {
-                            contactid: Number(contactid),
-                            campaignid: Number(campaignid),
+                        contact_id_campaign_id: {
+                            contact_id: Number(contactid),
+                            campaign_id: Number(campaignid),
                         },
                     },
                     include: { campaign: true, contact: true },
@@ -135,9 +135,9 @@ export async function pauseSession(req, res) {
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
-        const updated = await prisma.campaignsession.update({
-            where: { campaignsessionid: id },
-            data: { sessionstatus: "PAUSED" },
+        const updated = await prisma.campaign_session.update({
+            where: { campaign_session_id: id },
+            data: { session_status: "PAUSED" },
             include: { campaign: true, contact: true },
         });
 
@@ -157,8 +157,8 @@ export async function resumeSession(req, res) {
         const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
-        const session = await prisma.campaignsession.findUnique({
-            where: { campaignsessionid: id },
+        const session = await prisma.campaign_session.findUnique({
+            where: { campaign_session_id: id },
             include: { campaign: true, contact: true },
         });
 
@@ -166,13 +166,13 @@ export async function resumeSession(req, res) {
             return res.status(404).json({ error: "Session not found" });
         }
 
-        if (session.sessionstatus !== SESSION_STATUS.EXPIRED) {
+        if (session.session_status !== SESSION_STATUS.EXPIRED) {
             return res.status(400).json({ error: "Only expired sessions can be resumed" });
         }
 
-        const updated = await prisma.campaignsession.update({
-            where: { campaignsessionid: id },
-            data: { sessionstatus: SESSION_STATUS.ACTIVE, lastactiveat: new Date() },
+        const updated = await prisma.campaign_session.update({
+            where: { campaign_session_id: id },
+            data: { session_status: SESSION_STATUS.ACTIVE, last_active_at: new Date() },
             include: { campaign: true, contact: true },
         });
 
@@ -192,9 +192,9 @@ export async function cancelSession(req, res) {
     const id = parseInt(req.params.id, 10);
         if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
 
-        const updated = await prisma.campaignsession.update({
-            where: { campaignsessionid: id },
-            data: { sessionstatus: "CANCELLED" },
+        const updated = await prisma.campaign_session.update({
+            where: { campaign_session_id: id },
+            data: { session_status: "CANCELLED" },
             include: { campaign: true, contact: true },
         });
 
@@ -216,12 +216,12 @@ export async function listSessionsByContact(req, res) {
       return res.status(400).json({ error: "Invalid contact id" });
     }
 
-    const sessions = await prisma.campaignsession.findMany({
-      where: { contactid: contactId },
-      orderBy: [{ lastactiveat: "desc" }, { createdat: "desc" }],
+    const sessions = await prisma.campaign_session.findMany({
+      where: { contact_id: contactId },
+      orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
       include: {
-        campaign: { select: { campaignname: true } },
-        contact: { select: { phonenum: true } },
+        campaign: { select: { campaign_name: true } },
+        contact: { select: { phone_num: true } },
       },
     });
 
@@ -234,11 +234,11 @@ export async function listSessionsByContact(req, res) {
 
 export async function markSessionCompleted(campaignsessionid) {
   try {
-    const updated = await prisma.campaignsession.update({
-      where: { campaignsessionid },
+    const updated = await prisma.campaign_session.update({
+      where: { campaign_session_id: campaignsessionid },
       data: {
-        sessionstatus: SESSION_STATUS.COMPLETED,
-        lastactiveat: new Date(),
+        session_status: SESSION_STATUS.COMPLETED,
+        last_active_at: new Date(),
       },
     });
     return updated;

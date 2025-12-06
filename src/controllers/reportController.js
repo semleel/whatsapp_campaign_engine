@@ -8,17 +8,17 @@ export async function listDeliveryReport(req, res) {
       500
     );
 
-    const rows = await prisma.deliverlog.findMany({
-      orderBy: { createdat: "desc" },
+    const rows = await prisma.delivery_log.findMany({
+      orderBy: { created_at: "desc" },
       take: limit,
       include: {
         message: {
           select: {
-            messageid: true,
-            campaignsession: {
-              select: { campaign: { select: { campaignname: true } }, campaignid: true },
+            message_id: true,
+            campaign_session: {
+              select: { campaign: { select: { campaign_name: true } }, campaign_id: true },
             },
-            contact: { select: { phonenum: true } },
+            contact: { select: { phone_num: true } },
             provider_msg_id: true,
             error_message: true,
           },
@@ -27,14 +27,14 @@ export async function listDeliveryReport(req, res) {
     });
 
     const data = rows.map((d) => ({
-      messageid: d.message?.messageid ?? d.messageid,
+      messageid: d.message?.message_id ?? d.message_id,
       campaign:
-        d.message?.campaignsession?.campaign?.campaignname ??
+        d.message?.campaign_session?.campaign?.campaign_name ??
         null,
-      contact: d.message?.contact?.phonenum ?? null,
-      status: d.deliverstatus ?? "pending",
-      retrycount: d.retrycount ?? 0,
-      sentAt: d.lastattemptat ?? d.createdat ?? null,
+      contact: d.message?.contact?.phone_num ?? null,
+      status: d.delivery_status ?? "pending",
+      retrycount: d.retry_count ?? 0,
+      sentAt: d.last_attempt_at ?? d.created_at ?? null,
       provider_msg_id: d.provider_msg_id ?? d.message?.provider_msg_id ?? null,
       error_message: d.error_message ?? d.message?.error_message ?? null,
     }));
@@ -48,47 +48,8 @@ export async function listDeliveryReport(req, res) {
 
 // Flow stats by campaign: total sessions and completion count
 export async function listFlowStats(_req, res) {
-  try {
-    const sessions = await prisma.campaignsession.findMany({
-      select: {
-        campaignid: true,
-        sessionstatus: true,
-        campaign: { select: { campaignname: true } },
-      },
-    });
-
-    const byCampaign = new Map();
-
-    for (const s of sessions) {
-      const key = s.campaignid ?? 0;
-      if (!byCampaign.has(key)) {
-        byCampaign.set(key, {
-          campaignid: s.campaignid ?? null,
-          name: s.campaign?.campaignname ?? "Unknown campaign",
-          sessions: 0,
-          completed: 0,
-        });
-      }
-      const entry = byCampaign.get(key);
-      entry.sessions += 1;
-      if ((s.sessionstatus || "").toUpperCase() === "COMPLETED") {
-        entry.completed += 1;
-      }
-    }
-
-    const rows = Array.from(byCampaign.values()).map((row) => ({
-      ...row,
-      completionRate:
-        row.sessions > 0 ? Number(((row.completed / row.sessions) * 100).toFixed(1)) : 0,
-    }));
-
-    rows.sort((a, b) => b.sessions - a.sessions);
-
-    return res.status(200).json(rows);
-  } catch (err) {
-    console.error("listFlowStats error:", err);
-    return res.status(500).json({ error: err.message || "Failed to load flow stats" });
-  }
+  // Flow stats are not needed anymore; return empty dataset.
+  return res.status(200).json([]);
 }
 
 // Summary across messages, delivery, and campaigns
@@ -99,17 +60,17 @@ export async function reportSummary(_req, res) {
     const since7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     const [messagesLast24, messagesTotal, activeCampaigns, deliveries] = await Promise.all([
-      prisma.message.count({ where: { timestamp: { gte: since24h } } }),
+      prisma.message.count({ where: { created_at: { gte: since24h } } }),
       prisma.message.count(),
       prisma.campaign.count({ where: { status: { not: "Archived" } } }),
-      prisma.deliverlog.findMany({
-        where: { createdat: { gte: since7d } },
+      prisma.delivery_log.findMany({
+        where: { created_at: { gte: since7d } },
         select: {
-          deliverstatus: true,
+          delivery_status: true,
           message: {
             select: {
-              campaignsession: {
-                select: { campaignid: true, campaign: { select: { campaignname: true } } },
+              campaign_session: {
+                select: { campaign_id: true, campaign: { select: { campaign_name: true } } },
               },
             },
           },
@@ -119,11 +80,11 @@ export async function reportSummary(_req, res) {
 
     const totalDeliveries = deliveries.length;
     const successDeliveries = deliveries.filter((d) => {
-      const s = (d.deliverstatus || "").toLowerCase();
+      const s = (d.delivery_status || "").toLowerCase();
       return s === "delivered" || s === "sent" || s === "read";
     }).length;
     const failedDeliveries = deliveries.filter((d) => {
-      const s = (d.deliverstatus || "").toLowerCase();
+      const s = (d.delivery_status || "").toLowerCase();
       return s === "failed" || s === "error";
     }).length;
 
@@ -132,18 +93,18 @@ export async function reportSummary(_req, res) {
 
     const trendingMap = new Map();
     for (const d of deliveries) {
-      const key = d.message?.campaignsession?.campaignid ?? 0;
+      const key = d.message?.campaign_session?.campaign_id ?? 0;
       if (!trendingMap.has(key)) {
         trendingMap.set(key, {
-          campaignid: d.message?.campaignsession?.campaignid ?? null,
-          name: d.message?.campaignsession?.campaign?.campaignname || "Unknown campaign",
+          campaignid: d.message?.campaign_session?.campaign_id ?? null,
+          name: d.message?.campaign_session?.campaign?.campaign_name || "Unknown campaign",
           sent: 0,
           delivered: 0,
         });
       }
       const entry = trendingMap.get(key);
       entry.sent += 1;
-      const s = (d.deliverstatus || "").toLowerCase();
+      const s = (d.delivery_status || "").toLowerCase();
       if (s === "delivered" || s === "sent" || s === "read") {
         entry.delivered += 1;
       }

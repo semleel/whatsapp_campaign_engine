@@ -8,7 +8,6 @@ import type {
   RegionRef,
   CampaignStatusRef,
   KeywordEntry,
-  FlowListItem,
 } from "@/lib/types";
 import { showCenteredConfirm } from "@/lib/showAlert";
 
@@ -32,14 +31,12 @@ export default function CampaignDetailPage() {
     campaignName: "",
     objective: "",
     targetRegionID: "",
-    userFlowID: "",
     camStatusID: "",
     startAt: "",
     endAt: "",
   });
   const [regions, setRegions] = useState<RegionRef[]>([]);
   const [statuses, setStatuses] = useState<CampaignStatusRef[]>([]);
-  const [userFlows, setUserFlows] = useState<FlowListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -53,24 +50,20 @@ export default function CampaignDetailPage() {
     if (!id) return;
     (async () => {
       try {
-        const [regionRes, statusRes, campaignRes, keywordRes, flowRes] =
-          await Promise.all([
-            Api.listRegions(),
-            Api.listCampaignStatuses(),
-            Api.getCampaign(id),
-            Api.listKeywordsByCampaign(id),
-            Api.listFlows(),
-          ]);
+        const [regionRes, statusRes, campaignRes, keywordRes] = await Promise.all([
+          Api.listRegions(),
+          Api.listCampaignStatuses(),
+          Api.getCampaign(id),
+          Api.listKeywordsByCampaign(id),
+        ]);
 
         setRegions(regionRes);
         setStatuses(statusRes);
-        setUserFlows(flowRes || []);
 
         setForm({
           campaignName: campaignRes.campaignname || "",
           objective: campaignRes.objective || "",
           targetRegionID: campaignRes.targetregionid?.toString() || "",
-          userFlowID: campaignRes.userflowid?.toString() || "",
           camStatusID: campaignRes.camstatusid?.toString() || "",
           startAt: formatDateForInput(campaignRes.start_at),
           endAt: formatDateForInput(campaignRes.end_at),
@@ -98,7 +91,7 @@ export default function CampaignDetailPage() {
     try {
       await Api.updateCampaign(id, {
         ...form,
-        userFlowID: form.userFlowID ? Number(form.userFlowID) : null,
+        userFlowID: undefined,
       });
       setMessage("Campaign updated successfully.");
       setTimeout(() => router.push("/campaign"), 1000);
@@ -185,6 +178,12 @@ export default function CampaignDetailPage() {
         >
           Back to list
         </Link>
+        <Link
+          href={`/campaign/${id}/steps`}
+          className="text-sm font-medium text-primary hover:underline"
+        >
+          Manage steps
+        </Link>
       </div>
 
       <form
@@ -243,26 +242,6 @@ export default function CampaignDetailPage() {
               ))}
             </select>
           </label>
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-[#8e8e9e] uppercase">
-              User Flow
-            </label>
-            <select
-              className="w-full p-2.5 border border-[#e0e0e7] rounded bg-white text-sm"
-              value={form.userFlowID}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, userFlowID: e.target.value }))
-              }
-              required
-            >
-              <option value="">Select flow...</option>
-              {userFlows.map((uf) => (
-                <option key={uf.userflowid} value={uf.userflowid}>
-                  {uf.userflowname}
-                </option>
-              ))}
-            </select>
-          </div>
           <label className="space-y-1 text-sm font-medium">
             <span>Status</span>
             <select

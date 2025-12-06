@@ -2,15 +2,13 @@
 import express from "express";
 
 import campaignRoutes from "./campaignRoutes.js";
-import referenceRoutes from "./referenceRoutes.js";
+import regionRoutes from "./regionRoutes.js";
 import whatsappRoutes from "./whatsappRoutes.js";
 import templateRoutes from "./templateRoutes.js";
 import integrationRoutes from "./integrationRoutes.js";
 import debugRoutes from "./debugRoutes.js";
 import systemRoutes from "./systemRoutes.js";
-import systemFlowRoutes from "./systemFlowRoutes.js";
 import keywordRoutes from "./keywordRoutes.js";
-import flowRoutes from "./flowRoutes.js";
 import sessionRoutes from "./sessionRoutes.js";
 import debugCampaignConfigRoutes from "./debugCampaignConfigRoutes.js";
 import reportRoutes from "./reportRoutes.js";
@@ -22,14 +20,13 @@ import privilegeRoutes from "./privilegeRoutes.js";
 const router = express.Router();
 
 router.use("/campaign", campaignRoutes);
-router.use("/reference", referenceRoutes);
+router.use("/reference", regionRoutes);
 router.use("/wa", whatsappRoutes);
 router.use("/template", templateRoutes);
 router.use("/integration", integrationRoutes);
 router.use("/debug", debugRoutes);
-router.use("/system", systemRoutes, systemFlowRoutes);
+router.use("/system", systemRoutes);
 router.use("/keyword", keywordRoutes);
-router.use("/flow", flowRoutes);
 router.use("/session", sessionRoutes);
 router.use("/debug", debugCampaignConfigRoutes);
 router.use("/report", reportRoutes);
