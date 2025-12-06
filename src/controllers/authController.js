@@ -28,30 +28,30 @@ export async function login(req, res) {
   if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
   const roleOut =
-    admin.adminid === 1
+    admin.admin_id === 1
       ? "Admin"
       : toTitle(admin.role || DEFAULT_ROLE);
-  const token = jwt.sign({ sub: admin.adminid, role: roleOut }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+  const token = jwt.sign({ sub: admin.admin_id, role: roleOut }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
 
   const expiryDate = expiryFromToken(token);
 
-  const session = await prisma.sessiontoken.create({
+  const session = await prisma.session_token.create({
     data: {
-      adminid: admin.adminid,
-      roletype: roleOut,
-      tokenvalue: token,
-      expiryat: expiryDate,
-      createdby: "system-login",
+      admin_id: admin.admin_id,
+      role_type: roleOut,
+      token_value: token,
+      expiry_at: expiryDate,
+      created_by: "system-login",
     },
   });
 
-  await prisma.token_log.create({ data: { tokenid: session.tokenid, action: "login" } });
+  await prisma.token_log.create({ data: { token_id: session.token_id, action: "login" } });
 
   return res.json({
     token,
     expires_at: expiryDate,
     admin: {
-      id: admin.adminid,
+      id: admin.admin_id,
       name: admin.name,
       email: admin.email,
       role: roleOut,
@@ -62,11 +62,11 @@ export async function login(req, res) {
 export async function logout(req, res) {
   const tokenRow = req.tokenRow;
   if (tokenRow) {
-    await prisma.sessiontoken.update({
-      where: { tokenid: tokenRow.tokenid },
-      data: { is_revoked: true, lastusedat: new Date() },
+    await prisma.session_token.update({
+      where: { token_id: tokenRow.token_id },
+      data: { is_revoked: true, last_used_at: new Date() },
     });
-    await prisma.token_log.create({ data: { tokenid: tokenRow.tokenid, action: "logout" } });
+    await prisma.token_log.create({ data: { token_id: tokenRow.token_id, action: "logout" } });
   }
   return res.json({ success: true });
 }

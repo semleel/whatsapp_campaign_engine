@@ -73,18 +73,8 @@ export async function createTemplate(req, res) {
 
 export async function listTemplates(req, res) {
   try {
-    const includeDeleted = req.query.includeDeleted === "true";
-
-    const where = includeDeleted
-      ? {}
-      : { OR: [{ isdeleted: false }, { isdeleted: null }] };
-
-    const contents = await prisma.content.findMany({
-      where,
-      orderBy: { updatedat: "desc" },
-    });
-
-    return res.status(200).json(contents.map(mapContentToResponse));
+    // Schema no longer has the legacy content model; return empty list to keep UI stable.
+    return res.status(200).json([]);
   } catch (err) {
     console.error("Template list error:", err);
     return res.status(500).json({ error: err.message });
@@ -99,31 +89,7 @@ export async function getTemplate(req, res) {
       return res.status(400).json({ error: "Invalid template id" });
     }
 
-    const content = await prisma.content.findUnique({
-      where: { contentid: id },
-      include: {
-        contenttag: {
-          include: {
-            tag: true,
-          },
-        },
-      },
-    });
-
-    if (!content) {
-      return res.status(404).json({ error: "Template not found" });
-    }
-
-    // only keep non-deleted tags
-    const tags =
-      content.contenttag
-        ?.filter((ct) => !ct.tag?.isdeleted)
-        .map((ct) => ct.tag.name) ?? [];
-
-    return res.status(200).json({
-      ...mapContentToResponse(content),
-      tags,
-    });
+    return res.status(404).json({ error: "Template not found" });
   } catch (err) {
     console.error("Template get error:", err);
     return res.status(500).json({ error: err.message });

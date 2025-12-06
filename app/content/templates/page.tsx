@@ -216,6 +216,8 @@ export default function TemplateLibraryPage() {
           status: normalizeStatus(item.status),
           category: item.category ?? null,
           lang: item.lang ?? item.defaultlang ?? "",
+          defaultlang: item.defaultlang ?? "",
+          currentversion: item.currentversion ?? null,
           updatedat: item.updatedat ?? item.lastupdated ?? null,
           createdat: item.createdat ?? null,
           expiresat: item.expiresat ?? null,
@@ -231,10 +233,16 @@ export default function TemplateLibraryPage() {
 
               const placeholders =
                 (data.placeholders as Record<string, unknown> | null) || null;
-              const headerType =
-                data.headerType ??
+              const headerTypeRaw =
+                (data.headerType as TemplateWithPreview["headerType"]) ??
                 (placeholders?.headerType as TemplateWithPreview["headerType"]) ??
-                (data.mediaurl ? ("media" as const) : ("none" as const));
+                null;
+              const headerType: TemplateWithPreview["headerType"] =
+                headerTypeRaw === "text" || headerTypeRaw === "media"
+                  ? headerTypeRaw
+                  : data.mediaurl
+                  ? "media"
+                  : "none";
               const headerText =
                 data.headerText ??
                 (placeholders?.headerText as string | null) ??
@@ -251,9 +259,9 @@ export default function TemplateLibraryPage() {
                 interactiveType === "menu"
                   ? ensureMenu((data as any).menu ?? placeholders?.menu)
                   : null;
-              const buttons =
+              const buttons: ButtonItem[] =
                 interactiveType === "buttons"
-                  ? data.buttons ??
+                  ? (data.buttons as ButtonItem[] | undefined) ??
                     ((placeholders?.buttons as ButtonItem[] | undefined) ?? [])
                   : [];
               const footerText =

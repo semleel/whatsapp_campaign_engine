@@ -95,27 +95,27 @@ export async function upsertWhatsAppConfig(req, res) {
 // GET /api/system/tokens
 export async function listTokens(req, res) {
     try {
-        const tokens = await prisma.sessiontoken.findMany({
-            orderBy: [{ is_revoked: "asc" }, { issuedat: "desc" }],
+        const tokens = await prisma.session_token.findMany({
+            orderBy: [{ is_revoked: "asc" }, { issued_at: "desc" }],
             include: {
                 admin: {
-                    select: { adminid: true, name: true, email: true, role: true },
+                    select: { admin_id: true, name: true, email: true, role: true },
                 },
             },
         });
 
         const normalized = tokens.map((t) => ({
-            tokenid: t.tokenid,
-            adminid: t.adminid,
+            tokenid: t.token_id,
+            adminid: t.admin_id,
             admin: t.admin
-                ? { id: t.admin.adminid, name: t.admin.name, email: t.admin.email, role: t.admin.role }
+                ? { id: t.admin.admin_id, name: t.admin.name, email: t.admin.email, role: t.admin.role }
                 : null,
-            roletype: t.roletype,
-            issuedat: t.issuedat,
-            expiryat: t.expiryat,
-            lastusedat: t.lastusedat,
+            roletype: t.role_type,
+            issuedat: t.issued_at,
+            expiryat: t.expiry_at,
+            lastusedat: t.last_used_at,
             is_revoked: t.is_revoked,
-            createdby: t.createdby,
+            createdby: t.created_by,
         }));
 
         return res.json(normalized);
@@ -130,33 +130,33 @@ export async function listSecurityLogs(req, res) {
     try {
         const limit = Math.min(Number(req.query.limit) || 200, 500);
         const logs = await prisma.token_log.findMany({
-            orderBy: { logtime: "desc" },
+            orderBy: { log_time: "desc" },
             take: limit,
             include: {
-                sessiontoken: {
+                session_token: {
                     select: {
-                        tokenid: true,
-                        roletype: true,
-                        admin: { select: { adminid: true, name: true, email: true, role: true } },
+                        token_id: true,
+                        role_type: true,
+                        admin: { select: { admin_id: true, name: true, email: true, role: true } },
                     },
                 },
             },
         });
 
         const normalized = logs.map((log) => ({
-            logid: log.logid,
+            logid: log.log_id,
             action: log.action,
-            ipaddress: log.ipaddress,
-            useragent: log.useragent,
-            logtime: log.logtime,
-            tokenid: log.tokenid,
-            role: log.sessiontoken?.roletype || null,
-            admin: log.sessiontoken?.admin
+            ipaddress: log.ip_address,
+            useragent: log.user_agent,
+            logtime: log.log_time,
+            tokenid: log.token_id,
+            role: log.session_token?.role_type || null,
+            admin: log.session_token?.admin
                 ? {
-                      id: log.sessiontoken.admin.adminid,
-                      name: log.sessiontoken.admin.name,
-                      email: log.sessiontoken.admin.email,
-                      role: log.sessiontoken.admin.role,
+                      id: log.session_token.admin.admin_id,
+                      name: log.session_token.admin.name,
+                      email: log.session_token.admin.email,
+                      role: log.session_token.admin.role,
                   }
                 : null,
         }));

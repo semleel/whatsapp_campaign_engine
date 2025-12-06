@@ -9,6 +9,11 @@ import {
   updateCampaign,
   hardDeleteArchivedCampaign,
   hardDeleteArchivedCampaigns,
+  getCampaignWithSteps,
+  upsertCampaignStep,
+  deleteCampaignStep,
+  saveStepChoices,
+  saveCampaignStepsBulk,
 } from "../controllers/campaignController.js";
 import authMiddleware from "../middleware/auth.js";
 import { requirePrivilege } from "../middleware/permission.js";
@@ -24,5 +29,10 @@ router.get("/:id", requirePrivilege("campaigns", "view"), getCampaignById);
 router.put("/update/:id", requirePrivilege("campaigns", "update"), updateCampaign);
 router.put("/archive/:id", requirePrivilege("campaigns", "archive"), archiveCampaign);
 router.put("/restore/:id", requirePrivilege("campaigns", "update"), restoreCampaign);
+router.get("/:id/steps", requirePrivilege("campaigns", "view"), getCampaignWithSteps);
+router.post("/:id/steps", requirePrivilege("campaigns", "update"), upsertCampaignStep);
+router.post("/:id/steps/bulk", requirePrivilege("campaigns", "update"), saveCampaignStepsBulk);
+router.delete("/:id/steps/:stepId", requirePrivilege("campaigns", "update"), deleteCampaignStep);
+router.post("/:id/steps/:stepId/choices", requirePrivilege("campaigns", "update"), saveStepChoices);
 
 export default router;

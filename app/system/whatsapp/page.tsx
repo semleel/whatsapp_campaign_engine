@@ -87,7 +87,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">Display name</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.display_name}
+              value={config.display_name ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, display_name: e.target.value }))}
               disabled={loading || !canUpdate}
             />
@@ -96,7 +96,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">Phone number</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.phone_number}
+              value={config.phone_number ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, phone_number: e.target.value }))}
               disabled={loading || !canUpdate}
             />
@@ -105,7 +105,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">Phone number ID</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.phone_number_id}
+              value={config.phone_number_id ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, phone_number_id: e.target.value }))}
               disabled={loading || !canUpdate}
             />
@@ -114,7 +114,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">WABA ID</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.waba_id}
+              value={config.waba_id ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, waba_id: e.target.value }))}
               disabled={loading || !canUpdate}
             />
@@ -123,7 +123,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">Verify token</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.verify_token}
+              value={config.verify_token ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, verify_token: e.target.value }))}
               disabled={loading || !canUpdate}
             />
@@ -132,7 +132,7 @@ export default function WhatsAppConfigPage() {
             <span className="font-medium">API version</span>
             <input
               className="w-full rounded-md border px-3 py-2"
-              value={config.api_version}
+              value={config.api_version ?? ""}
               onChange={(e) => setConfig((c) => ({ ...c, api_version: e.target.value }))}
               disabled={loading || !canUpdate}
             />

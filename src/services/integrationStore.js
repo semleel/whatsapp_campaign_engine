@@ -106,7 +106,7 @@ function hydrateEndpoint(row, params = []) {
   const bodyTemplateRow = metaRows.find((p) => p.key === BODY_TEMPLATE_KEY);
 
   return {
-    id: row.apiid,
+    id: row.api_id,
     name: row.name,
     method: row.method?.toUpperCase() === "POST" ? "POST" : "GET",
     url: buildUrl(row),
@@ -123,10 +123,10 @@ function hydrateEndpoint(row, params = []) {
     retries: row.retry_enabled ? row.retry_count ?? 0 : 0,
     backoffMs: 0,
     parameters: parameterRows.map((p) => ({
-      id: p.paramid,
+      id: p.param_id,
       key: p.key,
-      valueSource: p.valuesource || "query",
-      value: p.constantvalue || p.valuepath || "",
+      valueSource: p.value_source || "query",
+      value: p.constant_value || p.value_path || "",
       required: !!p.required,
     })),
   };
@@ -134,91 +134,91 @@ function hydrateEndpoint(row, params = []) {
 
 async function fetchParametersForIds(ids) {
   if (!ids.length) return [];
-  const rows = await prisma.apiparameter.findMany({
-    where: { apiid: { in: ids } },
+  const rows = await prisma.api_parameter.findMany({
+    where: { api_id: { in: ids } },
   });
   return rows;
 }
 
 async function fetchParameters(apiId) {
   const rows = await fetchParametersForIds([apiId]);
-  return rows.filter((row) => row.apiid === apiId);
+  return rows.filter((row) => row.api_id === apiId);
 }
 
 async function syncParameters(apiId, normalized) {
-  await prisma.apiparameter.deleteMany({ where: { apiid: apiId } });
+  await prisma.api_parameter.deleteMany({ where: { api_id: apiId } });
   const rows = [];
 
   normalized.headers.forEach((header) => {
     if (!header.key) return;
     rows.push({
-      apiid: apiId,
+      api_id: apiId,
       location: "header",
       key: header.key,
-      valuesource: "constant",
-      constantvalue: header.value,
+      value_source: "constant",
+      constant_value: header.value,
     });
   });
 
   normalized.query.forEach((param) => {
     if (!param.key) return;
     rows.push({
-      apiid: apiId,
+      api_id: apiId,
       location: "query",
       key: param.key,
-      valuesource: "constant",
-      constantvalue: param.value,
+      value_source: "constant",
+      constant_value: param.value,
     });
   });
 
   normalized.parameters.forEach((param) => {
     rows.push({
-      apiid: apiId,
+      api_id: apiId,
       location: "parameter",
       key: param.key,
-      valuesource: param.valueSource,
-      constantvalue: param.value,
+      value_source: param.valueSource,
+      constant_value: param.value,
       required: param.required,
     });
   });
 
   if (normalized.bodyTemplate) {
     rows.push({
-      apiid: apiId,
+      api_id: apiId,
       location: "meta",
       key: BODY_TEMPLATE_KEY,
-      valuesource: "constant",
-      constantvalue: normalized.bodyTemplate,
+      value_source: "constant",
+      constant_value: normalized.bodyTemplate,
     });
   }
 
   if (rows.length) {
-    await prisma.apiparameter.createMany({ data: rows });
+    await prisma.api_parameter.createMany({ data: rows });
   }
 }
 
 export async function listEndpoints() {
   const endpoints = await prisma.api.findMany({
-    orderBy: { apiid: "asc" },
+    orderBy: { api_id: "asc" },
   });
   if (!endpoints.length) return [];
-  const params = await fetchParametersForIds(endpoints.map((row) => row.apiid));
+  const params = await fetchParametersForIds(endpoints.map((row) => row.api_id));
   const grouped = params.reduce((acc, row) => {
-    const list = acc.get(row.apiid) || [];
+    const list = acc.get(row.api_id) || [];
     list.push(row);
-    acc.set(row.apiid, list);
+    acc.set(row.api_id, list);
     return acc;
   }, new Map());
-  return endpoints.map((row) => hydrateEndpoint(row, grouped.get(row.apiid) || []));
+  return endpoints.map((row) => hydrateEndpoint(row, grouped.get(row.api_id) || []));
 }
 
 export async function getEndpoint(id) {
   if (!id) return null;
   const numericId = Number(id);
   if (Number.isNaN(numericId)) return null;
-  const row = await prisma.api.findUnique({ where: { apiid: numericId } });
+  const row = await prisma.api.findUnique({ where: { api_id: numericId } });
   if (!row) return null;
-  const params = await fetchParameters(row.apiid);
+  const params = await fetchParameters(row.api_id);
   return hydrateEndpoint(row, params);
 }
 
@@ -238,31 +238,31 @@ export async function saveEndpoint(data) {
     timeout_ms: normalized.timeoutMs,
     retry_enabled: normalized.retries > 0,
     retry_count: normalized.retries,
-    lastupdated: new Date(),
+    last_updated: new Date(),
   };
 
   let row;
   if (data.id) {
     row = await prisma.api.update({
-      where: { apiid: Number(data.id) },
+      where: { api_id: Number(data.id) },
       data: payload,
     });
   } else {
     row = await prisma.api.create({ data: payload });
   }
 
-  await syncParameters(row.apiid, normalized);
-  const params = await fetchParameters(row.apiid);
+  await syncParameters(row.api_id, normalized);
+  const params = await fetchParameters(row.api_id);
   return hydrateEndpoint(row, params);
 }
 
 export async function deleteEndpoint(id) {
   const numericId = Number(id);
   if (Number.isNaN(numericId)) return false;
-  await prisma.apiparameter.deleteMany({ where: { apiid: numericId } });
+  await prisma.api_parameter.deleteMany({ where: { api_id: numericId } });
   try {
     await prisma.api.delete({
-      where: { apiid: numericId },
+      where: { api_id: numericId },
     });
     return true;
   } catch (err) {

@@ -26,13 +26,13 @@ export function startWhatsappRetryJob() {
   cron.schedule("*/2 * * * *", async () => {
     const now = new Date();
     try {
-      const candidates = await prisma.deliverlog.findMany({
+      const candidates = await prisma.delivery_log.findMany({
         where: {
-          deliverstatus: { in: ["failed", "pending"] },
-          nextretryat: { lte: now },
-          retrycount: { lt: MAX_RETRIES },
+          delivery_status: { in: ["failed", "pending"] },
+          next_retry_at: { lte: now },
+          retry_count: { lt: MAX_RETRIES },
         },
-        orderBy: [{ nextretryat: "asc" }, { deliverid: "asc" }],
+        orderBy: [{ next_retry_at: "asc" }, { delivery_id: "asc" }],
         take: BATCH_SIZE,
         include: {
           message: true,
@@ -45,11 +45,11 @@ export function startWhatsappRetryJob() {
 
       for (const attempt of candidates) {
         const msg = attempt.message;
-        if (!msg?.receiverid) {
-          await prisma.deliverlog.update({
-            where: { deliverid: attempt.deliverid },
+        if (!msg?.receiver_id) {
+          await prisma.delivery_log.update({
+            where: { delivery_id: attempt.delivery_id },
             data: {
-              deliverstatus: "dead",
+              delivery_status: "dead",
               error_message: "Missing receiver phone number",
             },
           });
@@ -58,10 +58,10 @@ export function startWhatsappRetryJob() {
 
         const payload = parsePayload(msg);
         if (!payload) {
-          await prisma.deliverlog.update({
-            where: { deliverid: attempt.deliverid },
+          await prisma.delivery_log.update({
+            where: { delivery_id: attempt.delivery_id },
             data: {
-              deliverstatus: "dead",
+              delivery_status: "dead",
               error_message: "No payload available for retry",
             },
           });
@@ -69,22 +69,26 @@ export function startWhatsappRetryJob() {
         }
 
         // Mark as in-flight to avoid double processing if the job overlaps.
-        await prisma.deliverlog.update({
-          where: { deliverid: attempt.deliverid },
+        await prisma.delivery_log.update({
+          where: { delivery_id: attempt.delivery_id },
           data: {
-            deliverstatus: "retrying",
-            lastattemptat: new Date(),
+            delivery_status: "retrying",
+            last_attempt_at: new Date(),
             error_message: null,
           },
         });
         await prisma.message.update({
-          where: { messageid: msg.messageid },
+          where: { message_id: msg.message_id },
           data: { message_status: "pending", error_message: null },
         });
 
         try {
-          await sendWhatsAppMessage(msg.receiverid, payload, msg, attempt);
-          log(`[WA retry] deliverid=${attempt.deliverid} attempt=${(attempt.retrycount || 0) + 1}`);
+          await sendWhatsAppMessage(msg.receiver_id, payload, msg, attempt);
+          log(
+            `[WA retry] deliverid=${attempt.delivery_id} attempt=${
+              (attempt.retry_count || 0) + 1
+            }`
+          );
         } catch (err) {
           error("[WA retry] send failed:", err?.response?.data || err?.message || err);
           // sendWhatsAppMessage already records failure/backoff.

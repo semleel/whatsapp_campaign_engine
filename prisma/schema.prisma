@@ -8,535 +8,328 @@ datasource db {
 }
 
 model admin {
-  adminid         Int               @id @default(autoincrement())
-  name            String?           @db.VarChar
-  email           String            @unique @db.VarChar
-  password_hash   String            @db.VarChar
-  role            String?           @db.VarChar
-  phonenum        String?           @db.VarChar
-  name            String?           @db.VarChar
-  email           String            @unique @db.VarChar
-  password_hash   String            @db.VarChar
-  role            String?           @db.VarChar
-  phonenum        String?           @db.VarChar
-  createdat       DateTime?         @default(now()) @db.Timestamp(6)
+  admin_id        Int               @id @default(autoincrement())
+  name            String?           @db.VarChar(100)
+  email           String            @unique @db.VarChar(255)
+  password_hash   String            @db.VarChar(255)
+  role            String?           @db.VarChar(50)
+  phone_num       String?           @db.VarChar(20)
+  created_at      DateTime?         @default(now()) @db.Timestamp(6)
   is_active       Boolean?          @default(true)
   campaign        campaign[]
-  sessiontoken    sessiontoken[]
-  whatsapp_config whatsapp_config[]
+  session_token   session_token[]
   staff_privilege staff_privilege[]
   whatsapp_config whatsapp_config[]
 }
 
-model staff_privilege {
-  privilegeid Int     @id @default(autoincrement())
-  adminid     Int
-  resource    String  @db.VarChar
-  view        Boolean @default(false)
-  create      Boolean @default(false)
-  update      Boolean @default(false)
-  archive     Boolean @default(false)
-  admin       admin   @relation(fields: [adminid], references: [adminid], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model allowedinput {
-  allowedinputid Int        @id @default(autoincrement())
-  triggerkey     String     @db.VarChar
-  allowedvalue   String     @db.VarChar
-  triggerkey     String     @db.VarChar
-  allowedvalue   String     @db.VarChar
-  userflowid     Int
-  keymapping     keymapping @relation(fields: [triggerkey, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "allowedinput_triggerkey_fkey")
-}
-
 model api {
-  apiid                Int                    @id @default(autoincrement())
-  name                 String                 @db.VarChar
-  description          String?                @db.VarChar
-  base_url             String                 @db.VarChar
-  path                 String                 @db.VarChar
-  method               String                 @db.VarChar
-  auth_type            String?                @default("none") @db.VarChar
-  auth_header_name     String?                @default("Authorization") @db.VarChar
-  auth_token           String?                @db.VarChar
-  name                 String                 @db.VarChar
-  description          String?                @db.VarChar
-  base_url             String                 @db.VarChar
-  path                 String                 @db.VarChar
-  method               String                 @db.VarChar
-  auth_type            String?                @default("none") @db.VarChar
-  auth_header_name     String?                @default("Authorization") @db.VarChar
-  auth_token           String?                @db.VarChar
-  timeout_ms           Int?                   @default(5000)
-  retry_enabled        Boolean?               @default(false)
-  retry_count          Int?                   @default(0)
-  is_active            Boolean?               @default(true)
-  lastupdated          DateTime?              @db.Timestamp(6)
-  api_log              api_log[]
-  apiparameter         apiparameter[]
-  campaign_api_mapping campaign_api_mapping[]
+  api_id           Int             @id @default(autoincrement())
+  name             String          @db.VarChar(150)
+  description      String?         @db.VarChar(500)
+  base_url         String          @db.VarChar(500)
+  path             String          @db.VarChar(500)
+  method           String          @db.VarChar(20)
+  auth_type        String?         @default("none") @db.VarChar(50)
+  auth_header_name String?         @default("Authorization") @db.VarChar(100)
+  auth_token       String?         @db.VarChar(500)
+  timeout_ms       Int?            @default(5000)
+  retry_enabled    Boolean?        @default(false)
+  retry_count      Int?            @default(0)
+  is_active        Boolean?        @default(true)
+  last_updated     DateTime?       @db.Timestamp(6)
+  api_log          api_log[]
+  api_parameter    api_parameter[]
+  campaign_step    campaign_step[]
 }
 
 model api_log {
-  logid             Int              @id @default(autoincrement())
-  apiid             Int?
-  campaignid        Int?
-  campaignsessionid Int?
-  contactid         Int?
-  request_url       String?
-  request_body      String?
-  response_body     String?
-  response_code     Int?
-  status            String?          @db.VarChar
-  status            String?          @db.VarChar
-  error_message     String?
-  called_at         DateTime?        @default(now()) @db.Timestamp(6)
-  api               api?             @relation(fields: [apiid], references: [apiid], onUpdate: NoAction)
-  campaign          campaign?        @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  campaignsession   campaignsession? @relation(fields: [campaignsessionid], references: [campaignsessionid], onUpdate: NoAction)
-  contact           contact?         @relation(fields: [contactid], references: [contactid], onUpdate: NoAction)
-  api               api?             @relation(fields: [apiid], references: [apiid], onUpdate: NoAction)
-  campaign          campaign?        @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  campaignsession   campaignsession? @relation(fields: [campaignsessionid], references: [campaignsessionid], onUpdate: NoAction)
-  contact           contact?         @relation(fields: [contactid], references: [contactid], onUpdate: NoAction)
+  log_id              Int               @id @default(autoincrement())
+  api_id              Int?
+  campaign_id         Int?
+  campaign_session_id Int?
+  contact_id          Int?
+  request_url         String?
+  request_body        String?
+  response_body       String?
+  response_code       Int?
+  status              String?           @db.VarChar(50)
+  error_message       String?
+  called_at           DateTime?         @default(now()) @db.Timestamp(6)
+  api                 api?              @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign            campaign?         @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_session    campaign_session? @relation(fields: [campaign_session_id], references: [campaign_session_id], onDelete: NoAction, onUpdate: NoAction)
+  contact             contact?          @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model apiparameter {
-  paramid       Int      @id @default(autoincrement())
-  apiid         Int
-  location      String   @db.VarChar
-  key           String   @db.VarChar
-  valuesource   String   @db.VarChar
-  valuepath     String?  @db.VarChar
-  constantvalue String?  @db.VarChar
-  location      String   @db.VarChar
-  key           String   @db.VarChar
-  valuesource   String   @db.VarChar
-  valuepath     String?  @db.VarChar
-  constantvalue String?  @db.VarChar
-  required      Boolean? @default(false)
-  api           api      @relation(fields: [apiid], references: [apiid], onDelete: Cascade, onUpdate: NoAction)
-  api           api      @relation(fields: [apiid], references: [apiid], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model branchrule {
-  branchruleid                                  Int        @id @default(autoincrement())
-  triggerkey                                    String     @db.VarChar
-  inputvalue                                    String     @db.VarChar
-  nextkey                                       String     @db.VarChar
-  triggerkey                                    String     @db.VarChar
-  inputvalue                                    String     @db.VarChar
-  nextkey                                       String     @db.VarChar
-  priority                                      Int?       @default(1)
-  userflowid                                    Int
-  next_userflowid                               Int?
-  userflow_branchrule_next_userflowidTouserflow userflow?  @relation("branchrule_next_userflowidTouserflow", fields: [next_userflowid], references: [userflowid], onUpdate: NoAction)
-  userflow_branchrule_next_userflowidTouserflow userflow?  @relation("branchrule_next_userflowidTouserflow", fields: [next_userflowid], references: [userflowid], onUpdate: NoAction)
-  keymapping                                    keymapping @relation(fields: [triggerkey, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "branchrule_triggerkey_fkey")
-  userflow_branchrule_userflowidTouserflow      userflow   @relation("branchrule_userflowidTouserflow", fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
+model api_parameter {
+  param_id       Int      @id @default(autoincrement())
+  api_id         Int
+  location       String   @db.VarChar(30)
+  key            String   @db.VarChar(100)
+  value_source   String   @db.VarChar(50)
+  value_path     String?  @db.VarChar(255)
+  constant_value String?  @db.VarChar(500)
+  required       Boolean? @default(false)
+  api            api      @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model campaign {
-  campaignid           Int                    @id @default(autoincrement())
-  campaignname         String                 @db.VarChar
-  objective            String?                @db.VarChar
-  campaignname         String                 @db.VarChar
-  objective            String?                @db.VarChar
-  targetregionid       Int?
-  status               String?                @default("Draft") @db.VarChar
-  status               String?                @default("Draft") @db.VarChar
-  createdby_adminid    Int?
-  createdat            DateTime?              @default(now()) @db.Timestamp(6)
-  updatedat            DateTime?              @db.Timestamp(6)
-  start_at             DateTime?              @db.Timestamp(6)
-  end_at               DateTime?              @db.Timestamp(6)
-  userflowid           Int
-  entry_contentkeyid   String?                @db.VarChar
-  userflowid           Int
-  entry_contentkeyid   String?                @db.VarChar
-  api_log              api_log[]
-  admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onUpdate: NoAction)
-  keymapping           keymapping?            @relation(fields: [entry_contentkeyid, userflowid], references: [contentkeyid, userflowid], onDelete: SetNull, onUpdate: NoAction)
-  targetregion         targetregion?          @relation(fields: [targetregionid], references: [regionid], onUpdate: NoAction)
-  userflow             userflow               @relation(fields: [userflowid], references: [userflowid], onUpdate: NoAction)
-  admin                admin?                 @relation(fields: [createdby_adminid], references: [adminid], onUpdate: NoAction)
-  keymapping           keymapping?            @relation(fields: [entry_contentkeyid, userflowid], references: [contentkeyid, userflowid], onDelete: SetNull, onUpdate: NoAction)
-  targetregion         targetregion?          @relation(fields: [targetregionid], references: [regionid], onUpdate: NoAction)
-  userflow             userflow               @relation(fields: [userflowid], references: [userflowid], onUpdate: NoAction)
-  campaign_api_mapping campaign_api_mapping[]
-  campaignsession      campaignsession[]
-  keyword              keyword[]
-  message              message[]
+  campaign_id           Int                    @id @default(autoincrement())
+  campaign_name         String                 @db.VarChar(200)
+  objective             String?                @db.VarChar(500)
+  target_region_id      Int?
+  status                String?                @default("Draft") @db.VarChar(50)
+  created_by_admin_id   Int?
+  created_at            DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at            DateTime?              @db.Timestamp(6)
+  start_at              DateTime?              @db.Timestamp(6)
+  end_at                DateTime?              @db.Timestamp(6)
+  allow_repeat_join     Boolean                @default(true)
+  max_joins_per_contact Int?
+  opt_in_required       Boolean                @default(false)
+  api_log               api_log[]
+  admin                 admin?                 @relation(fields: [created_by_admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
+  target_region         target_region?         @relation(fields: [target_region_id], references: [region_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_keyword      campaign_keyword[]
+  campaign_response     campaign_response[]
+  campaign_session      campaign_session[]
+  campaign_step         campaign_step[]
+  campaign_step_choice  campaign_step_choice[]
+  message               message[]
 }
 
-model campaign_api_mapping {
-  mappingid            Int      @id @default(autoincrement())
-  campaignid           Int
-  contentkeyid         String   @db.VarChar
-  apiid                Int
-  success_contentkeyid String?  @db.VarChar
-  error_contentkeyid   String?  @db.VarChar
-  is_active            Boolean? @default(true)
-  api                  api      @relation(fields: [apiid], references: [apiid], onUpdate: NoAction)
-  campaign             campaign @relation(fields: [campaignid], references: [campaignid], onDelete: Cascade, onUpdate: NoAction)
-  mappingid            Int      @id @default(autoincrement())
-  campaignid           Int
-  contentkeyid         String   @db.VarChar
-  apiid                Int
-  success_contentkeyid String?  @db.VarChar
-  error_contentkeyid   String?  @db.VarChar
-  is_active            Boolean? @default(true)
-  api                  api      @relation(fields: [apiid], references: [apiid], onUpdate: NoAction)
-  campaign             campaign @relation(fields: [campaignid], references: [campaignid], onDelete: Cascade, onUpdate: NoAction)
+model campaign_keyword {
+  keyword_id  Int      @id @default(autoincrement())
+  value       String   @unique @db.VarChar(100)
+  campaign_id Int
+  campaign    campaign @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model campaignsession {
-  campaignsessionid  Int          @id @default(autoincrement())
-  contactid          Int
-  campaignid         Int?
-  checkpoint         String?      @db.VarChar
-  sessionstatus      String?      @default("ACTIVE") @db.VarChar
-  campaignid         Int?
-  checkpoint         String?      @db.VarChar
-  sessionstatus      String?      @default("ACTIVE") @db.VarChar
-  createdat          DateTime?    @default(now()) @db.Timestamp(6)
-  lastactiveat       DateTime?    @db.Timestamp(6)
-  current_userflowid Int?
-  api_log            api_log[]
-  campaign           campaign?    @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  contact            contact      @relation(fields: [contactid], references: [contactid], onDelete: Cascade, onUpdate: NoAction)
-  userflow           userflow?    @relation(fields: [current_userflowid], references: [userflowid], onUpdate: NoAction)
-  campaign           campaign?    @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  contact            contact      @relation(fields: [contactid], references: [contactid], onDelete: Cascade, onUpdate: NoAction)
-  userflow           userflow?    @relation(fields: [current_userflowid], references: [userflowid], onUpdate: NoAction)
-  message            message[]
-  sessionlog         sessionlog[]
+model campaign_response {
+  response_id          Int                   @id @default(autoincrement())
+  session_id           Int
+  campaign_id          Int
+  step_id              Int
+  choice_id            Int?
+  user_input_raw       String?
+  is_valid             Boolean?
+  created_at           DateTime?             @default(now()) @db.Timestamp(6)
+  campaign             campaign              @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step_choice campaign_step_choice? @relation(fields: [choice_id], references: [choice_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_session     campaign_session      @relation(fields: [session_id], references: [campaign_session_id], onDelete: Cascade, onUpdate: NoAction)
+  campaign_step        campaign_step         @relation(fields: [step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model campaign_session {
+  campaign_session_id Int                 @id @default(autoincrement())
+  contact_id          Int
+  campaign_id         Int?
+  session_status      String?             @default("ACTIVE") @db.VarChar(50)
+  created_at          DateTime?           @default(now()) @db.Timestamp(6)
+  last_active_at      DateTime?           @db.Timestamp(6)
+  current_step_id     Int?
+  api_log             api_log[]
+  campaign_response   campaign_response[]
+  campaign            campaign?           @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  contact             contact             @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step       campaign_step?      @relation(fields: [current_step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_session_current_step_fk")
+  message             message[]
+  service_feedback    service_feedback[]
+  session_log         session_log[]
+}
+
+model campaign_step {
+  step_id                                                               Int                    @id @default(autoincrement())
+  campaign_id                                                           Int
+  step_number                                                           Int
+  step_code                                                             String?                @db.VarChar(100)
+  prompt_text                                                           String
+  expected_input                                                        String                 @db.VarChar(30)
+  action_type                                                           String                 @db.VarChar(30)
+  api_id                                                                Int?
+  next_step_id                                                          Int?
+  failure_step_id                                                       Int?
+  is_end_step                                                           Boolean                @default(false)
+  created_at                                                            DateTime?              @default(now()) @db.Timestamp(6)
+  updated_at                                                            DateTime?              @db.Timestamp(6)
+  error_message                                                         String?
+  media_type                                                            String?                @db.VarChar(20)
+  media_url                                                             String?
+  media_caption                                                         String?
+  campaign_response                                                     campaign_response[]
+  campaign_session                                                      campaign_session[]
+  api                                                                   api?                   @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign                                                              campaign               @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step_campaign_step_failure_step_idTocampaign_step            campaign_step?         @relation("campaign_step_failure_step_idTocampaign_step", fields: [failure_step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_step_failure_fk")
+  other_campaign_step_campaign_step_failure_step_idTocampaign_step      campaign_step[]        @relation("campaign_step_failure_step_idTocampaign_step")
+  campaign_step_campaign_step_next_step_idTocampaign_step               campaign_step?         @relation("campaign_step_next_step_idTocampaign_step", fields: [next_step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_step_next_fk")
+  other_campaign_step_campaign_step_next_step_idTocampaign_step         campaign_step[]        @relation("campaign_step_next_step_idTocampaign_step")
+  campaign_step_choice_campaign_step_choice_next_step_idTocampaign_step campaign_step_choice[] @relation("campaign_step_choice_next_step_idTocampaign_step")
+  campaign_step_choice_campaign_step_choice_step_idTocampaign_step      campaign_step_choice[] @relation("campaign_step_choice_step_idTocampaign_step")
+  session_log                                                           session_log[]
+
+  @@unique([campaign_id, step_code], map: "campaign_step_unique_code_per_campaign")
+  @@unique([campaign_id, step_number], map: "campaign_step_unique_number")
+}
+
+model campaign_step_choice {
+  choice_id                                                      Int                 @id @default(autoincrement())
+  campaign_id                                                    Int
+  step_id                                                        Int
+  choice_code                                                    String              @db.VarChar(100)
+  label                                                          String
+  description                                                    String?
+  next_step_id                                                   Int?
+  is_correct                                                     Boolean?
+  created_at                                                     DateTime?           @default(now()) @db.Timestamp(6)
+  campaign_response                                              campaign_response[]
+  campaign                                                       campaign            @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step_campaign_step_choice_next_step_idTocampaign_step campaign_step?      @relation("campaign_step_choice_next_step_idTocampaign_step", fields: [next_step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step_campaign_step_choice_step_idTocampaign_step      campaign_step       @relation("campaign_step_choice_step_idTocampaign_step", fields: [step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model contact {
-  contactid       Int               @id @default(autoincrement())
-  name            String?           @db.VarChar
-  phonenum        String            @unique @db.VarChar
-  email           String?           @db.VarChar
-  name            String?           @db.VarChar
-  phonenum        String            @unique @db.VarChar
-  email           String?           @db.VarChar
-  regionid        Int?
-  createdat       DateTime?         @default(now()) @db.Timestamp(6)
-  tos_accepted    Boolean?          @default(false)
-  lang            String?           @db.VarChar
-  onboarded       Boolean?          @default(false)
-  lang            String?           @db.VarChar
-  onboarded       Boolean?          @default(false)
-  api_log         api_log[]
-  campaignsession campaignsession[]
-  targetregion    targetregion?     @relation(fields: [regionid], references: [regionid], onUpdate: NoAction)
-  targetregion    targetregion?     @relation(fields: [regionid], references: [regionid], onUpdate: NoAction)
-  message         message[]
+  contact_id       Int                @id @default(autoincrement())
+  name             String?            @db.VarChar(100)
+  phone_num        String             @unique @db.VarChar(30)
+  email            String?            @db.VarChar(255)
+  region_id        Int?
+  created_at       DateTime?          @default(now()) @db.Timestamp(6)
+  tos_accepted     Boolean?           @default(false)
+  lang             String?            @db.VarChar(10)
+  onboarded        Boolean?           @default(false)
+  api_log          api_log[]
+  campaign_session campaign_session[]
+  target_region    target_region?     @relation(fields: [region_id], references: [region_id], onDelete: NoAction, onUpdate: NoAction)
+  message          message[]
+  service_feedback service_feedback[]
 }
 
-model content {
-  contentid    Int          @id @default(autoincrement())
-  type         String?      @db.VarChar
-  category     String?      @db.VarChar
-  title        String?      @db.VarChar
-  status       String?      @db.VarChar
-  lang         String?      @db.VarChar(5)
-  type         String?      @db.VarChar
-  category     String?      @db.VarChar
-  title        String?      @db.VarChar
-  status       String?      @db.VarChar
-  lang         String?      @db.VarChar(5)
-  body         String?
-  placeholders Json?
-  description  String?
-  mediaurl     String?      @db.VarChar
-  mediaurl     String?      @db.VarChar
-  createdat    DateTime?    @default(now()) @db.Timestamp(6)
-  updatedat    DateTime?    @db.Timestamp(6)
-  expiresat    DateTime?    @db.Timestamp(6)
-  isdeleted    Boolean?     @default(false)
-  contenttag   contenttag[]
-  keymapping   keymapping[]
-}
-
-model contenttag {
-  contentid Int
-  tagid     Int
-  content   content @relation(fields: [contentid], references: [contentid], onDelete: Cascade, onUpdate: NoAction)
-  tag       tag     @relation(fields: [tagid], references: [tagid], onDelete: Cascade, onUpdate: NoAction)
-  content   content @relation(fields: [contentid], references: [contentid], onDelete: Cascade, onUpdate: NoAction)
-  tag       tag     @relation(fields: [tagid], references: [tagid], onDelete: Cascade, onUpdate: NoAction)
-
-  @@id([contentid, tagid])
-}
-
-model deliverlog {
-  deliverid       Int       @id @default(autoincrement())
-  messageid       Int
-  deliverstatus   String?   @default("pending") @db.VarChar
-  deliverstatus   String?   @default("pending") @db.VarChar
-  retrycount      Int?      @default(0)
-  lastattemptat   DateTime? @db.Timestamp(6)
-  nextretryat     DateTime? @db.Timestamp(6)
-  provider_msg_id String?   @db.VarChar
-  provider_msg_id String?   @db.VarChar
+model delivery_log {
+  delivery_id     Int       @id @default(autoincrement())
+  message_id      Int
+  delivery_status String?   @default("pending") @db.VarChar(50)
+  retry_count     Int?      @default(0)
+  last_attempt_at DateTime? @db.Timestamp(6)
+  next_retry_at   DateTime? @db.Timestamp(6)
+  provider_msg_id String?   @db.VarChar(255)
   error_message   String?
-  createdat       DateTime? @default(now()) @db.Timestamp(6)
-  message         message   @relation(fields: [messageid], references: [messageid], onDelete: Cascade, onUpdate: NoAction)
-  message         message   @relation(fields: [messageid], references: [messageid], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model fallback {
-  fallbackid   Int        @id @default(autoincrement())
-  scope        String     @db.VarChar
-  value        String?    @db.VarChar
-  contentkeyid String     @db.VarChar
-  scope        String     @db.VarChar
-  value        String?    @db.VarChar
-  contentkeyid String     @db.VarChar
-  userflowid   Int
-  keymapping   keymapping @relation(fields: [contentkeyid, userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction, map: "fallback_contentkeyid_fkey")
-}
-
-model keymapping {
-  contentkeyid                                                                  String            @db.VarChar
-  contentid                                                                     Int
-  userflowid                                                                    Int
-  ui_metadata                                                                   Json?             @default("{}")
-  allowedinput                                                                  allowedinput[]
-  branchrule                                                                    branchrule[]
-  campaign                                                                      campaign[]
-  fallback                                                                      fallback[]
-  flow_transition_flow_transition_from_contentkeyid_from_userflowidTokeymapping flow_transition[] @relation("flow_transition_from_contentkeyid_from_userflowidTokeymapping")
-  flow_transition_flow_transition_to_contentkeyid_to_userflowidTokeymapping     flow_transition[] @relation("flow_transition_to_contentkeyid_to_userflowidTokeymapping")
-  content                                                                       content           @relation(fields: [contentid], references: [contentid], onUpdate: NoAction)
-  userflow                                                                      userflow          @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
-  contentkeyid                                                                  String            @db.VarChar
-  contentid                                                                     Int
-  userflowid                                                                    Int
-  ui_metadata                                                                   Json?             @default("{}")
-  allowedinput                                                                  allowedinput[]
-  branchrule                                                                    branchrule[]
-  campaign                                                                      campaign[]
-  fallback                                                                      fallback[]
-  flow_transition_flow_transition_from_contentkeyid_from_userflowidTokeymapping flow_transition[] @relation("flow_transition_from_contentkeyid_from_userflowidTokeymapping")
-  flow_transition_flow_transition_to_contentkeyid_to_userflowidTokeymapping     flow_transition[] @relation("flow_transition_to_contentkeyid_to_userflowidTokeymapping")
-  content                                                                       content           @relation(fields: [contentid], references: [contentid], onUpdate: NoAction)
-  userflow                                                                      userflow          @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
-
-  @@id([contentkeyid, userflowid])
-}
-
-model keyword {
-  keywordid  Int      @id @default(autoincrement())
-  value      String   @unique @db.VarChar
-  value      String   @unique @db.VarChar
-  campaignid Int
-  campaign   campaign @relation(fields: [campaignid], references: [campaignid], onDelete: Cascade, onUpdate: NoAction)
-  campaign   campaign @relation(fields: [campaignid], references: [campaignid], onDelete: Cascade, onUpdate: NoAction)
+  created_at      DateTime? @default(now()) @db.Timestamp(6)
+  message         message   @relation(fields: [message_id], references: [message_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
 model message {
-  messageid         Int              @id @default(autoincrement())
-  campaignid        Int?
-  campaignsessionid Int?
-  contactid         Int?
-  contentkeyid      String?          @db.VarChar
-  direction         String           @db.VarChar
-  contentkeyid      String?          @db.VarChar
-  direction         String           @db.VarChar
-  senderid          String?
-  receiverid        String?
-  content_type      String?          @default("text") @db.VarChar
-  content_type      String?          @default("text") @db.VarChar
-  message_content   String?
-  payload_json      String?
-  message_status    String?          @default("pending") @db.VarChar
-  provider_msg_id   String?          @db.VarChar
-  message_status    String?          @default("pending") @db.VarChar
-  provider_msg_id   String?          @db.VarChar
-  error_message     String?
-  timestamp         DateTime?        @default(now()) @db.Timestamp(6)
-  deliverlog        deliverlog[]
-  campaign          campaign?        @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  campaignsession   campaignsession? @relation(fields: [campaignsessionid], references: [campaignsessionid], onUpdate: NoAction)
-  contact           contact?         @relation(fields: [contactid], references: [contactid], onUpdate: NoAction)
-  campaign          campaign?        @relation(fields: [campaignid], references: [campaignid], onUpdate: NoAction)
-  campaignsession   campaignsession? @relation(fields: [campaignsessionid], references: [campaignsessionid], onUpdate: NoAction)
-  contact           contact?         @relation(fields: [contactid], references: [contactid], onUpdate: NoAction)
+  message_id          Int               @id @default(autoincrement())
+  campaign_id         Int?
+  campaign_session_id Int?
+  contact_id          Int?
+  direction           String            @db.VarChar(20)
+  sender_id           String?
+  receiver_id         String?
+  content_type        String?           @default("text") @db.VarChar(30)
+  message_content     String?
+  payload_json        String?
+  message_status      String?           @default("pending") @db.VarChar(50)
+  provider_msg_id     String?           @db.VarChar(255)
+  error_message       String?
+  created_at          DateTime?         @default(now()) @db.Timestamp(6)
+  delivery_log        delivery_log[]
+  campaign            campaign?         @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_session    campaign_session? @relation(fields: [campaign_session_id], references: [campaign_session_id], onDelete: NoAction, onUpdate: NoAction)
+  contact             contact?          @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model sessionlog {
-  logid             Int             @id @default(autoincrement())
-  campaignsessionid Int
-  contentkeyid      String?         @db.VarChar
-  detail            String?         @db.VarChar
-  contentkeyid      String?         @db.VarChar
-  detail            String?         @db.VarChar
-  loggedat          DateTime?       @default(now()) @db.Timestamp(6)
-  campaignsession   campaignsession @relation(fields: [campaignsessionid], references: [campaignsessionid], onDelete: Cascade, onUpdate: NoAction)
-  campaignsession   campaignsession @relation(fields: [campaignsessionid], references: [campaignsessionid], onDelete: Cascade, onUpdate: NoAction)
+model service_feedback {
+  feedback_id         Int               @id @default(autoincrement())
+  contact_id          Int
+  rating              Int?
+  comment             String?
+  created_at          DateTime?         @default(now()) @db.Timestamp(6)
+  campaign_session_id Int?
+  contact             contact           @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_feedback_contact_id_fkey")
+  campaign_session    campaign_session? @relation(fields: [campaign_session_id], references: [campaign_session_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model sessiontoken {
-  tokenid    Int         @id @default(autoincrement())
-  adminid    Int?
-  roletype   String      @db.VarChar
-  tokenvalue String      @db.VarChar
-  roletype   String      @db.VarChar
-  tokenvalue String      @db.VarChar
-  issuedat   DateTime?   @default(now()) @db.Timestamp(6)
-  expiryat   DateTime?   @db.Timestamp(6)
-  is_revoked Boolean?    @default(false)
-  lastusedat DateTime?   @db.Timestamp(6)
-  createdby  String?     @db.VarChar
-  createdby  String?     @db.VarChar
-  createdat  DateTime?   @default(now()) @db.Timestamp(6)
-  admin      admin?      @relation(fields: [adminid], references: [adminid], onUpdate: NoAction)
-  admin      admin?      @relation(fields: [adminid], references: [adminid], onUpdate: NoAction)
-  token_log  token_log[]
+model session_log {
+  log_id              Int              @id @default(autoincrement())
+  campaign_session_id Int
+  step_id             Int?
+  detail              String?          @db.VarChar(500)
+  logged_at           DateTime?        @default(now()) @db.Timestamp(6)
+  campaign_session    campaign_session @relation(fields: [campaign_session_id], references: [campaign_session_id], onDelete: NoAction, onUpdate: NoAction)
+  campaign_step       campaign_step?   @relation(fields: [step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction, map: "session_log_step_fk")
 }
 
-model tag {
-  tagid      Int          @id @default(autoincrement())
-  name       String       @unique @db.VarChar
-  name       String       @unique @db.VarChar
-  isdeleted  Boolean      @default(false)
-  createdat  DateTime     @default(now()) @db.Timestamptz(6)
-  updatedat  DateTime     @default(now()) @db.Timestamptz(6)
-  contenttag contenttag[]
-}
-
-model targetregion {
-  regionid   Int        @id @default(autoincrement())
-  regionname String     @db.VarChar
-  regioncode String     @db.VarChar
-  regionname String     @db.VarChar
-  regioncode String     @db.VarChar
-  campaign   campaign[]
-  contact    contact[]
-}
-
-model token_log {
-  logid        Int           @id @default(autoincrement())
-  tokenid      Int?
-  action       String?       @db.VarChar
-  ipaddress    String?       @db.VarChar
-  action       String?       @db.VarChar
-  ipaddress    String?       @db.VarChar
-  useragent    String?
-  logtime      DateTime?     @default(now()) @db.Timestamp(6)
-  sessiontoken sessiontoken? @relation(fields: [tokenid], references: [tokenid], onDelete: Cascade, onUpdate: NoAction)
-  sessiontoken sessiontoken? @relation(fields: [tokenid], references: [tokenid], onDelete: Cascade, onUpdate: NoAction)
-}
-
-model userflow {
-  userflowid                                                Int               @id @default(autoincrement())
-  userflowname                                              String            @db.VarChar
-  description                                               String?
-  status                                                    String?           @default("Draft") @db.VarChar
-  createdat                                                 DateTime?         @default(now()) @db.Timestamp(6)
-  updatedat                                                 DateTime?         @db.Timestamp(6)
-  entry_contentkeyid                                        String?           @db.VarChar
-  fallback_contentkeyid                                     String?           @db.VarChar
-  flow_type                                                 String            @default("CAMPAIGN") @db.VarChar
-  branchrule_branchrule_next_userflowidTouserflow           branchrule[]      @relation("branchrule_next_userflowidTouserflow")
-  branchrule_branchrule_userflowidTouserflow                branchrule[]      @relation("branchrule_userflowidTouserflow")
-  campaign                                                  campaign[]
-  campaignsession                                           campaignsession[]
-  flow_transition_flow_transition_from_userflowidTouserflow flow_transition[] @relation("flow_transition_from_userflowidTouserflow")
-  flow_transition_flow_transition_to_userflowidTouserflow   flow_transition[] @relation("flow_transition_to_userflowidTouserflow")
-  keymapping                                                keymapping[]
-  system_flow                                               system_flow[]
-  system_keyword                                            system_keyword[]
-  userflowid                                                Int               @id @default(autoincrement())
-  userflowname                                              String            @db.VarChar
-  description                                               String?
-  status                                                    String?           @default("Draft") @db.VarChar
-  createdat                                                 DateTime?         @default(now()) @db.Timestamp(6)
-  updatedat                                                 DateTime?         @db.Timestamp(6)
-  entry_contentkeyid                                        String?           @db.VarChar
-  fallback_contentkeyid                                     String?           @db.VarChar
-  flow_type                                                 String            @default("CAMPAIGN") @db.VarChar
-  branchrule_branchrule_next_userflowidTouserflow           branchrule[]      @relation("branchrule_next_userflowidTouserflow")
-  branchrule_branchrule_userflowidTouserflow                branchrule[]      @relation("branchrule_userflowidTouserflow")
-  campaign                                                  campaign[]
-  campaignsession                                           campaignsession[]
-  flow_transition_flow_transition_from_userflowidTouserflow flow_transition[] @relation("flow_transition_from_userflowidTouserflow")
-  flow_transition_flow_transition_to_userflowidTouserflow   flow_transition[] @relation("flow_transition_to_userflowidTouserflow")
-  keymapping                                                keymapping[]
-  system_flow                                               system_flow[]
-  system_keyword                                            system_keyword[]
-}
-
-model whatsapp_config {
-  id                Int       @id @default(autoincrement())
-  display_name      String?   @db.VarChar
-  phone_number      String    @db.VarChar
-  phone_number_id   String    @db.VarChar
-  waba_id           String?   @db.VarChar
-  verify_token      String    @db.VarChar
-  api_version       String?   @default("v21.0") @db.VarChar
-  display_name      String?   @db.VarChar
-  phone_number      String    @db.VarChar
-  phone_number_id   String    @db.VarChar
-  waba_id           String?   @db.VarChar
-  verify_token      String    @db.VarChar
-  api_version       String?   @default("v21.0") @db.VarChar
-  is_active         Boolean?  @default(true)
-  createdat         DateTime? @default(now()) @db.Timestamp(6)
-  updatedat         DateTime? @db.Timestamp(6)
-  updatedby_adminid Int?
-  admin             admin?    @relation(fields: [updatedby_adminid], references: [adminid], onUpdate: NoAction)
-}
-
-model flow_transition {
-  transitionid                                                             Int        @id @default(autoincrement())
-  from_userflowid                                                          Int
-  from_contentkeyid                                                        String     @db.VarChar
-  to_userflowid                                                            Int
-  to_contentkeyid                                                          String     @db.VarChar
-  transition_type                                                          String     @default("AUTO") @db.VarChar
-  condition_value                                                          String?    @db.VarChar
-  priority                                                                 Int?       @default(1)
-  is_active                                                                Boolean?   @default(true)
-  createdat                                                                DateTime?  @default(now()) @db.Timestamp(6)
-  keymapping_flow_transition_from_contentkeyid_from_userflowidTokeymapping keymapping @relation("flow_transition_from_contentkeyid_from_userflowidTokeymapping", fields: [from_contentkeyid, from_userflowid], references: [contentkeyid, userflowid], onDelete: Cascade, onUpdate: NoAction)
-  userflow_flow_transition_from_userflowidTouserflow                       userflow   @relation("flow_transition_from_userflowidTouserflow", fields: [from_userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
-  keymapping_flow_transition_to_contentkeyid_to_userflowidTokeymapping     keymapping @relation("flow_transition_to_contentkeyid_to_userflowidTokeymapping", fields: [to_contentkeyid, to_userflowid], references: [contentkeyid, userflowid], onUpdate: NoAction)
-  userflow_flow_transition_to_userflowidTouserflow                         userflow   @relation("flow_transition_to_userflowidTouserflow", fields: [to_userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
+model session_token {
+  token_id     Int         @id @default(autoincrement())
+  admin_id     Int?
+  role_type    String      @db.VarChar(50)
+  token_value  String      @db.VarChar(255)
+  issued_at    DateTime?   @default(now()) @db.Timestamp(6)
+  expiry_at    DateTime?   @db.Timestamp(6)
+  is_revoked   Boolean?    @default(false)
+  last_used_at DateTime?   @db.Timestamp(6)
+  created_by   String?     @db.VarChar(100)
+  created_at   DateTime?   @default(now()) @db.Timestamp(6)
+  admin        admin?      @relation(fields: [admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
+  token_log    token_log[]
 }
 
 model staff_privilege {
-  privilegeid Int     @id @default(autoincrement())
-  adminid     Int
-  resource    String  @db.VarChar
-  view        Boolean @default(false)
-  create      Boolean @default(false)
-  update      Boolean @default(false)
-  archive     Boolean @default(false)
-  admin       admin   @relation(fields: [adminid], references: [adminid], onDelete: Cascade, onUpdate: NoAction)
+  privilege_id Int     @id @default(autoincrement())
+  admin_id     Int
+  resource     String  @db.VarChar(100)
+  can_view     Boolean @default(false)
+  can_create   Boolean @default(false)
+  can_update   Boolean @default(false)
+  can_archive  Boolean @default(false)
+  admin        admin   @relation(fields: [admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
 }
 
-model system_keyword {
-  keyword      String       @id @db.VarChar
-  userflowid   Int
-  is_active    Boolean?     @default(true)
-  createdat    DateTime?    @default(now()) @db.Timestamp(6)
-  systemflowid Int?
-  system_flow  system_flow? @relation(fields: [systemflowid], references: [systemflowid])
-  userflow     userflow     @relation(fields: [userflowid], references: [userflowid], onDelete: Cascade, onUpdate: NoAction)
-
-  @@index([systemflowid], map: "idx_system_keyword_systemflowid")
+model system_command {
+  command     String    @id @db.VarChar(50)
+  description String?
+  is_enabled  Boolean   @default(true)
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
 }
 
-model system_flow {
-  systemflowid   Int              @id @default(autoincrement())
-  code           String           @unique @db.VarChar(50)
-  userflowid     Int
-  is_active      Boolean?         @default(true)
-  createdat      DateTime?        @default(now()) @db.Timestamp(6)
-  userflow       userflow         @relation(fields: [userflowid], references: [userflowid], onDelete: NoAction, onUpdate: NoAction)
-  system_keyword system_keyword[]
+model tag {
+  tag_id     Int      @id @default(autoincrement())
+  name       String   @unique @db.VarChar(100)
+  is_deleted Boolean  @default(false)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model target_region {
+  region_id   Int        @id @default(autoincrement())
+  region_name String     @db.VarChar(100)
+  region_code String     @db.VarChar(50)
+  campaign    campaign[]
+  contact     contact[]
+}
+
+model token_log {
+  log_id        Int            @id @default(autoincrement())
+  token_id      Int?
+  action        String?        @db.VarChar(100)
+  ip_address    String?        @db.VarChar(50)
+  user_agent    String?
+  log_time      DateTime?      @default(now()) @db.Timestamp(6)
+  session_token session_token? @relation(fields: [token_id], references: [token_id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model whatsapp_config {
+  id                  Int       @id @default(autoincrement())
+  display_name        String?   @db.VarChar(255)
+  phone_number        String    @db.VarChar(50)
+  phone_number_id     String    @db.VarChar(100)
+  waba_id             String?   @db.VarChar(100)
+  verify_token        String    @db.VarChar(255)
+  api_version         String?   @default("v21.0") @db.VarChar(20)
+  is_active           Boolean?  @default(true)
+  created_at          DateTime? @default(now()) @db.Timestamp(6)
+  updated_at          DateTime? @db.Timestamp(6)
+  updated_by_admin_id Int?
+  admin               admin?    @relation(fields: [updated_by_admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
 }

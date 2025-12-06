@@ -2,164 +2,9 @@
 import { whatsappWebhookSchema } from "../validators/webhookValidator.js";
 import { prisma } from "../config/prismaClient.js";
 import { sendWhatsAppMessage } from "../services/whatsappService.js";
+import { handleIncomingMessage } from "../services/campaignEngine.js";
 import { log, error } from "../utils/logger.js";
-import {
-  getActiveSessionForContact,
-  getOrCreateGlobalMenuSession,
-  startCampaignFromMenuSelection,
-  SESSION_STATUS,
-  runSystemStartFlow,
-} from "../services/flowEngine.js";
-import { SESSION_EXPIRY_MINUTES } from "../config/index.js";
 import { upsertStatus } from "../services/whatsappStatusService.js";
-import { handleFlowOrKeyword } from "../services/whatsappFlowHandler.js";
-import {
-  buildGlobalFallbackBundle,
-} from "../services/whatsappFallbackService.js";
-import {
-  buildWhatsappMessageFromContent,
-} from "../services/whatsappContentService.js";
-
-// Normalise incoming WhatsApp text / button title into a single string
-function extractUserText(incoming) {
-  const msg = incoming?.messages?.[0];
-  if (!msg) return { text: "", raw: null };
-
-  if (msg.type === "interactive" && msg.interactive?.type === "button_reply") {
-    const title = msg.interactive.button_reply?.title || "";
-    return { text: title.trim(), raw: msg };
-  }
-
-  if (msg.type === "interactive" && msg.interactive?.type === "list_reply") {
-    const title = msg.interactive.list_reply?.title || "";
-    return { text: title.trim(), raw: msg };
-  }
-
-  if (msg.type === "text" && msg.text?.body) {
-    return { text: msg.text.body.trim(), raw: msg };
-  }
-
-  return { text: "", raw: msg };
-}
-
-async function enforceSessionExpiry(contact) {
-  if (!contact?.contactid) return null;
-  const session = await getActiveSessionForContact(contact.contactid);
-  if (!session) return null;
-
-  const last = session.lastactiveat || session.createdat;
-  const diffMs = Date.now() - new Date(last || Date.now()).getTime();
-  const diffMin = diffMs / (60 * 1000);
-
-  if (diffMin > SESSION_EXPIRY_MINUTES) {
-    await prisma.campaignsession.update({
-      where: { campaignsessionid: session.campaignsessionid },
-      data: { sessionstatus: SESSION_STATUS.EXPIRED },
-    });
-    return null;
-  }
-
-  return session;
-}
-
-async function buildActiveCampaignList() {
-  const campaigns = await prisma.campaign.findMany({
-    where: { status: "Active" },
-    orderBy: { campaignid: "asc" },
-    select: {
-      campaignid: true,
-      campaignname: true,
-      objective: true,
-    },
-  });
-
-  if (!campaigns.length) return null;
-
-  return {
-    type: "interactive",
-    interactive: {
-      type: "list",
-      body: { text: "Please choose a campaign to join:" },
-      action: {
-        button: "View campaigns",
-        sections: [
-          {
-            title: "Available campaigns",
-            rows: campaigns.map((c) => ({
-              id: `campaign:${c.campaignid}`,
-              title: c.campaignname,
-              description: c.objective || "",
-            })),
-          },
-        ],
-      },
-    },
-  };
-}
-
-async function sendActiveCampaignList(contact, session) {
-  const payload = await buildActiveCampaignList();
-  if (!payload) {
-    await sendWhatsAppMessage(contact.phonenum, {
-      type: "text",
-      text: { body: "No active campaigns at the moment." },
-    });
-    if (session) {
-      await prisma.campaignsession.update({
-        where: { campaignsessionid: session.campaignsessionid },
-        data: { lastactiveat: new Date() },
-      });
-    }
-    return;
-  }
-
-  const msgRecord = await prisma.message.create({
-    data: {
-      direction: "outbound",
-      content_type: payload.type || "interactive",
-      message_content: "[interactive:list]",
-      senderid: "whatsapp-engine",
-      receiverid: contact.phonenum,
-      provider_msg_id: null,
-      timestamp: new Date(),
-      message_status: "pending",
-      payload_json: JSON.stringify(payload),
-      contactid: contact.contactid,
-      campaignsessionid: session?.campaignsessionid || null,
-      campaignid: session?.campaignid || null,
-      contentkeyid: null,
-    },
-  });
-
-  const res = await sendWhatsAppMessage(contact.phonenum, payload, msgRecord);
-  const providerId = res?.messages?.[0]?.id ?? null;
-  if (providerId) {
-    await prisma.message.update({
-      where: { messageid: msgRecord.messageid },
-      data: { provider_msg_id: providerId, message_status: "sent" },
-    });
-  }
-
-  if (session) {
-    await prisma.campaignsession.update({
-      where: { campaignsessionid: session.campaignsessionid },
-      data: { lastactiveat: new Date() },
-    });
-  }
-}
-
-export async function verifyWebhook(req, res) {
-  const mode = req.query["hub.mode"];
-  const challenge = req.query["hub.challenge"];
-  const token = req.query["hub.verify_token"];
-
-  if (mode && token === process.env.WEBHOOK_VERIFY_TOKEN) {
-    log("Webhook verified successfully");
-    return res.status(200).send(challenge);
-  }
-  error("Webhook verification failed");
-  return res.sendStatus(403);
-}
 
 /**
  * Convert raw WA message into a simple display text for logging/DB
@@ -184,6 +29,41 @@ const buildDisplayText = (message) => {
       return "[Unsupported message type]";
   }
 };
+
+function mapToEnginePayload(message) {
+  if (message.type === "interactive" && message.interactive?.type === "button_reply") {
+    return {
+      text: message.interactive.button_reply?.title || "",
+      type: "button",
+    };
+  }
+  if (message.type === "interactive" && message.interactive?.type === "list_reply") {
+    return {
+      text: message.interactive.list_reply?.title || "",
+      type: "list",
+    };
+  }
+  if (message.type === "text") {
+    return {
+      text: message.text?.body?.trim() || "",
+      type: "text",
+    };
+  }
+  return { text: "", type: "text" };
+}
+
+export async function verifyWebhook(req, res) {
+  const mode = req.query["hub.mode"];
+  const challenge = req.query["hub.challenge"];
+  const token = req.query["hub.verify_token"];
+
+  if (mode && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+    log("Webhook verified successfully");
+    return res.status(200).send(challenge);
+  }
+  error("Webhook verification failed");
+  return res.sendStatus(403);
+}
 
 export async function webhookHandler(req, res) {
   const parseResult = whatsappWebhookSchema.safeParse(req.body);
@@ -224,10 +104,7 @@ export async function webhookHandler(req, res) {
     for (const message of messages) {
       const from = message?.from;
       if (!from) {
-        error(
-          "Incoming message missing 'from':",
-          JSON.stringify(message, null, 2)
-        );
+        error("Incoming message missing 'from':", JSON.stringify(message, null, 2));
         continue;
       }
 
@@ -246,9 +123,9 @@ export async function webhookHandler(req, res) {
       let contact = null;
       try {
         contact = await prisma.contact.upsert({
-          where: { phonenum: from },
+          where: { phone_num: from },
           update: waProfileName ? { name: waProfileName } : {},
-          create: { phonenum: from, name: waProfileName || null },
+          create: { phone_num: from, name: waProfileName || null },
         });
       } catch (contactErr) {
         error("Failed to upsert contact:", contactErr);
@@ -256,10 +133,7 @@ export async function webhookHandler(req, res) {
 
       const rawText = buildDisplayText(message);
       log(`Message received: "${rawText}"`);
-      log(
-        `From ${from} (to ${waDisplayPhone || "unknown"
-        } [id ${waPhoneNumberId || "unknown"}])`
-      );
+      log(`From ${from} (to ${waDisplayPhone || "unknown"} [id ${waPhoneNumberId || "unknown"}])`);
 
       // Store inbound
       await prisma.message.create({
@@ -267,224 +141,66 @@ export async function webhookHandler(req, res) {
           direction: "inbound",
           content_type: message.type || "text",
           message_content: rawText,
-          senderid: from,
-          receiverid: waDisplayPhone,
+          sender_id: from,
+          receiver_id: waDisplayPhone,
           provider_msg_id: message.id ?? null,
-          timestamp: new Date(),
+          created_at: new Date(),
           message_status: "received",
-          contactid: contact?.contactid ?? null,
+          contact_id: contact?.contact_id ?? null,
+          payload_json: JSON.stringify(message),
         },
       });
 
-      const { text: userText } = extractUserText({ messages: [message] });
-      const lower = (userText || "").trim().toLowerCase();
-      const activeSession = await enforceSessionExpiry(contact);
+      const enginePayload = mapToEnginePayload(message);
+      const result = await handleIncomingMessage({
+        fromPhone: from,
+        text: enginePayload.text,
+        type: enginePayload.type,
+        payload: req.body,
+      });
 
-      // --- Global commands ---
-      if (lower === "/reset") {
-        if (contact?.contactid) {
-          await prisma.campaignsession.updateMany({
-            where: {
-              contactid: contact.contactid,
-              sessionstatus: SESSION_STATUS.ACTIVE,
-            },
-            data: {
-              sessionstatus: SESSION_STATUS.COMPLETED,
-              lastactiveat: new Date(),
-            },
+      if (!result?.outbound?.length) continue;
+
+      for (const outbound of result.outbound) {
+        const to = outbound.to || from;
+        const content = outbound.content || "";
+        const waPayload =
+          outbound.waPayload ||
+          ({
+            type: "text",
+            text: { body: content || "..." },
           });
-          await runSystemStartFlow({
-            contact,
-            triggerReason: "manual_reset",
-          });
-        }
-        continue;
-      }
 
-      if (lower === "/start") {
-        if (contact?.contactid) {
-          await prisma.campaignsession.updateMany({
-            where: {
-              contactid: contact.contactid,
-              sessionstatus: SESSION_STATUS.ACTIVE,
-            },
-            data: {
-              sessionstatus: SESSION_STATUS.COMPLETED,
-              lastactiveat: new Date(),
-            },
-          });
-          await runSystemStartFlow({
-            contact,
-            triggerReason: "user_start",
-          });
-        }
-        continue;
-      }
-
-      const session = activeSession;
-
-      // Join campaign button => send dynamic list of active campaigns
-      if (
-        (message.type === "interactive" &&
-          message.interactive?.type === "button_reply" &&
-          lower.includes("join campaign")) ||
-        (message.type === "text" && lower.includes("join campaign"))
-      ) {
-        const sessionForMenu =
-          session ||
-          (contact?.contactid
-            ? await getOrCreateGlobalMenuSession(contact.contactid)
-            : null);
-        await sendActiveCampaignList(contact, sessionForMenu);
-        continue;
-      }
-
-      // If no active session (first chat or expired) -> show main menu
-      if (!session) {
-        await runSystemStartFlow({
-          contact,
-          triggerReason: "first_message",
-        });
-        continue;
-      }
-
-      let mainReplyText = null;
-      let mainReplyMessageObj = null;
-      let mainContentKeyId = null;
-      let extraReplies = [];
-      let linkSessionId = null;
-      let linkCampaignId = null;
-
-      // Decide reply based on message type
-      if (
-        message.type === "text" ||
-        (message.type === "interactive" &&
-          message.interactive?.type === "button_reply")
-      ) {
-        const textBody = userText || "";
-        const flowResult = await handleFlowOrKeyword({
-          from,
-          text: textBody,
-          contact,
-        });
-
-        if (flowResult?.skipSend) {
-          linkSessionId = flowResult.sessionid || null;
-          linkCampaignId = flowResult.campaignid || null;
-          continue;
-        }
-
-        mainReplyText = flowResult.replyText;
-        mainReplyMessageObj = flowResult.replyMessageObj;
-        mainContentKeyId = flowResult.contentkeyid || null;
-        extraReplies = flowResult.extraReplies || [];
-        linkSessionId = flowResult.sessionid || null;
-        linkCampaignId = flowResult.campaignid || null;
-      } else if (
-        message.type === "interactive" &&
-        message.interactive?.type === "list_reply"
-      ) {
-        const rowId = message.interactive.list_reply?.id || "";
-        if (rowId.startsWith("campaign:")) {
-          const parsedId = parseInt(rowId.split(":")[1], 10);
-          if (!Number.isNaN(parsedId)) {
-            await startCampaignFromMenuSelection({
-              contact,
-              campaignId: parsedId,
-            });
-            continue;
-          }
-        }
-
-        const { main, extras } = await buildGlobalFallbackBundle(contact);
-        mainReplyText = main.replyText;
-        mainReplyMessageObj = main.replyMessageObj;
-        mainContentKeyId = main.contentkeyid || null;
-        extraReplies = extras;
-      } else if (
-        message.type === "image" ||
-        message.type === "sticker" ||
-        message.type === "audio" ||
-        message.type === "video" ||
-        message.type === "document"
-      ) {
-        // Treat all non-text inputs as "I don't understand" → global fallback bundle
-        const { main, extras } = await buildGlobalFallbackBundle(contact);
-        mainReplyText = main.replyText;
-        mainReplyMessageObj = main.replyMessageObj;
-        mainContentKeyId = main.contentkeyid || null;
-        extraReplies = extras;
-      } else {
-        // Unknown / unsupported type → global fallback bundle
-        const { main, extras } = await buildGlobalFallbackBundle(contact);
-        mainReplyText = main.replyText;
-        mainReplyMessageObj = main.replyMessageObj;
-        mainContentKeyId = main.contentkeyid || null;
-        extraReplies = extras;
-      }
-
-      // Safety: main payload
-      if (!mainReplyMessageObj) {
-        const { main, extras } = await buildGlobalFallbackBundle(contact);
-        mainReplyText = main.replyText;
-        mainReplyMessageObj = main.replyMessageObj;
-        mainContentKeyId = main.contentkeyid || null;
-        if (!extraReplies || !extraReplies.length) {
-          extraReplies = extras;
-        }
-      }
-
-      // ALL replies in correct order: main first, then extras
-      const allReplies = [
-        {
-          replyText: mainReplyText,
-          replyMessageObj: mainReplyMessageObj,
-          contentkeyid: mainContentKeyId,
-        },
-        ...(extraReplies || []),
-      ].filter((r) => r.replyMessageObj);
-
-      for (const item of allReplies) {
         let providerId = null;
-        const finalText =
-          item.replyText ??
-          (item.replyMessageObj.type === "text"
-            ? item.replyMessageObj.text?.body ?? ""
-            : "[interactive message]");
-
         try {
-          const sendRes = await sendWhatsAppMessage(from, item.replyMessageObj);
+          const sendRes = await sendWhatsAppMessage(to, waPayload);
           providerId = sendRes?.messages?.[0]?.id ?? null;
-          log(`Reply sent to: ${from}`);
+          log(`Reply sent to: ${to}`);
         } catch (sendErr) {
-          if (sendErr.name === "WhatsAppRestrictedError") {
-            error("WA auto-reply blocked because account is restricted.");
-          } else {
-            error(
-              "WhatsApp send error (webhook reply):",
-              sendErr?.response?.data || sendErr?.message || sendErr
-            );
-          }
+          error(
+            "WhatsApp send error (webhook reply):",
+            sendErr?.response?.data || sendErr?.message || sendErr
+          );
         }
 
         await prisma.message.create({
           data: {
             direction: "outbound",
-            content_type: item.replyMessageObj.type,
-            message_content: finalText,
-            senderid: waDisplayPhone,
-            receiverid: from,
+            content_type: waPayload.type || "text",
+            message_content:
+              content ||
+              (waPayload.type === "text"
+                ? waPayload.text?.body ?? ""
+                : "[interactive message]"),
+            sender_id: waDisplayPhone,
+            receiver_id: to,
             provider_msg_id: providerId,
-            timestamp: new Date(),
+            created_at: new Date(),
             message_status: providerId ? "sent" : "error",
-            contactid: contact?.contactid ?? null,
-            campaignsessionid: linkSessionId,
-            campaignid: linkCampaignId,
-            contentkeyid: item.contentkeyid || null,
+            contact_id: contact?.contact_id ?? null,
+            payload_json: JSON.stringify(waPayload),
           },
         });
-
-        log(`Reply recorded for: ${from}`);
       }
     }
 
@@ -494,10 +210,3 @@ export async function webhookHandler(req, res) {
     return res.sendStatus(500);
   }
 }
-
-
-
-
-
-
-

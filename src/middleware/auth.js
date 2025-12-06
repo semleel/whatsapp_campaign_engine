@@ -15,23 +15,23 @@ export default async function authMiddleware(req, res, next) {
     const secret = process.env.JWT_SECRET || FALLBACK_SECRET;
     const decoded = jwt.verify(token, secret);
 
-    const tokenRow = await prisma.sessiontoken.findFirst({
-      where: { tokenvalue: token, is_revoked: false },
+    const tokenRow = await prisma.session_token.findFirst({
+      where: { token_value: token, is_revoked: false },
     });
     const now = new Date();
-    if (!tokenRow || (tokenRow.expiryat && tokenRow.expiryat < now)) {
+    if (!tokenRow || (tokenRow.expiry_at && tokenRow.expiry_at < now)) {
       return res.status(401).json({ error: "Token expired or revoked" });
     }
 
     req.adminId = decoded.sub;
-    const rawRole = decoded.role || tokenRow?.roletype || "";
+    const rawRole = decoded.role || tokenRow?.role_type || "";
     const normalizedRole =
       req.adminId === 1 ? "admin" : (rawRole || "").toString().toLowerCase();
     req.role = normalizedRole;
     req.tokenRow = tokenRow;
 
-    prisma.sessiontoken
-      .update({ where: { tokenid: tokenRow.tokenid }, data: { lastusedat: new Date() } })
+    prisma.session_token
+      .update({ where: { token_id: tokenRow.token_id }, data: { last_used_at: new Date() } })
       .catch(() => {});
 
     next();
