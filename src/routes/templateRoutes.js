@@ -15,13 +15,17 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.post("/create", createTemplate);
+// RESTful endpoints
+router.get("/", listTemplates);
+router.post("/", createTemplate);
 router.get("/list", listTemplates);
+router.post("/create", createTemplate);
+router.post("/:id/archive", requirePrivilege("content", "archive"), softDeleteTemplate);
 router.get("/:id", getTemplate);
 router.put("/:id", updateTemplate);
 router.delete("/:id", deleteTemplate);
 
-// Soft delete / archive endpoint used by the UI
+// Legacy aliases (kept to avoid breaking existing callers)
 router.post("/:id/delete", requirePrivilege("content", "archive"), softDeleteTemplate);
 
 // Expiry endpoint

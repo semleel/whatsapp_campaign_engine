@@ -186,6 +186,7 @@ export default function TemplateLibraryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
+  const [archivingId, setArchivingId] = useState<number | null>(null);
 
   // pagination
   const [pageSize, setPageSize] = useState<number>(12);
@@ -193,7 +194,7 @@ export default function TemplateLibraryPage() {
 
   // view mode toggle
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
-  const { canView, canCreate, canUpdate, loading: privLoading } = usePrivilege("content");
+  const { canView, canCreate, canUpdate, canArchive, loading: privLoading } = usePrivilege("content");
 
   useEffect(() => {
     const load = async () => {
@@ -207,7 +208,7 @@ export default function TemplateLibraryPage() {
         setLoading(true);
         setError(null);
 
-        const rawSummaries: TemplateSummary[] = await Api.listTemplates(true);
+        const rawSummaries: TemplateSummary[] = await Api.listTemplates({ includeDeleted: true });
 
         const summaries = rawSummaries.map((item) => ({
           contentid: item.contentid,
@@ -218,18 +219,18 @@ export default function TemplateLibraryPage() {
           lang: item.lang ?? item.defaultlang ?? "",
           defaultlang: item.defaultlang ?? "",
           currentversion: item.currentversion ?? null,
-          updatedat: item.updatedat ?? item.lastupdated ?? null,
-          createdat: item.createdat ?? null,
-          expiresat: item.expiresat ?? null,
-          mediaurl: item.mediaurl ?? null,
-          isdeleted: item.isdeleted ?? null,
+          updatedat: item.updatedat ?? (item as any).updated_at ?? item.lastupdated ?? null,
+          createdat: item.createdat ?? (item as any).created_at ?? null,
+          expiresat: item.expiresat ?? (item as any).expires_at ?? null,
+          mediaurl: item.mediaurl ?? (item as any).media_url ?? null,
+          isdeleted: item.isdeleted ?? (item as any).is_deleted ?? null,
         }));
 
         // fetch extra fields for preview
         const detailed: TemplateWithPreview[] = await Promise.all(
           summaries.map(async (t) => {
             try {
-              const data = await Api.getTemplate(t.contentid);
+              const data = await Api.getTemplate(t.contentid, true);
 
               const placeholders =
                 (data.placeholders as Record<string, unknown> | null) || null;
@@ -393,6 +394,25 @@ export default function TemplateLibraryPage() {
       return new Date(ts).toLocaleString();
     } catch {
       return ts;
+    }
+  };
+
+  const handleArchive = async (id: number) => {
+    if (!canArchive) return;
+    setArchivingId(id);
+    try {
+      await Api.archiveTemplate(id);
+      setItems((prev) =>
+        prev.map((t) =>
+          Number(t.contentid) === Number(id)
+            ? { ...t, isdeleted: true, status: "Archived" }
+            : t
+        )
+      );
+    } catch (err: any) {
+      setError(err?.message || "Failed to archive template");
+    } finally {
+      setArchivingId(null);
     }
   };
 
@@ -561,9 +581,22 @@ export default function TemplateLibraryPage() {
                         <div className="flex flex-col items-end gap-1">
                           {renderStatusPill(t)}
                           <span className="text-[10px]">
-                            {(t.lang || "-").toString().toUpperCase()} •{" "}
-                            {t.type || ""}
+                            {(t.lang || "-").toString().toUpperCase()} | {t.type || ""}
                           </span>
+                          {canArchive && !t.isdeleted && (
+                            <button
+                              type="button"
+                              className="text-[11px] text-rose-600 hover:underline"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleArchive(Number(t.contentid));
+                              }}
+                              disabled={archivingId === Number(t.contentid)}
+                            >
+                              {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -715,16 +748,28 @@ export default function TemplateLibraryPage() {
                         {formatUpdated(t)}
                       </td>
                       <td className="px-3 py-2 text-sm">
-                        {canUpdate ? (
-                          <Link
-                            href={`/content/templates/${t.contentid}`}
-                            className="text-primary hover:underline"
-                          >
-                            Edit
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground">View only</span>
-                        )}
+                        <div className="flex items-center gap-3">
+                          {canUpdate ? (
+                            <Link
+                              href={`/content/templates/${t.contentid}`}
+                              className="text-primary hover:underline"
+                            >
+                              Edit
+                            </Link>
+                          ) : (
+                            <span className="text-muted-foreground">View only</span>
+                          )}
+                          {canArchive && !t.isdeleted && (
+                            <button
+                              type="button"
+                              className="text-rose-600 hover:underline disabled:opacity-60"
+                              onClick={() => handleArchive(Number(t.contentid))}
+                              disabled={archivingId === Number(t.contentid)}
+                            >
+                              {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -775,3 +820,4 @@ export default function TemplateLibraryPage() {
     </div>
   );
 }
+

@@ -286,9 +286,12 @@ export type CampaignStep = {
     action_type: ActionType;
     api_id: number | null;
     next_step_id: number | null;
+    next_step_number?: number | null;
     failure_step_id: number | null;
+    failure_step_number?: number | null;
     is_end_step: boolean;
     template_source_id?: number | null;
+    template?: TemplateDetail | null;
 };
 
 export type CampaignStepChoice = {
@@ -307,6 +310,9 @@ export type CampaignStepWithChoices = CampaignStep & {
     jump_mode?: JumpMode;
     // Optional media per step (hosted in your own storage, linked via URL)
     media_url?: string | null;
+    template?: TemplateDetail | null;
+    next_step_number?: number | null;
+    failure_step_number?: number | null;
     campaign_step_choice: CampaignStepChoice[];
 };
 
@@ -365,15 +371,22 @@ export interface TemplateListItem {
     title: string;
     type: string;
     status: string;
+    lang?: string | null;
     defaultlang: string;
     category: string | null;
     currentversion: number | null;
     updatedat?: string | null;
     lastupdated?: string | null;
+    updated_at?: string | null;
+    createdat?: string | null;
+    expires_at?: string | null;
     isdeleted?: boolean | null;
+    is_deleted?: boolean | null;
     mediaurl?: string | null;
     media_url?: string | null;
     expiresat?: string | null;
+    body?: string | null;
+    placeholders?: Record<string, unknown> | null;
 }
 
 export interface TemplateDetail extends TemplateListItem {
@@ -398,12 +411,25 @@ export type TemplatePayload = {
     title: string;
     type: string;
     status: string;
-    defaultLang: string;
+    lang: string;
+    defaultLang?: string;
     category?: string | null;
     description?: string | null;
     mediaUrl?: string | null;
+    media_url?: string | null;
     body?: string | null;
+    placeholders?: Record<string, unknown> | null;
     expiresat?: string | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    isdeleted?: boolean | null;
+    is_deleted?: boolean | null;
+    headerText?: string | null;
+    headerType?: string | null;
+    headerMediaType?: string | null;
+    buttons?: unknown[] | null;
+    menu?: unknown;
+    interactiveType?: string | null;
 };
 
 // ========================
