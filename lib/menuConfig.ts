@@ -35,7 +35,6 @@ export const MENU: MenuSection[] = [
     items: [
       { label: "Content", href: "/content", exact: true },
       { label: "Template Library", href: "/content/templates" },
-      { label: "Tags", href: "/content/tags" },
     ],
   },
   // NOTE: The old visual Flows builder has been removed.

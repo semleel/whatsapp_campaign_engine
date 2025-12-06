@@ -1,3 +1,5 @@
+// app/content/templates/[id]/page.tsx
+
 "use client";
 
 import type React from "react";
@@ -5,7 +7,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { showCenteredAlert } from "@/lib/showAlert";
-import TagSelector from "@/components/TagSelector";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
@@ -45,7 +46,6 @@ type TemplateData = {
   mediaurl?: string | null;
   expiresat?: string | null;
   placeholders?: Record<string, unknown> | null;
-  tags: string[];
   buttons: ButtonItem[];
   headerType?: "none" | "text" | "media";
   headerText?: string | null;
@@ -390,7 +390,6 @@ export default function EditTemplatePage() {
     mediaurl: null,
     expiresat: "",
     placeholders: null,
-    tags: [],
     buttons: [],
     headerType: "none",
     headerText: "",
@@ -526,7 +525,6 @@ export default function EditTemplatePage() {
           mediaurl: (data as any).mediaurl || null,
           expiresat: (data as any).expiresat || "",
           placeholders,
-          tags: ((data as any).tags as string[]) ?? [],
           buttons: normalizedButtons,
           headerType,
           headerText,
@@ -929,9 +927,6 @@ export default function EditTemplatePage() {
       // 1) Update main template record via shared Api client
       await Api.updateTemplate(form.contentid, payload as any);
 
-      // 2) Attach tags to template (same behaviour as create page)
-      await Api.attachTags(form.contentid, form.tags || []);
-
       // This shows the "Heads up" modal.
       await showCenteredAlert("Template updated successfully!");
 
@@ -1328,22 +1323,7 @@ export default function EditTemplatePage() {
           </div>
           */}
 
-          {/* TAGS – directly under Category */}
-          <div className="border-t pt-4 mt-4 space-y-3">
-            <h4 className="font-semibold text-sm">Tags</h4>
-
-            <TagSelector
-              selected={form.tags}
-              onChange={(nextTags: string[]) =>
-                setForm((prev) => ({
-                  ...prev,
-                  tags: nextTags,
-                }))
-              }
-            />
-          </div>
-
-          {/* EXPIRY – right under Tags */}
+          {/* EXPIRY */}
           <div className="border-t pt-4 space-y-2">
             <h4 className="text-sm font-semibold">Expiry</h4>
             <input
@@ -1455,6 +1435,21 @@ export default function EditTemplatePage() {
               onChange={(e) => setForm({ ...form, body: e.target.value })}
             />
           </label>
+
+          {/* FOOTER */}
+          <div className="border-t pt-4 space-y-2">
+            <h4 className="font-semibold text-sm">
+              Footer{" "}
+              <span className="text-xs text-muted-foreground">(Optional)</span>
+            </h4>
+            <input
+              className="w-full border rounded px-3 py-2"
+              value={form.footerText || ""}
+              onChange={(e) =>
+                setForm({ ...form, footerText: e.target.value })
+              }
+            />
+          </div>
 
           {/* BUTTONS (interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
@@ -1806,6 +1801,9 @@ export default function EditTemplatePage() {
           {/* WhatsApp Preview */}
           <div className="p-4 border rounded-xl bg-card space-y-3">
             <h4 className="text-sm font-semibold">Template Preview</h4>
+            <p className="text-xs text-muted-foreground">
+              Preview of how this saved message block may look when sent as a normal WhatsApp session message.
+            </p>
 
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
               {form.headerType === "media" && form.mediaurl && (
@@ -1959,5 +1957,7 @@ export default function EditTemplatePage() {
     </div>
   );
 }
+
+
 
 

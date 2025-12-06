@@ -288,6 +288,7 @@ export type CampaignStep = {
     next_step_id: number | null;
     failure_step_id: number | null;
     is_end_step: boolean;
+    template_source_id?: number | null;
 };
 
 export type CampaignStepChoice = {
@@ -296,7 +297,6 @@ export type CampaignStepChoice = {
     step_id: number;
     choice_code: string;
     label: string;
-    description?: string | null;
     next_step_id: number | null;
     is_correct?: boolean | null;
 };
@@ -306,9 +306,7 @@ export type CampaignStepWithChoices = CampaignStep & {
     // Optional UI-only jump mode: "next" = natural next, "custom" = jump to specific step number
     jump_mode?: JumpMode;
     // Optional media per step (hosted in your own storage, linked via URL)
-    media_type?: "image" | "video" | "audio" | "document" | null;
     media_url?: string | null;
-    media_caption?: string | null;
     campaign_step_choice: CampaignStepChoice[];
 };
 
@@ -363,6 +361,7 @@ export interface TagItem {
 // =============================================
 export interface TemplateListItem {
     contentid: number;
+    content_id?: number;
     title: string;
     type: string;
     status: string;
@@ -372,13 +371,16 @@ export interface TemplateListItem {
     updatedat?: string | null;
     lastupdated?: string | null;
     isdeleted?: boolean | null;
+    mediaurl?: string | null;
+    media_url?: string | null;
+    expiresat?: string | null;
 }
 
 export interface TemplateDetail extends TemplateListItem {
     description?: string | null;
     mediaurl?: string | null;
+    media_url?: string | null;
     body?: string | null;
-    tags?: string[];
     lang?: string | null;
     createdat?: string | null;
     expiresat?: string | null;
@@ -401,6 +403,7 @@ export type TemplatePayload = {
     description?: string | null;
     mediaUrl?: string | null;
     body?: string | null;
+    expiresat?: string | null;
 };
 
 // ========================

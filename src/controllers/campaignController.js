@@ -265,14 +265,11 @@ const parseStepPayload = (body = {}) => {
     next_step_id: toNullableInt(body.next_step_id),
     failure_step_id: toNullableInt(body.failure_step_id),
     is_end_step: !!body.is_end_step,
+    template_source_id: toNullableInt(body.template_source_id),
 
-    // Media fields (optional)
-    media_type:
-      typeof body.media_type === "string" && body.media_type.length ? body.media_type : null,
+    // Media field (optional)
     media_url:
       typeof body.media_url === "string" && body.media_url.length ? body.media_url : null,
-    media_caption:
-      typeof body.media_caption === "string" && body.media_caption.length ? body.media_caption : null,
   };
 };
 
@@ -347,10 +344,9 @@ export async function getCampaignWithSteps(req, res) {
         next_step_id: step.next_step_id,
         failure_step_id: step.failure_step_id,
         is_end_step: step.is_end_step,
+        template_source_id: step.template_source_id,
 
-        media_type: step.media_type,
         media_url: step.media_url,
-        media_caption: step.media_caption,
         jump_mode: step.next_step_id ? "custom" : "next",
         campaign_step_choice: (
           step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
@@ -360,7 +356,6 @@ export async function getCampaignWithSteps(req, res) {
           step_id: c.step_id,
           choice_code: c.choice_code,
           label: c.label,
-          description: c.description,
           next_step_id: c.next_step_id,
           next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
           is_correct: c.is_correct,
@@ -574,7 +569,6 @@ export async function saveStepChoices(req, res) {
           step_id: stepId,
           choice_code: c.choice_code || c.choicecode || "",
           label: c.label || "",
-          description: c.description ?? null,
           next_step_id: resolvedNextStepId,
           is_correct:
             typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
@@ -665,19 +659,17 @@ export async function saveCampaignStepsBulk(req, res) {
           expected_input: computedExpected,
           action_type: step.action_type || "message",
           api_id: step.api_id ?? null,
+          template_source_id:
+            step.template_source_id == null || step.template_source_id === ""
+              ? null
+              : Number.isNaN(Number(step.template_source_id))
+              ? null
+              : Number(step.template_source_id),
           failure_step_id: null,
           next_step_id: null,
           is_end_step: false,
-
-          // Media fields (one media per step)
-          media_type:
-            typeof step.media_type === "string" && step.media_type.length ? step.media_type : null,
           media_url:
             typeof step.media_url === "string" && step.media_url.length ? step.media_url : null,
-          media_caption:
-            typeof step.media_caption === "string" && step.media_caption.length
-              ? step.media_caption
-              : null,
         };
 
         let saved;
@@ -766,7 +758,6 @@ export async function saveCampaignStepsBulk(req, res) {
               step_id: stepId,
               choice_code: c.choice_code || "",
               label: c.label || "",
-              description: c.description ?? null,
               next_step_id: resolveFromStepNumber(c.next_step_id),
               is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
             })),
@@ -839,9 +830,8 @@ export async function saveCampaignStepsBulk(req, res) {
         next_step_id: step.next_step_id,
         failure_step_id: step.failure_step_id,
         is_end_step: step.is_end_step,
-        media_type: step.media_type,
+        template_source_id: step.template_source_id,
         media_url: step.media_url,
-        media_caption: step.media_caption,
         jump_mode: step.next_step_id ? "custom" : "next",
         campaign_step_choice: (
           step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
@@ -851,7 +841,6 @@ export async function saveCampaignStepsBulk(req, res) {
           step_id: c.step_id,
           choice_code: c.choice_code,
           label: c.label,
-          description: c.description,
           next_step_id: c.next_step_id,
           next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
           is_correct: c.is_correct,

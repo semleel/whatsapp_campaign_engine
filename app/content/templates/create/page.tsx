@@ -1,3 +1,5 @@
+// app/content/templates/create/page.tsx
+
 "use client";
 
 import React, { useState } from "react";
@@ -6,7 +8,6 @@ import { useRouter } from "next/navigation";
 import { showCenteredAlert } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
-import TagSelector from "../../../../components/TagSelector";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
@@ -46,57 +47,21 @@ type TemplateMenu = {
   sections: TemplateMenuSection[];
 };
 
-// Template category type + options (WANotifier-style)
-type TemplateCategory =
-  | "Marketing"
-  | "Utility"
-  | "Authentication"
-  | string
-  | null;
-
 type TemplateActionType = "choice" | "message" | "input" | "api";
-
-const TEMPLATE_CATEGORY_OPTIONS: {
-  value: TemplateCategory;
-  label: string;
-  subtitle: string;
-  icon: string;
-}[] = [
-  {
-    value: "Marketing",
-    label: "Marketing",
-    subtitle: "One-to-many bulk broadcast marketing messages",
-    icon: "[M]",
-  },
-  {
-    value: "Utility",
-    label: "Utility",
-    subtitle: "Transactional updates triggered by a user action",
-    icon: "[U]",
-  },
-  {
-    value: "Authentication",
-    label: "Authentication",
-    subtitle: "One-time passwords and login verification",
-    icon: "[A]",
-  },
-];
 
 type TemplateForm = {
   title: string;
   type: TemplateActionType;
-  category: TemplateCategory;
   status: string;
   lang: string;
   body: string;
-  description: string;
   mediaurl: string; // URL only
-  tags: string[];
   expiresat: string;
 
   headerType: "none" | "text" | "media";
   headerMediaType: "image" | "video" | "document";
   headerText: string;
+  footerText: string;
   buttons: TemplateButton[];
   interactiveType: TemplateInteractiveType;
   menu: TemplateMenu | null;
@@ -268,19 +233,17 @@ function createEmptyForm(): TemplateForm {
   return {
     title: "",
     type: "message",
-    category: "Marketing", // default selection
     status: "Active",
     lang: "en",
     body: "",
-    description: "",
     mediaurl: "",
-    tags: [],
     expiresat: "",
     headerType: "none",
     headerMediaType: "image",
     headerText: "",
+    footerText: "",
     buttons: [],
-    interactiveType: "default",
+    interactiveType: "buttons",
     menu: null,
   };
 }
@@ -663,37 +626,37 @@ export default function ContentCreatePage() {
         ? new Date(form.expiresat).toISOString()
         : null;
 
-      const apiInteractiveType =
-        form.interactiveType === "default" ? undefined : form.interactiveType;
-
       const placeholderData = {
+        footerText: form.footerText,
         headerText: form.headerType === "text" ? form.headerText : null,
         headerType: form.headerType,
         headerMediaType:
           form.headerType === "media" ? form.headerMediaType : null,
         buttons: form.buttons,
-        interactiveType: apiInteractiveType,
+        interactiveType: form.interactiveType,
       };
 
       const payload = {
-        ...form,
-        category: form.category || null,
+        title: form.title,
+        type: form.type,
         status: form.status,
         lang: form.lang,
-        defaultLang: form.lang, 
+        defaultLang: form.lang,
         body: form.body,
-        description: form.description || form.body || null,
         mediaUrl: form.mediaurl?.trim() || null,
-        expiresat: expiresAtIso,
-        headerText: placeholderData.headerText,
-        headerType: placeholderData.headerType,
-        headerMediaType: placeholderData.headerMediaType,
-        buttons: form.interactiveType === "buttons" ? placeholderData.buttons : [],
-        menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : null,
-        interactiveType: apiInteractiveType,
+        expiresAt: expiresAtIso,
         placeholders: {
-          ...placeholderData,
-          menu: form.interactiveType === "menu" ? ensureMenu(form.menu) : undefined,
+          footerText: placeholderData.footerText,
+          headerText: placeholderData.headerText,
+          headerType: placeholderData.headerType,
+          headerMediaType: placeholderData.headerMediaType,
+          buttons:
+            form.interactiveType === "buttons" ? placeholderData.buttons : [],
+          interactiveType: form.interactiveType,
+          menu:
+            form.interactiveType === "menu"
+              ? ensureMenu(form.menu)
+              : undefined,
         },
       };
 
@@ -702,15 +665,7 @@ export default function ContentCreatePage() {
       const created = (createdResponse as any)?.data;
       const contentId: number | undefined = created?.contentid;
 
-      // 2) Attach tags (join table)
-      const tags = form.tags;
-      if (contentId && tags.length) {
-        // Make sure these helpers exist in client.ts:
-        // attachTags(templateId: number, tags: string[])
-        await (Api as any).attachTags(contentId, tags);
-      }
-
-      // 3) Expiry – dedicated endpoint
+      // 2) Expiry – dedicated endpoint (optional)
       if (contentId && form.expiresat) {
         const iso = new Date(form.expiresat).toISOString();
         // Make sure this helper exists in client.ts:
@@ -775,8 +730,8 @@ export default function ContentCreatePage() {
         <div>
           <h3 className="text-lg font-semibold">Create Template</h3>
           <p className="text-sm text-muted-foreground">
-            Add a new WhatsApp-approved message, tag it with metadata, and
-            keep the versioning trail clean.
+            Add a reusable WhatsApp-style message for your campaigns. This
+            project currently uses local templates (no Meta approval required).
           </p>
         </div>
         <Link
@@ -896,76 +851,6 @@ export default function ContentCreatePage() {
             </div>
           </div>
 
-          {/*
-            Category selection temporarily disabled, will be restored later.
-
-          <div className="mt-4 text-sm">
-            <span className="font-medium block mb-1">Category</span>
-            <p className="text-xs text-muted-foreground mb-3">
-              Choose what type of message this template is used for.
-            </p>
-
-            <div className="grid gap-3 md:grid-cols-3">
-              {TEMPLATE_CATEGORY_OPTIONS.map((opt) => {
-                const isSelected =
-                  (form.category || "").toString().toLowerCase() ===
-                  (opt.value || "").toString().toLowerCase();
-
-                return (
-                  <button
-                    key={opt.value || opt.label}
-                    type="button"
-                    onClick={() =>
-                      setForm((prev) => ({
-                        ...prev,
-                        category: opt.value,
-                      }))
-                    }
-                    className={[
-                      "flex h-full flex-col items-start rounded-xl border bg-white px-3 py-3 text-left text-xs transition",
-                      "hover:border-primary/60 hover:bg-primary/5",
-                      isSelected
-                        ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
-                        : "border-border",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-lg">
-                        {opt.icon}
-                      </span>
-                      <span className="font-semibold text-sm">
-                        {opt.label}
-                      </span>
-                    </div>
-                    <p className="text-[11px] leading-snug text-muted-foreground">
-                      {opt.subtitle}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          */}
-
-          {/* TAGS – Wati-style picker */}
-          <div className="border-t pt-4 space-y-2">
-            <h4 className="font-semibold text-sm">Tags</h4>
-            <p className="text-xs text-muted-foreground">
-              Use tags to group similar templates. Start typing to search and
-              select from your existing tags.
-            </p>
-
-            <TagSelector
-              selected={form.tags}
-              onChange={(tags: string[]) =>
-                setForm((prev) => ({
-                  ...prev,
-                  tags,
-                }))
-              }
-            />
-          </div>
-
           {/* EXPIRY */}
           <div className="border-t pt-4 space-y-2">
             <h4 className="font-semibold text-sm">Expiry</h4>
@@ -1074,6 +959,34 @@ export default function ContentCreatePage() {
               className="w-full rounded-md border px-3 py-2 min-h-32"
             />
           </label>
+
+          {/* Footer */}
+          <div className="space-y-3 border-t pt-4">
+            <h4 className="text-sm font-semibold">
+              Footer note{" "}
+              <span className="text-xs text-muted-foreground">
+                (Optional, simple text shown at the bottom of this message)
+              </span>
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              A short signature or disclaimer shown at the bottom of this message.
+            </p>
+            <label className="space-y-1 text-sm font-medium">
+              <span>Footer note text</span>
+              <input
+                type="text"
+                name="footerText"
+                placeholder="e.g. Sent via Campaign Engine"
+                value={form.footerText}
+                onChange={handleChange}
+                className="w-full rounded-md border px-3 py-2"
+              />
+              <p className="text-xs text-muted-foreground">
+                This footer is just a local note that appears under the message
+                (it is not a Meta template setting).
+              </p>
+            </label>
+          </div>
 
           {/* Buttons (only when interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
@@ -1416,6 +1329,9 @@ export default function ContentCreatePage() {
           {/* Preview card */}
           <div className="rounded-xl border bg-card p-4 space-y-3">
             <h4 className="text-sm font-semibold">Template Preview</h4>
+            <p className="text-xs text-muted-foreground">
+              Preview of how this saved message block may look when sent as a normal WhatsApp session message.
+            </p>
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
               {/* header media preview (URL-based) */}
               {form.headerType === "media" && form.mediaurl.trim() && (

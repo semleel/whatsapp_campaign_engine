@@ -199,7 +199,7 @@ export const Api = {
   saveStepChoices: (
     campaignId: number | string,
     stepId: number | string,
-    choices: Array<Partial<{ choice_id: number; choice_code: string; label: string; description?: string | null; next_step_id?: number | null; is_correct?: boolean }>>
+    choices: Array<Partial<{ choice_id: number; choice_code: string; label: string; next_step_id?: number | null; is_correct?: boolean }>>
   ) =>
     http<{ message: string }>(`/api/campaign/${campaignId}/steps/${stepId}/choices`, {
       method: "POST",
@@ -434,12 +434,6 @@ export const Api = {
       method: "DELETE",
     }),
 
-
-  attachTags: (templateId: number, tags: string[]) =>
-    http(`/api/template/${templateId}/tags`, {
-      method: "POST",
-      body: JSON.stringify({ tags }),
-    }),
 
   softDeleteTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/template/${id}/delete`, {

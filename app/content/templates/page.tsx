@@ -1,3 +1,5 @@
+// app/content/templates/page.tsx
+
 "use client";
 
 import type React from "react";
@@ -31,7 +33,6 @@ type TemplateWithPreview = TemplateSummary & {
   headerText?: string | null;
   headerMediaType?: "image" | "video" | "document" | string | null;
   buttons?: ButtonItem[];
-  tags?: string[];
   interactiveType?: "buttons" | "menu";
   menu?: TemplateMenu | null;
 };
@@ -185,7 +186,6 @@ export default function TemplateLibraryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [categoryFilter, setCategoryFilter] = useState<string>("All");
-  const [tagFilter, setTagFilter] = useState<string>("All");
 
   // pagination
   const [pageSize, setPageSize] = useState<number>(12);
@@ -268,8 +268,6 @@ export default function TemplateLibraryPage() {
                 data.footertext ??
                 (placeholders?.footerText as string | null) ??
                 null;
-              const tags = (data as TemplateDetail).tags ?? [];
-
               const isdeleted: boolean | null =
                 data.isdeleted ?? t.isdeleted ?? null;
 
@@ -298,7 +296,6 @@ export default function TemplateLibraryPage() {
                 interactiveType,
                 menu,
                 isdeleted,
-                tags,
               };
             } catch (err) {
               console.error("Template detail fetch failed:", err);
@@ -326,16 +323,6 @@ export default function TemplateLibraryPage() {
     return Array.from(set);
   }, [items]);
 
-  const tagOptions = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((i) => {
-      (i.tags || []).forEach((tag) => {
-        if (tag && tag.trim()) set.add(tag);
-      });
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [items]);
-
   const filteredItems = useMemo(() => {
     return items.filter((t) => {
       const matchesSearch =
@@ -361,19 +348,14 @@ export default function TemplateLibraryPage() {
         categoryFilter === "All" ||
         (t.category || "").toLowerCase() === categoryFilter.toLowerCase();
 
-      const hasTag = (t.tags || []).some(
-        (tg) => tg.toLowerCase() === tagFilter.toLowerCase()
-      );
-      const matchesTag = tagFilter === "All" || hasTag;
-
-      return matchesSearch && matchesStatus && matchesCategory && matchesTag;
+      return matchesSearch && matchesStatus && matchesCategory;
     });
-  }, [items, search, statusFilter, categoryFilter, tagFilter]);
+  }, [items, search, statusFilter, categoryFilter]);
 
   // reset page when filter/search/pageSize change
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, categoryFilter, tagFilter, pageSize]);
+  }, [search, statusFilter, categoryFilter, pageSize]);
 
   const totalItems = filteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -493,19 +475,6 @@ export default function TemplateLibraryPage() {
             {categories.map((c) => (
               <option key={c} value={c}>
                 Category: {c}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="rounded-md border px-3 py-2 text-sm"
-            value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
-          >
-            <option value="All">Tag: All</option>
-            {tagOptions.map((tag) => (
-              <option key={tag} value={tag}>
-                Tag: {tag}
               </option>
             ))}
           </select>
