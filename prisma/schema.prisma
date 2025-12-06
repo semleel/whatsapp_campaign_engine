@@ -153,9 +153,7 @@ model campaign_step {
   created_at                                                            DateTime?              @default(now()) @db.Timestamp(6)
   updated_at                                                            DateTime?              @db.Timestamp(6)
   error_message                                                         String?
-  media_type                                                            String?                @db.VarChar(20)
   media_url                                                             String?
-  media_caption                                                         String?
   template_source_id                                                    Int?
   campaign_response                                                     campaign_response[]
   campaign_session                                                      campaign_session[]
@@ -180,7 +178,6 @@ model campaign_step_choice {
   step_id                                                        Int
   choice_code                                                    String              @db.VarChar(100)
   label                                                          String
-  description                                                    String?
   next_step_id                                                   Int?
   is_correct                                                     Boolean?
   created_at                                                     DateTime?           @default(now()) @db.Timestamp(6)
@@ -332,11 +329,9 @@ model content {
   content_id    Int             @id @default(autoincrement())
   title         String          @db.VarChar
   type          String?         @db.VarChar
-  category      String?         @db.VarChar
   status        String?         @db.VarChar
   lang          String?         @db.VarChar
   body          String?
-  description   String?
   media_url     String?         @db.VarChar
   placeholders  Json?
   created_at    DateTime?       @default(now()) @db.Timestamp(6)

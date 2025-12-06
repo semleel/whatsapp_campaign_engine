@@ -24,7 +24,7 @@ router.delete("/:id", deleteTemplate);
 // Soft delete / archive endpoint used by the UI
 router.post("/:id/delete", requirePrivilege("content", "archive"), softDeleteTemplate);
 
-// Tag + expiry endpoints
+// Expiry endpoint
 router.post("/:id/expire", requirePrivilege("content", "update"), setTemplateExpiry);
 
 export default router;

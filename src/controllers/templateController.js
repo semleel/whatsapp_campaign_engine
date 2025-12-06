@@ -1,9 +1,8 @@
 // src/controllers/templateController.js
 import { prisma } from "../config/prismaClient.js";
 
-const ensureArrayOrNull = (value) => {
+const ensureJsonOrNull = (value) => {
   if (value == null || value === "") return null;
-  if (Array.isArray(value)) return value;
   if (typeof value === "object") return value;
   try {
     return JSON.parse(value);
@@ -12,12 +11,23 @@ const ensureArrayOrNull = (value) => {
   }
 };
 
-const mapContentToResponse = (content) => ({
-  ...content,
-  defaultlang: content.lang,
-  currentversion: null,
-  lastupdated: content.updatedat || content.createdat,
-});
+// Normalize DB record shape for the frontend
+const mapContentToResponse = (content) => {
+  if (!content) return null;
+
+  return {
+    ...content,
+    contentid: content.content_id,
+    mediaurl: content.media_url,
+    createdat: content.created_at,
+    updatedat: content.updated_at,
+    expiresat: content.expires_at,
+    isdeleted: content.is_deleted,
+    defaultlang: content.lang,
+    currentversion: null,
+    lastupdated: content.updated_at || content.created_at,
+  };
+};
 
 // -----------------------------
 // BASIC CRUD
@@ -28,11 +38,9 @@ export async function createTemplate(req, res) {
     const {
       title,
       type,
-      category,
       status = "Draft",
       defaultLang = "en",
       lang,
-      description = "",
       mediaUrl = null,
       body = "",
       placeholders = null,
@@ -46,42 +54,41 @@ export async function createTemplate(req, res) {
     const data = {
       title,
       type,
-      category: category || null,
       status,
       lang: lang || defaultLang,
-      description,
-      mediaurl: mediaUrl,
       body,
-      placeholders: ensureArrayOrNull(placeholders),
-      createdat: now,
-      updatedat: now,
-      isdeleted: false,
+      media_url: mediaUrl,
+      placeholders: ensureJsonOrNull(placeholders),
+      created_at: now,
+      updated_at: now,
+      is_deleted: false,
     };
 
     const content = await prisma.content.create({ data });
-    return res
-      .status(201)
-      .json({
-        message: "Template created successfully",
-        data: mapContentToResponse(content),
-      });
+    return res.status(201).json({
+      message: "Template created successfully",
+      data: mapContentToResponse(content),
+    });
   } catch (err) {
     console.error("Template create error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
 
-export async function listTemplates(req, res) {
+export async function listTemplates(_req, res) {
   try {
-    // Schema no longer has the legacy content model; return empty list to keep UI stable.
-    return res.status(200).json([]);
+    const templates = await prisma.content.findMany({
+      where: { is_deleted: false },
+      orderBy: { created_at: "desc" },
+    });
+
+    return res.status(200).json(templates.map(mapContentToResponse));
   } catch (err) {
     console.error("Template list error:", err);
     return res.status(500).json({ error: err.message });
   }
 }
 
-// src/controllers/templateController.js
 export async function getTemplate(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
@@ -89,7 +96,15 @@ export async function getTemplate(req, res) {
       return res.status(400).json({ error: "Invalid template id" });
     }
 
-    return res.status(404).json({ error: "Template not found" });
+    const content = await prisma.content.findUnique({
+      where: { content_id: id },
+    });
+
+    if (!content || content.is_deleted) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+
+    return res.status(200).json(mapContentToResponse(content));
   } catch (err) {
     console.error("Template get error:", err);
     return res.status(500).json({ error: err.message });
@@ -106,32 +121,33 @@ export async function updateTemplate(req, res) {
     const {
       title,
       type,
-      category,
       status,
       defaultLang,
       lang,
-      description,
       mediaUrl,
       body,
       placeholders,
-      isdeleted,
+      is_deleted,
+      expiresat,
     } = req.body || {};
+
+    const expiresAtDate =
+      expiresat && !Number.isNaN(Date.parse(expiresat))
+        ? new Date(expiresat)
+        : undefined;
 
     const data = {
       title,
       type,
-      category,
       status,
       lang: lang || defaultLang,
-      description,
-      mediaurl: mediaUrl,
       body,
+      media_url: mediaUrl,
       placeholders:
-        placeholders !== undefined
-          ? ensureArrayOrNull(placeholders)
-          : undefined,
-      isdeleted,
-      updatedat: new Date(),
+        placeholders !== undefined ? ensureJsonOrNull(placeholders) : undefined,
+      is_deleted,
+      updated_at: new Date(),
+      expires_at: expiresAtDate,
     };
 
     const cleaned = Object.fromEntries(
@@ -139,13 +155,14 @@ export async function updateTemplate(req, res) {
     );
 
     const content = await prisma.content.update({
-      where: { contentid: id },
+      where: { content_id: id },
       data: cleaned,
     });
 
-    return res
-      .status(200)
-      .json({ message: "Template updated", data: mapContentToResponse(content) });
+    return res.status(200).json({
+      message: "Template updated",
+      data: mapContentToResponse(content),
+    });
   } catch (err) {
     console.error("Template update error:", err);
     if (err.code === "P2025") {
@@ -164,8 +181,8 @@ export async function softDeleteTemplate(req, res) {
     }
 
     await prisma.content.update({
-      where: { contentid: id },
-      data: { isdeleted: true, updatedat: new Date() },
+      where: { content_id: id },
+      data: { is_deleted: true, updated_at: new Date() },
     });
 
     return res.status(200).json({ message: "Template archived (soft deleted)" });
@@ -183,15 +200,9 @@ export async function deleteTemplate(req, res) {
       return res.status(400).json({ error: "Invalid template id" });
     }
 
-    // Remove dependent records (e.g., key mappings) before deleting the template.
-    await prisma.$transaction([
-      prisma.keymapping.deleteMany({ where: { contentid: id } }),
-      prisma.content.delete({ where: { contentid: id } }),
-    ]);
+    await prisma.content.delete({ where: { content_id: id } });
 
-    return res
-      .status(200)
-      .json({ message: "Template deleted permanently" });
+    return res.status(200).json({ message: "Template deleted permanently" });
   } catch (err) {
     console.error("Hard delete error:", err);
     if (err.code === "P2025") {
@@ -230,16 +241,14 @@ export async function setTemplateExpiry(req, res) {
     }
 
     const content = await prisma.content.update({
-      where: { contentid: id },
-      data: { expiresat: date, updatedat: new Date() },
+      where: { content_id: id },
+      data: { expires_at: date, updated_at: new Date() },
     });
 
-    return res
-      .status(200)
-      .json({
-        message: "Template expiry updated",
-        data: mapContentToResponse(content),
-      });
+    return res.status(200).json({
+      message: "Template expiry updated",
+      data: mapContentToResponse(content),
+    });
   } catch (err) {
     console.error("setTemplateExpiry error:", err);
     if (err.code === "P2025") {

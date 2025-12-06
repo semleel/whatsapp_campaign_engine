@@ -15,7 +15,21 @@ import type {
 import { usePrivilege } from "@/lib/permissions";
 import { showCenteredAlert } from "@/lib/showAlert";
 
+type TemplateListItem = {
+  content_id: number;
+  title: string;
+  type: string | null;
+  lang: string | null;
+  status: string | null;
+  media_url?: string | null;
+  description?: string | null;
+  body?: string | null;
+};
+
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
+
+const looksLikeImage = (url?: string | null) =>
+  !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
 
 const newStep = (campaignId: number, order: number): CampaignStepWithChoices => ({
   step_id: 0,
@@ -32,9 +46,8 @@ const newStep = (campaignId: number, order: number): CampaignStepWithChoices => 
   failure_step_id: null,
   is_end_step: false,
   jump_mode: "next",
-  media_type: null,
   media_url: null,
-  media_caption: null,
+  template_source_id: null,
   campaign_step_choice: [],
 });
 
@@ -45,6 +58,7 @@ export default function CampaignStepsPage() {
   const [campaignName, setCampaignName] = useState("");
   const [steps, setSteps] = useState<CampaignStepWithChoices[]>([]);
   const [apis, setApis] = useState<ApiListItem[]>([]);
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -99,6 +113,7 @@ export default function CampaignStepsPage() {
         input_type: inputType,
         expected_input: expected,
         jump_mode,
+        template_source_id: (step as any).template_source_id ?? null,
       };
     });
   };
@@ -107,7 +122,11 @@ export default function CampaignStepsPage() {
     if (!id || privLoading || !canView) return;
     (async () => {
       try {
-        const [stepsRes, apiRes] = await Promise.all([Api.getCampaignWithSteps(id), Api.listApis()]);
+        const [stepsRes, apiRes, templateRes] = await Promise.all([
+          Api.getCampaignWithSteps(id),
+          Api.listApis(),
+          (Api as any).listTemplates?.() ?? Api.listTemplates?.(),
+        ]);
         setCampaignName(
           (stepsRes.campaign as any).campaignname ||
             (stepsRes.campaign as any).campaign_name ||
@@ -117,6 +136,7 @@ export default function CampaignStepsPage() {
         setSteps(mapped);
         setExpandedIndex(mapped.length ? 0 : null);
         setApis(apiRes || []);
+        setTemplates((templateRes as any) || []);
       } catch (err) {
         console.error(err);
         await showCenteredAlert(
@@ -163,7 +183,6 @@ export default function CampaignStepsPage() {
       step_id: current.step_id,
       choice_code: "",
       label: "",
-      description: "",
       next_step_id: null,
       is_correct: false,
     };
@@ -190,6 +209,30 @@ export default function CampaignStepsPage() {
   const handleRemoveStep = (index: number) => {
     setSteps((prev) => prev.filter((_, i) => i !== index));
     setExpandedIndex(null);
+  };
+
+  // Apply template: copy message/media and store source id
+  const handleApplyTemplateToStep = async (stepIndex: number, templateId: number) => {
+    if (!templateId) return;
+    try {
+      const res = await (Api as any).getTemplate(templateId);
+      const tmpl = (res as any)?.data || res;
+      if (!tmpl) return;
+
+      const body: string = tmpl.body || "";
+      const mediaUrl: string | null = tmpl.media_url ?? tmpl.mediaurl ?? null;
+
+      updateStep(stepIndex, {
+        template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
+        prompt_text: body,
+        media_url: mediaUrl,
+      } as any);
+    } catch (err) {
+      console.error("Failed to apply template:", err);
+      await showCenteredAlert(
+        err instanceof Error ? err.message : "Failed to apply template to this step."
+      );
+    }
   };
 
   const handleSaveAll = async () => {
@@ -414,6 +457,41 @@ export default function CampaignStepsPage() {
                                   />
                                 </label>
 
+                                {/* Template picker (copy + reference) */}
+                                <label className="space-y-1 text-sm font-medium">
+                                  <span>Template (optional)</span>
+                                  <div className="flex gap-2">
+                                    <select
+                                      className="w-full rounded border px-3 py-2"
+                                      value={s.template_source_id ?? ""}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        const templateId = val ? Number(val) : 0;
+                                        if (!templateId) {
+                                          updateStep(idx, { template_source_id: null as any });
+                                          return;
+                                        }
+                                        await handleApplyTemplateToStep(idx, templateId);
+                                      }}
+                                    >
+                                      <option value="">No template (manual message)</option>
+                                      {templates.map((t) => (
+                                        <option
+                                          key={t.content_id ?? (t as any).contentid ?? t.title}
+                                          value={t.content_id ?? (t as any).contentid ?? ""}
+                                        >
+                                          {t.title} {t.lang ? `(${t.lang})` : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    Choosing a template will copy its message and media into this step
+                                    and remember which template it came from. You can still edit the
+                                    copied text freely.
+                                  </p>
+                                </label>
+
                                 {/* Step-level jump configuration (NOT for choice steps) */}
                                 {s.action_type !== "choice" && (
                                   <label className="space-y-1 text-sm font-medium">
@@ -501,37 +579,13 @@ export default function CampaignStepsPage() {
                                 />
                               </label>
 
-                              {/* Media (optional, one per step) */}
+                              {/* Media URL (optional, one per step) */}
                               {(s.action_type === "message" ||
                                 s.action_type === "choice" ||
                                 s.action_type === "input") && (
-                                <div className="grid gap-3 md:grid-cols-3">
+                                <div className="grid gap-3 md:grid-cols-1">
                                   <label className="space-y-1 text-sm font-medium">
-                                    <span>Media type (optional)</span>
-                                    <select
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.media_type || ""}
-                                      onChange={(e) => {
-                                        const val = e.target.value as
-                                          | "image"
-                                          | "video"
-                                          | "audio"
-                                          | "document"
-                                          | "";
-                                        updateStep(idx, {
-                                          media_type: val === "" ? null : val,
-                                        });
-                                      }}
-                                    >
-                                      <option value="">None</option>
-                                      <option value="image">Image</option>
-                                      <option value="video">Video</option>
-                                      <option value="audio">Audio</option>
-                                      <option value="document">Document</option>
-                                    </select>
-                                  </label>
-                                  <label className="space-y-1 text-sm font-medium">
-                                    <span>Media URL</span>
+                                    <span>Media URL (optional)</span>
                                     <input
                                       type="text"
                                       className="w-full rounded border px-3 py-2"
@@ -542,20 +596,6 @@ export default function CampaignStepsPage() {
                                         })
                                       }
                                       placeholder="https://... (public URL in your storage)"
-                                    />
-                                  </label>
-                                  <label className="space-y-1 text-sm font-medium">
-                                    <span>Media caption</span>
-                                    <input
-                                      type="text"
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.media_caption || ""}
-                                      onChange={(e) =>
-                                        updateStep(idx, {
-                                          media_caption: e.target.value,
-                                        })
-                                      }
-                                      placeholder="Optional caption shown with media"
                                     />
                                   </label>
                                 </div>
@@ -687,11 +727,11 @@ export default function CampaignStepsPage() {
                                                 placeholder="e.g. YES"
                                               />
                                             </label>
-                                            <label className="text-sm font-medium space-y-1">
-                                              <span>Label</span>
-                                              <input
-                                                type="text"
-                                                value={choice.label || ""}
+                                          <label className="text-sm font-medium space-y-1">
+                                            <span>Label</span>
+                                            <input
+                                              type="text"
+                                              value={choice.label || ""}
                                                 onChange={(e) =>
                                                   updateChoice(idx, cidx, { label: e.target.value })
                                                 }
@@ -700,18 +740,6 @@ export default function CampaignStepsPage() {
                                               />
                                             </label>
                                           </div>
-                                          <label className="text-sm font-medium space-y-1">
-                                            <span>Description</span>
-                                            <input
-                                              type="text"
-                                              value={choice.description || ""}
-                                              onChange={(e) =>
-                                                updateChoice(idx, cidx, { description: e.target.value })
-                                              }
-                                              className="w-full rounded border px-3 py-2"
-                                              placeholder="Optional helper text"
-                                            />
-                                          </label>
                                           <div className="grid gap-2 md:grid-cols-2 items-center">
                                             <label className="text-sm font-medium space-y-1">
                                               <span>Next step number (jump to within this campaign)</span>
@@ -804,7 +832,7 @@ export default function CampaignStepsPage() {
               </div>
 
               {activeStep.media_url?.trim() ? (
-                activeStep.media_type === "image" ? (
+                looksLikeImage(activeStep.media_url) ? (
                   <div className="rounded-md overflow-hidden border bg-muted">
                     <img
                       src={activeStep.media_url}
@@ -817,14 +845,10 @@ export default function CampaignStepsPage() {
                   </div>
                 ) : (
                   <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                    {activeStep.media_type
-                      ? `${activeStep.media_type.toUpperCase()} attachment`
-                      : "Attachment"}
+                    <span className="block">Attachment</span>
+                    <span className="block truncate">{activeStep.media_url}</span>
                   </div>
                 )
-              ) : null}
-              {activeStep.media_caption ? (
-                <p className="text-xs text-muted-foreground">{activeStep.media_caption}</p>
               ) : null}
 
               <div className="rounded-lg bg-background px-3 py-2 leading-relaxed shadow-sm whitespace-pre-line">
