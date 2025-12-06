@@ -60,9 +60,9 @@ export default function SessionManagementModule() {
     SessionStatus,
     { label: string; badgeClass: string }
   > = {
-    ACTIVE: { label: "Active", badgeClass: "bg-emerald-100 text-emerald-700" },
+    ACTIVE: { label: "In Progress", badgeClass: "bg-emerald-100 text-emerald-700" },
     PAUSED: { label: "Paused", badgeClass: "bg-amber-100 text-amber-700" },
-    COMPLETED: { label: "Completed", badgeClass: "bg-slate-100 text-slate-700" },
+    COMPLETED: { label: "Completed", badgeClass: "bg-emerald-50 text-emerald-800" },
     EXPIRED: { label: "Expired", badgeClass: "bg-rose-100 text-rose-700" },
     CANCELLED: { label: "Cancelled", badgeClass: "bg-rose-50 text-rose-700" },
   };

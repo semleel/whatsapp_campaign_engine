@@ -46,6 +46,31 @@ export async function handleIncomingMessage(args) {
     });
   }
 
+  // If there is an expired session, revive it and continue from last checkpoint.
+  const expiredSession = await findExpiredSession(contact.contact_id);
+  if (expiredSession) {
+    const revived = await prisma.campaign_session.update({
+      where: { campaign_session_id: expiredSession.campaign_session_id },
+      data: { session_status: "ACTIVE", last_active_at: new Date() },
+      include: { campaign: true },
+    });
+
+    const resumeNotice = {
+      to: contact.phone_num,
+      content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
+    };
+
+    const result = await continueCampaignSession({
+      contact,
+      session: revived,
+      incomingText: normalizedText,
+      type,
+      payload,
+    });
+
+    return { outbound: [resumeNotice, ...(result?.outbound || [])] };
+  }
+
   return showMainMenuWithUnknownKeyword(contact, normalizedText);
 }
 
@@ -72,6 +97,17 @@ async function findActiveSession(contactId) {
       session_status: "ACTIVE",
       last_active_at: { gte: cutoff },
     },
+    include: { campaign: true },
+  });
+}
+
+async function findExpiredSession(contactId) {
+  return prisma.campaign_session.findFirst({
+    where: {
+      contact_id: contactId,
+      session_status: "EXPIRED",
+    },
+    orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
     include: { campaign: true },
   });
 }
