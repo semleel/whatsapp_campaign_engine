@@ -16,7 +16,7 @@ import { usePrivilege } from "@/lib/permissions";
 
 type ButtonItem = {
   id: string;
-  type: "visit_website" | "call_phone" | "quick_reply";
+  type: "quick_reply";
   label: string;
   url?: string;
   phone?: string;
@@ -157,8 +157,9 @@ const ALLOWED_UPLOAD_TYPES = [
   "application/pdf",
 ];
 const MAX_UPLOAD_SIZE = 16 * 1024 * 1024; // 16 MB
+const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
 const BUTTON_CONFIG_ERROR =
-  "Invalid button configuration: WhatsApp allows up to 3 reply buttons OR up to 2 CTA buttons (1 website + 1 phone). Mixing types is not allowed.";
+  "Invalid button configuration: WhatsApp allows up to 3 quick reply buttons.";
 const MENU_CONFIG_ERROR =
   "List message is invalid. Provide a button label, at least one section, and 1-10 options in total. Every option must have a title.";
 
@@ -222,22 +223,7 @@ function ensureMenu(existing: TemplateMenu | null | undefined): TemplateMenu {
 
 function validateButtons(buttons: ButtonItem[]): string | null {
   const quickReplies = buttons.filter((b) => b.type === "quick_reply");
-  const websiteButtons = buttons.filter((b) => b.type === "visit_website");
-  const callButtons = buttons.filter((b) => b.type === "call_phone");
-
-  const hasQuick = quickReplies.length > 0;
-  const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
-
-  if (hasQuick && hasCTA) {
-    return BUTTON_CONFIG_ERROR;
-  }
   if (quickReplies.length > MAX_QUICK_REPLIES) {
-    return BUTTON_CONFIG_ERROR;
-  }
-  if (websiteButtons.length > 1 || callButtons.length > 1) {
-    return BUTTON_CONFIG_ERROR;
-  }
-  if (hasCTA && websiteButtons.length + callButtons.length > 2) {
     return BUTTON_CONFIG_ERROR;
   }
   if (buttons.some((b) => (b.label || "").length > BUTTON_LABEL_HARD_LIMIT)) {
@@ -516,6 +502,9 @@ export default function EditTemplatePage() {
         const buttons: ButtonItem[] =
           (data as any).buttons ||
           ((placeholders?.buttons as ButtonItem[] | undefined) ?? []);
+        const quickReplyButtons = Array.isArray(buttons)
+          ? buttons.filter((b) => b?.type === "quick_reply")
+          : [];
 
         const menuFromData =
           (data as any).menu ??
@@ -529,7 +518,7 @@ export default function EditTemplatePage() {
         const normalizedMenu =
           interactiveType === "menu" ? ensureMenu(menuFromData) : null;
         const normalizedButtons =
-          interactiveType === "buttons" ? buttons : [];
+          interactiveType === "buttons" ? quickReplyButtons : [];
 
         setForm({
           contentid: (data as any).contentid,
@@ -578,51 +567,15 @@ export default function EditTemplatePage() {
 
     setForm((prev) => {
       const quickReplies = prev.buttons?.filter((b) => b.type === "quick_reply") || [];
-      const websiteButtons = prev.buttons?.filter((b) => b.type === "visit_website") || [];
-      const callButtons = prev.buttons?.filter((b) => b.type === "call_phone") || [];
-
-      const hasQuick = quickReplies.length > 0;
-      const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
-
-      if (type === "quick_reply") {
-        if (hasCTA) {
-          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
-          return prev;
-        }
-        if (quickReplies.length >= MAX_QUICK_REPLIES) {
-          setButtonError("WhatsApp only allows up to 3 quick reply buttons.");
-          return prev;
-        }
-      } else {
-        if (hasQuick) {
-          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
-          return prev;
-        }
-        if (type === "visit_website" && websiteButtons.length >= 1) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
-        if (type === "call_phone" && callButtons.length >= 1) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
-        if (websiteButtons.length + callButtons.length >= 2) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
+      if (quickReplies.length >= MAX_QUICK_REPLIES) {
+        setButtonError("WhatsApp only allows up to 3 quick reply buttons.");
+        return prev;
       }
 
       const nextButton: ButtonItem = {
         id: generateId(),
         type,
-        label:
-          type === "visit_website"
-            ? "Visit website"
-            : type === "call_phone"
-            ? "Call now"
-            : "Quick reply",
-        url: type === "visit_website" ? "" : undefined,
-        phone: type === "call_phone" ? "" : undefined,
+        label: "Quick reply",
       };
 
       return {
@@ -1147,20 +1100,10 @@ export default function EditTemplatePage() {
   const quickReplyCount = (form.buttons || []).filter(
     (b) => b.type === "quick_reply"
   ).length;
-  const hasWebsite = (form.buttons || []).some(
-    (b) => b.type === "visit_website"
-  );
-  const hasCall = (form.buttons || []).some((b) => b.type === "call_phone");
-  const hasCTA = hasWebsite || hasCall;
 
   const disableQuickReply =
     form.interactiveType !== "buttons" ||
-    quickReplyCount >= MAX_QUICK_REPLIES ||
-    hasCTA;
-  const disableVisitWebsite =
-    form.interactiveType !== "buttons" || hasWebsite || quickReplyCount > 0;
-  const disableCallPhone =
-    form.interactiveType !== "buttons" || hasCall || quickReplyCount > 0;
+    quickReplyCount >= MAX_QUICK_REPLIES;
 
   const activeMenu =
     form.interactiveType === "menu" ? ensureMenu(form.menu) : null;
@@ -1249,7 +1192,7 @@ export default function EditTemplatePage() {
           <div className="border-t pt-4 space-y-2">
             <h4 className="text-sm font-semibold">Interaction Type</h4>
             <p className="text-xs text-muted-foreground">
-              Choose between WhatsApp buttons (quick replies / CTA), a list-style menu, or no interaction.
+              Choose between WhatsApp quick replies, a list-style menu, or no interaction.
             </p>
             <div className="flex flex-wrap gap-2 text-sm">
               <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
@@ -1270,7 +1213,7 @@ export default function EditTemplatePage() {
                   checked={form.interactiveType === "buttons"}
                   onChange={() => handleInteractiveTypeChange("buttons")}
                 />
-                Buttons (Quick Replies / Website / Call)
+                Buttons (Quick Replies)
               </label>
               <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
                 <input
@@ -1492,29 +1435,11 @@ export default function EditTemplatePage() {
                   <span className="text-xs text-muted-foreground">(Optional)</span>
                 </h4>
                 <p className="text-xs text-muted-foreground">
-                  Max 3 quick replies OR 1 website + 1 phone.
+                  Max 3 quick replies.
                 </p>
               </div>
 
               <div className="flex flex-wrap gap-2 text-xs">
-                <button
-                  type="button"
-                  className="border rounded px-3 py-1 disabled:opacity-60"
-                  onClick={() => addButton("visit_website")}
-                  disabled={disableVisitWebsite}
-                >
-                  + Add Visit Website
-                </button>
-
-                <button
-                  type="button"
-                  className="border rounded px-3 py-1 disabled:opacity-60"
-                  onClick={() => addButton("call_phone")}
-                  disabled={disableCallPhone}
-                >
-                  + Add Call Phone
-                </button>
-
                 <button
                   type="button"
                   className="border rounded px-3 py-1 disabled:opacity-60"
@@ -1535,11 +1460,7 @@ export default function EditTemplatePage() {
                     <div key={btn.id} className="border rounded p-3 space-y-2">
                       <div className="flex justify-between">
                         <span className="font-medium text-sm">
-                          {btn.type === "visit_website"
-                            ? "Visit Website"
-                            : btn.type === "call_phone"
-                            ? "Call Phone"
-                            : "Quick Reply"}
+                          Quick Reply
                         </span>
 
                         <button
@@ -1566,32 +1487,6 @@ export default function EditTemplatePage() {
                           Max {BUTTON_LABEL_SOFT_LIMIT} chars recommended (hard limit {BUTTON_LABEL_HARD_LIMIT}).
                         </span>
                       </label>
-
-                        {btn.type === "visit_website" && (
-                          <label className="col-span-1 md:col-span-2 text-xs space-y-1">
-                            <span className="font-medium">URL</span>
-                            <input
-                              className="w-full border rounded px-2 py-1"
-                              value={btn.url || ""}
-                              onChange={(e) =>
-                                updateButton(btn.id, { url: e.target.value })
-                              }
-                            />
-                          </label>
-                        )}
-
-                        {btn.type === "call_phone" && (
-                          <label className="col-span-1 md:col-span-2 text-xs space-y-1">
-                            <span className="font-medium">Phone</span>
-                            <input
-                              className="w-full border rounded px-2 py-1"
-                              value={btn.phone || ""}
-                              onChange={(e) =>
-                                updateButton(btn.id, { phone: e.target.value })
-                              }
-                            />
-                          </label>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -1840,8 +1735,15 @@ export default function EditTemplatePage() {
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
               {form.mediaurl?.trim() && (
                 <div className="mb-2 overflow-hidden rounded-md bg-background">
-                  {form.mediaurl.match(/\.mp4$/i) ? (
-                    <video className="w-full max-h-40" controls src={form.mediaurl.trim()} />
+                  {looksLikeVideo(form.mediaurl) ? (
+                    <video
+                      className="w-full max-h-40"
+                      controls
+                      muted
+                      playsInline
+                      preload="metadata"
+                      src={form.mediaurl.trim()}
+                    />
                   ) : (
                     <img
                       src={form.mediaurl.trim()}

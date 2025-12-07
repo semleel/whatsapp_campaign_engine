@@ -132,6 +132,12 @@ const parseDateOrNull = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+const parseDateSafe = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 // Normalize DB record shape for the frontend
 export const mapContentToResponse = (content) => {
   if (!content) return null;
@@ -178,8 +184,16 @@ const normalizeTemplatePayload = (body = {}) => {
   const type = sanitizeString(body.type);
   const lang = sanitizeString(body.lang || body.defaultLang);
   const status = sanitizeString(body.status || body.category);
-  const mediaUrl = sanitizeString(body.media_url ?? body.mediaUrl);
-  const textBody = typeof body.body === "string" ? body.body : "";
+  const mediaProvided = Object.prototype.hasOwnProperty.call(body, "media_url")
+    || Object.prototype.hasOwnProperty.call(body, "mediaUrl");
+  const mediaUrl = mediaProvided ? sanitizeString(body.media_url ?? body.mediaUrl) : undefined;
+  const bodyProvided = Object.prototype.hasOwnProperty.call(body, "body");
+  const textBody =
+    bodyProvided && typeof body.body === "string"
+      ? body.body
+      : bodyProvided
+      ? ""
+      : undefined;
   const expiresRaw = body.expires_at ?? body.expiresAt ?? body.expiresat;
 
   return {
@@ -188,7 +202,7 @@ const normalizeTemplatePayload = (body = {}) => {
     status,
     lang,
     body: textBody,
-    media_url: mediaUrl || null,
+    media_url: mediaUrl === undefined ? undefined : mediaUrl || null,
     placeholders:
       body.placeholders !== undefined ? ensureJsonOrNull(body.placeholders) : undefined,
     expires_at: parseDateOrNull(expiresRaw),
@@ -409,6 +423,184 @@ export async function deleteTemplate(req, res) {
       });
     }
     return res.status(500).json({ error: err.message });
+  }
+}
+
+// -----------------------------
+// OVERVIEW / DASHBOARD
+// -----------------------------
+
+export async function getTemplatesOverview(_req, res) {
+  try {
+    const now = Date.now();
+    const lookaheadMs = 30 * 24 * 60 * 60 * 1000;
+    const contentDelegate = getContentDelegate();
+
+    const templatesRaw = contentDelegate?.findMany
+      ? await contentDelegate.findMany({
+          where: { is_deleted: false },
+          orderBy: [{ updated_at: "desc" }, { created_at: "desc" }],
+        })
+      : await fallbackList({ where: { is_deleted: false } });
+
+    const templates = templatesRaw
+      .map((t) => {
+        const id = Number(t.content_id ?? t.contentid ?? t.id);
+        if (Number.isNaN(id)) return null;
+        return {
+          id,
+          title: t.title || `Template ${id}`,
+          status: t.status || null,
+          type: t.type || null,
+          createdAt: t.created_at ?? t.createdat ?? null,
+          updatedAt:
+            t.updated_at ?? t.updatedat ?? t.lastupdated ?? t.created_at ?? t.createdat ?? null,
+          expiresAt: t.expires_at ?? t.expiresat ?? null,
+        };
+      })
+      .filter(Boolean);
+
+    const counts = {
+      total: templates.length,
+      approved: 0,
+      pendingMeta: 0,
+      draft: 0,
+      expired: 0,
+      rejected: 0,
+    };
+    const pipeline = {
+      draft: 0,
+      pendingMeta: 0,
+      approved: 0,
+      rejected: 0,
+      expired: 0,
+    };
+
+    const templateMap = new Map();
+
+    templates.forEach((tpl) => {
+      templateMap.set(tpl.id, tpl);
+      const statusNorm = (tpl.status || "").trim().toLowerCase();
+      const expiresAtDate = parseDateSafe(tpl.expiresAt);
+      const expiresTs = expiresAtDate ? expiresAtDate.getTime() : null;
+      const isExpired = expiresTs !== null && expiresTs < now;
+
+      if (
+        statusNorm === "approved" ||
+        statusNorm === "active" ||
+        statusNorm === "live" ||
+        statusNorm === "published" ||
+        statusNorm === ""
+      ) {
+        counts.approved += 1;
+      }
+      if (statusNorm.startsWith("pending")) counts.pendingMeta += 1;
+      if (statusNorm.startsWith("draft")) counts.draft += 1;
+      if (statusNorm.startsWith("reject")) counts.rejected += 1;
+      if (isExpired || statusNorm === "expired") counts.expired += 1;
+
+      const stage = (() => {
+        if (isExpired || statusNorm === "expired") return "expired";
+        if (statusNorm.startsWith("draft")) return "draft";
+        if (statusNorm.startsWith("pending")) return "pendingMeta";
+        if (statusNorm.startsWith("reject")) return "rejected";
+        return "approved";
+      })();
+      pipeline[stage] += 1;
+    });
+
+    const recent = templates
+      .map((tpl) => ({
+        id: tpl.id,
+        title: tpl.title,
+        status: tpl.status,
+        updatedAt:
+          parseDateSafe(tpl.updatedAt)?.toISOString() ??
+          parseDateSafe(tpl.createdAt)?.toISOString() ??
+          new Date(now).toISOString(),
+      }))
+      .sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+      .slice(0, 8);
+
+    const upcomingExpiries = templates
+      .map((tpl) => {
+        const expiresDate = parseDateSafe(tpl.expiresAt);
+        if (!expiresDate) return null;
+        return { ...tpl, expiresDate };
+      })
+      .filter(Boolean)
+      .filter((tpl) => {
+        const expiresTs = tpl.expiresDate.getTime();
+        return expiresTs >= now && expiresTs <= now + lookaheadMs;
+      })
+      .sort((a, b) => a.expiresDate.getTime() - b.expiresDate.getTime())
+      .slice(0, 5)
+      .map((tpl) => ({
+        id: tpl.id,
+        title: tpl.title,
+        status: tpl.status,
+        expiresAt: tpl.expiresDate.toISOString(),
+      }));
+
+    let usageRows = [];
+    try {
+      if (prisma?.campaign_step?.groupBy) {
+        usageRows = await prisma.campaign_step.groupBy({
+          by: ["template_source_id"],
+          where: { template_source_id: { not: null } },
+          _count: { _all: true },
+        });
+      } else {
+        usageRows = await prisma.$queryRawUnsafe(
+          `SELECT template_source_id, COUNT(*) AS usage_count
+           FROM campaign_step
+           WHERE template_source_id IS NOT NULL
+           GROUP BY template_source_id`,
+        );
+      }
+    } catch (err) {
+      console.error("Failed to compute template usage:", err);
+      usageRows = [];
+    }
+
+    const mostUsed = usageRows
+      .map((row) => {
+        const id = Number(row.template_source_id ?? row.template_sourceid ?? row.content_id);
+        const usageCount = Number(
+          row._count?._all ??
+            row._count?.template_source_id ??
+            row.usage_count ??
+            row.count ??
+            0,
+        );
+        if (Number.isNaN(id) || !templateMap.has(id)) return null;
+        const tpl = templateMap.get(id);
+        return {
+          id,
+          title: tpl.title,
+          status: tpl.status,
+          type: tpl.type,
+          usageCount,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.usageCount - a.usageCount)
+      .slice(0, 5);
+
+    return res.status(200).json({
+      counts,
+      pipeline,
+      recent,
+      mostUsed,
+      upcomingExpiries,
+    });
+  } catch (err) {
+    console.error("getTemplatesOverview error:", err);
+    return res
+      .status(500)
+      .json({ error: err.message || "Failed to load templates overview" });
   }
 }
 

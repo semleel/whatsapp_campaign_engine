@@ -96,6 +96,7 @@ import type {
   TemplateListItem,
   TemplateDetail,
   TemplatePayload,
+  TemplatesOverviewResponse,
   FlowListItem,
   FlowCreatePayload,
   FlowDefinition,
@@ -434,6 +435,9 @@ export const Api = {
     http<{ message: string }>(`/api/templates/${id}`, {
       method: "DELETE",
     }),
+
+  getTemplatesOverview: () =>
+    http<TemplatesOverviewResponse>("/api/templates/overview"),
 
   recoverTemplate: (id: number | string) =>
     http<{ message: string }>(`/api/templates/${id}`, {
