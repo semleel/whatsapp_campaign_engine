@@ -219,7 +219,6 @@ export default function ArchivedCampaignsPage() {
                 />
               </th>
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
-              <th className="px-3 py-2 text-left font-medium">User flow</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
               <th className="px-3 py-2 text-left font-medium">Start</th>

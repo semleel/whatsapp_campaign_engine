@@ -18,6 +18,25 @@ export async function handleIncomingMessage(args) {
   const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
 
   if (campaignFromKeyword) {
+    // If there is an active session for a different campaign, block switching
+    const activeAny = await findActiveSession(contact.contact_id);
+    if (
+      activeAny &&
+      activeAny.campaign_id &&
+      activeAny.campaign_id !== campaignFromKeyword.campaign_id
+    ) {
+      return {
+        outbound: [
+          {
+            to: contact.phone_num,
+            content:
+              `You have an active session for "${activeAny.campaign?.campaign_name ?? "another campaign"}". ` +
+              "Please finish it or /exit.",
+          },
+        ],
+      };
+    }
+
     // If the keyword matches a campaign, try to reuse any existing session for that campaign
     const activeForCampaign = await findActiveSession(
       contact.contact_id,
@@ -79,31 +98,6 @@ export async function handleIncomingMessage(args) {
       type,
       payload,
     });
-  }
-
-  // If there is an expired session, revive it and continue from last checkpoint.
-  const expiredSession = await findExpiredSession(contact.contact_id);
-  if (expiredSession) {
-    const revived = await prisma.campaign_session.update({
-      where: { campaign_session_id: expiredSession.campaign_session_id },
-      data: { session_status: "ACTIVE", last_active_at: new Date() },
-      include: { campaign: true },
-    });
-
-    const resumeNotice = {
-      to: contact.phone_num,
-      content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
-    };
-
-    const result = await continueCampaignSession({
-      contact,
-      session: revived,
-      incomingText: normalizedText,
-      type,
-      payload,
-    });
-
-    return { outbound: [resumeNotice, ...(result?.outbound || [])] };
   }
 
   return showMainMenuWithUnknownKeyword(contact, normalizedText);
