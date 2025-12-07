@@ -17,6 +17,7 @@ import { showCenteredAlert } from "@/lib/showAlert";
 
 type TemplateListItem = {
   content_id: number;
+  contentid?: number;
   title: string;
   type: string | null;
   lang: string | null;
@@ -24,6 +25,14 @@ type TemplateListItem = {
   media_url?: string | null;
   description?: string | null;
   body?: string | null;
+  is_deleted?: boolean | null;
+  isdeleted?: boolean | null;
+  expires_at?: string | null;
+  expiresat?: string | null;
+};
+
+type StepFormState = CampaignStepWithChoices & {
+  message_mode?: "custom" | "template";
 };
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
@@ -31,7 +40,35 @@ const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
 const looksLikeImage = (url?: string | null) =>
   !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
 
-const newStep = (campaignId: number, order: number): CampaignStepWithChoices => ({
+const getTemplateId = (template: TemplateListItem) =>
+  template.content_id ?? template.contentid ?? null;
+
+const isTemplateActiveForSteps = (template: TemplateListItem) => {
+  const normalize = (val?: string | null) =>
+    (val || "")
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+  const type = normalize(template.type);
+  const status = normalize(template.status);
+  const allowedTypes = new Set(["whatsapp_template", "message", "template", "wa_template", ""]);
+  const isDeleted = (template.is_deleted ?? template.isdeleted) === true;
+  const expiresRaw = template.expires_at ?? template.expiresat;
+  const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
+  const isExpired =
+    expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt.getTime() < Date.now() : false;
+
+  return (
+    allowedTypes.has(type) &&
+    (status === "active" || status === "approved") &&
+    !isDeleted &&
+    !isExpired
+  );
+};
+
+const resolveMessageMode = (step: StepFormState) =>
+  (step.message_mode ?? (step.template_source_id ? "template" : "custom")) as "custom" | "template";
+
+const newStep = (campaignId: number, order: number): StepFormState => ({
   step_id: 0,
   campaign_id: campaignId,
   step_number: order,
@@ -48,6 +85,7 @@ const newStep = (campaignId: number, order: number): CampaignStepWithChoices => 
   jump_mode: "next",
   media_url: null,
   template_source_id: null,
+  message_mode: "custom",
   campaign_step_choice: [],
 });
 
@@ -56,7 +94,7 @@ export default function CampaignStepsPage() {
   const { loading: privLoading, canView, canUpdate } = usePrivilege("campaigns");
 
   const [campaignName, setCampaignName] = useState("");
-  const [steps, setSteps] = useState<CampaignStepWithChoices[]>([]);
+  const [steps, setSteps] = useState<StepFormState[]>([]);
   const [apis, setApis] = useState<ApiListItem[]>([]);
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
@@ -64,7 +102,7 @@ export default function CampaignStepsPage() {
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const mapStepsForUi = (apiSteps: CampaignStepWithChoices[]) => {
+  const mapStepsForUi = (apiSteps: CampaignStepWithChoices[]): StepFormState[] => {
     const rawSteps = [...(apiSteps || [])].sort((a, b) => a.step_number - b.step_number);
     const idToStepNumber = new Map(rawSteps.map((st) => [st.step_id, st.step_number]));
 
@@ -115,6 +153,8 @@ export default function CampaignStepsPage() {
         jump_mode,
         template: (step as any).template ?? null,
         template_source_id: (step as any).template_source_id ?? null,
+        message_mode:
+          (step as any).message_mode ?? ((step as any).template_source_id ? "template" : "custom"),
       };
     });
   };
@@ -126,7 +166,7 @@ export default function CampaignStepsPage() {
         const [stepsRes, apiRes, templateRes] = await Promise.all([
           Api.getCampaignWithSteps(id),
           Api.listApis(),
-          (Api as any).listTemplates?.() ?? Api.listTemplates?.(),
+          (Api as any).listTemplates?.({}) ?? Api.listTemplates?.({}),
         ]);
         setCampaignName(
           (stepsRes.campaign as any).campaignname ||
@@ -149,14 +189,14 @@ export default function CampaignStepsPage() {
     })();
   }, [id, privLoading, canView]);
 
-  const summarizeChoices = (step: CampaignStepWithChoices) => {
+  const summarizeChoices = (step: StepFormState) => {
     if (!step.campaign_step_choice?.length) return "-";
     return step.campaign_step_choice
       .map((c) => `${c.choice_code || ""}${c.label ? ` (${c.label})` : ""}`)
       .join(", ");
   };
 
-  const updateStep = (index: number, patch: Partial<CampaignStepWithChoices>) => {
+  const updateStep = (index: number, patch: Partial<StepFormState>) => {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
 
@@ -224,6 +264,7 @@ export default function CampaignStepsPage() {
       const mediaUrl: string | null = tmpl.media_url ?? tmpl.mediaurl ?? null;
 
       updateStep(stepIndex, {
+        message_mode: "template",
         template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
         prompt_text: body,
         media_url: mediaUrl,
@@ -255,11 +296,16 @@ export default function CampaignStepsPage() {
     setValidationError(null);
     setSaving(true);
     try {
-      const payload = steps.map((s, idx) => ({
-        ...s,
-        step_number: idx + 1,
-        step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
-      }));
+      const payload = steps.map((s, idx) => {
+        const { message_mode, template, ...rest } = s as StepFormState & { template?: any };
+        const mode = resolveMessageMode(s);
+        return {
+          ...rest,
+          template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
+          step_number: idx + 1,
+          step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
+        };
+      });
       const res = await Api.saveCampaignStepsBulk(id, payload);
       const mapped = mapStepsForUi(res.steps || []);
       setSteps(mapped);
@@ -272,6 +318,8 @@ export default function CampaignStepsPage() {
       setSaving(false);
     }
   };
+
+  const activeTemplates = templates.filter(isTemplateActiveForSteps);
 
   const activeStep =
     expandedIndex !== null && expandedIndex >= 0 && expandedIndex < steps.length
@@ -357,59 +405,77 @@ export default function CampaignStepsPage() {
                     </td>
                   </tr>
                 ) : (
-                  steps.map((s, idx) => (
-                    <Fragment key={`step-${s.step_id ?? "new"}-${idx}`}>
-                      <tr
-                        className={`border-t cursor-pointer hover:bg-muted/40 ${
-                          expandedIndex === idx ? "bg-muted/40" : ""
-                        }`}
-                        onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
-                      >
-                        <td className="px-3 py-2 font-semibold">{idx + 1}</td>
-                        <td className="px-3 py-2 max-w-[240px]">
-                          <div className="font-medium truncate">{s.prompt_text || "-"}</div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {s.step_code || "No code"}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {s.action_type === "input"
-                            ? s.input_type || "text"
-                            : s.action_type === "choice"
-                            ? "choice"
-                            : "none"}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {s.action_type || "message"}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {summarizeChoices(s)}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {s.action_type === "choice"
-                            ? "Per choice"
-                            : idx === steps.length - 1
-                            ? "END"
-                            : `Next (step ${idx + 2})`}
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
-                        </td>
-                      </tr>
-                      {expandedIndex === idx ? (
-                        <tr className="bg-muted/30 border-t">
-                          <td colSpan={7} className="px-4 py-4">
-                            <div className="space-y-4">
-                              <div className="flex justify-end">
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveStep(idx)}
-                                  className="text-xs text-rose-600 hover:text-rose-700"
-                                >
-                                  Remove step
-                                </button>
-                              </div>
-                              <div className="grid gap-3 md:grid-cols-3">
+                  steps.map((s, idx) => {
+                    const messageMode = resolveMessageMode(s);
+                    const stepTemplateId = s.template_source_id ?? null;
+                    const selectedTemplate = activeTemplates.find(
+                      (t) => getTemplateId(t) === stepTemplateId
+                    );
+                    const showInactiveTemplateOption =
+                      messageMode === "template" && stepTemplateId && !selectedTemplate;
+
+                    return (
+                      <Fragment key={`step-${s.step_id ?? "new"}-${idx}`}>
+                        <tr
+                          className={`border-t cursor-pointer hover:bg-muted/40 ${
+                            expandedIndex === idx ? "bg-muted/40" : ""
+                          }`}
+                          onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
+                        >
+                          <td className="px-3 py-2 font-semibold">{idx + 1}</td>
+                          <td className="px-3 py-2 max-w-[240px]">
+                            <div className="font-medium truncate">{s.prompt_text || "-"}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {s.step_code || "No code"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+                                {s.template_source_id
+                                  ? `From template (ID ${s.template_source_id}${
+                                      s.template?.title ? ` - ${s.template.title}` : ""
+                                    })`
+                                  : "Custom"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type === "input"
+                              ? s.input_type || "text"
+                              : s.action_type === "choice"
+                              ? "choice"
+                              : "none"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type || "message"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {summarizeChoices(s)}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type === "choice"
+                              ? "Per choice"
+                              : idx === steps.length - 1
+                              ? "END"
+                              : `Next (step ${idx + 2})`}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
+                          </td>
+                        </tr>
+                        {expandedIndex === idx ? (
+                          <tr className="bg-muted/30 border-t">
+                            <td colSpan={7} className="px-4 py-4">
+                              <div className="space-y-4">
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveStep(idx)}
+                                    className="text-xs text-rose-600 hover:text-rose-700"
+                                  >
+                                    Remove step
+                                  </button>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-2">
                                 <label className="space-y-1 text-sm font-medium">
                                   <span>Action type</span>
                                   <select
@@ -458,44 +524,9 @@ export default function CampaignStepsPage() {
                                   />
                                 </label>
 
-                                {/* Template picker (copy + reference) */}
-                                <label className="space-y-1 text-sm font-medium">
-                                  <span>Template (optional)</span>
-                                  <div className="flex gap-2">
-                                    <select
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.template_source_id ?? ""}
-                                      onChange={async (e) => {
-                                        const val = e.target.value;
-                                        const templateId = val ? Number(val) : 0;
-                                        if (!templateId) {
-                                          updateStep(idx, { template_source_id: null as any });
-                                          return;
-                                        }
-                                        await handleApplyTemplateToStep(idx, templateId);
-                                      }}
-                                    >
-                                      <option value="">No template (manual message)</option>
-                                      {templates.map((t) => (
-                                        <option
-                                          key={t.content_id ?? (t as any).contentid ?? t.title}
-                                          value={t.content_id ?? (t as any).contentid ?? ""}
-                                        >
-                                          {t.title} {t.lang ? `(${t.lang})` : ""}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground">
-                                    Choosing a template will copy its message and media into this step
-                                    and remember which template it came from. You can still edit the
-                                    copied text freely.
-                                  </p>
-                                </label>
-
                                 {/* Step-level jump configuration (NOT for choice steps) */}
                                 {s.action_type !== "choice" && (
-                                  <label className="space-y-1 text-sm font-medium">
+                                  <label className="space-y-1 text-sm font-medium md:col-span-2">
                                     <span>On success (jump)</span>
                                       <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                                       <div className="flex items-center gap-2">
@@ -567,6 +598,79 @@ export default function CampaignStepsPage() {
                                       </div>
                                     </div>
                                   </label>
+                                )}
+                              </div>
+
+                              <div className="space-y-2 rounded-md border px-3 py-2">
+                                <p className="text-sm font-semibold">Message source</p>
+                                <div className="flex flex-wrap gap-4 text-sm">
+                                  <label className="inline-flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`message-mode-${idx}`}
+                                      className="h-3 w-3"
+                                      checked={messageMode === "custom"}
+                                      onChange={() =>
+                                        updateStep(idx, { message_mode: "custom", template_source_id: null })
+                                      }
+                                    />
+                                    <span>Custom message</span>
+                                  </label>
+                                  <label className="inline-flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`message-mode-${idx}`}
+                                      className="h-3 w-3"
+                                      checked={messageMode === "template"}
+                                      onChange={() => updateStep(idx, { message_mode: "template" })}
+                                    />
+                                    <span>Use template</span>
+                                  </label>
+                                </div>
+
+                                {messageMode === "template" ? (
+                                  <div className="space-y-2">
+                                    <select
+                                      className="w-full rounded border px-3 py-2"
+                                      value={stepTemplateId ?? ""}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        if (!val) {
+                                          updateStep(idx, { template_source_id: null, message_mode: "template" });
+                                          return;
+                                        }
+                                        const templateId = Number(val);
+                                        if (Number.isNaN(templateId)) return;
+                                        await handleApplyTemplateToStep(idx, templateId);
+                                      }}
+                                    >
+                                      <option value="">
+                                        {activeTemplates.length ? "Select a template" : "No active templates found"}
+                                      </option>
+                                      {showInactiveTemplateOption && stepTemplateId ? (
+                                        <option value={stepTemplateId}>
+                                          Template #{stepTemplateId} (inactive)
+                                        </option>
+                                      ) : null}
+                                      {activeTemplates.map((t) => {
+                                        const tid = getTemplateId(t);
+                                        return (
+                                          <option key={tid ?? t.title} value={tid ?? ""}>
+                                            {t.title} {tid ? `(ID ${tid})` : ""}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                    <p className="text-xs text-muted-foreground">
+                                      Selecting a template copies its body and media into this step. You can
+                                      still edit them for this campaign without affecting the original.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    Write a custom message for this step. Switching modes keeps your current text
+                                    and media.
+                                  </p>
                                 )}
                               </div>
 
@@ -782,7 +886,8 @@ export default function CampaignStepsPage() {
                         </tr>
                       ) : null}
                     </Fragment>
-                  ))
+                  )
+                })
                 )}
                 <tr className="border-t">
                   <td colSpan={7} className="px-3 py-3">

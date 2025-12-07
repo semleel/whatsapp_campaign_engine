@@ -290,6 +290,7 @@ export type CampaignStep = {
     failure_step_id: number | null;
     failure_step_number?: number | null;
     is_end_step: boolean;
+    media_url?: string | null;
     template_source_id?: number | null;
     template?: TemplateDetail | null;
 };
@@ -308,8 +309,6 @@ export type CampaignStepWithChoices = CampaignStep & {
     input_type?: InputType | null;
     // Optional UI-only jump mode: "next" = natural next, "custom" = jump to specific step number
     jump_mode?: JumpMode;
-    // Optional media per step (hosted in your own storage, linked via URL)
-    media_url?: string | null;
     template?: TemplateDetail | null;
     next_step_number?: number | null;
     failure_step_number?: number | null;

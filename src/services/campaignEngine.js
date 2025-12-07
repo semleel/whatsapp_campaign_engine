@@ -18,49 +18,15 @@ export async function handleIncomingMessage(args) {
   const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
 
   if (campaignFromKeyword) {
-    const activeForCampaign = await findActiveSession(
-      contact.contact_id,
-      campaignFromKeyword.campaign_id
-    );
-    if (activeForCampaign) {
-      return continueCampaignSession({
-        contact,
-        session: activeForCampaign,
-        incomingText: normalizedText,
-        type,
-        payload,
-      });
-    }
-
-    const expiredForCampaign = await findExpiredSession(
-      contact.contact_id,
-      campaignFromKeyword.campaign_id
-    );
-    if (expiredForCampaign) {
-      const revived = await prisma.campaign_session.update({
-        where: { campaign_session_id: expiredForCampaign.campaign_session_id },
-        data: { session_status: "ACTIVE", last_active_at: new Date() },
-        include: { campaign: true },
-      });
-
-      const result = await continueCampaignSession({
-        contact,
-        session: revived,
-        incomingText: normalizedText,
-        type,
-        payload,
-      });
-
-      return result;
-    }
-
+    // Restart the flow fresh when keyword is sent again:
+    // cancel any active/expired session for this campaign/contact and start from step 1.
     await prisma.campaign_session.updateMany({
       where: {
         contact_id: contact.contact_id,
         campaign_id: campaignFromKeyword.campaign_id,
-        session_status: "ACTIVE",
+        session_status: { in: ["ACTIVE", "EXPIRED"] },
       },
-      data: { session_status: "CANCELLED" },
+      data: { session_status: "CANCELLED", current_step_id: null },
     });
 
     const newSession = await createSessionForCampaign(
@@ -427,14 +393,24 @@ async function runChoiceStep({
     const msg =
       step.error_message ||
       "Sorry, I didn't get that. Please choose one of the options below.";
-    const rePrompt = buildChoiceMessage(contact, step.prompt_text, choices);
+    const rePrompt = withStepContext({
+      base: buildChoiceMessage(contact, step.prompt_text, choices),
+      step,
+      session,
+      contact,
+    });
     await prisma.campaign_session.update({
       where: { campaign_session_id: session.campaign_session_id },
       data: { current_step_id: step.step_id, last_active_at: new Date() },
     });
     return {
       outbound: [
-        { to: contact.phone_num, content: msg },
+        withStepContext({
+          base: { to: contact.phone_num, content: msg },
+          step,
+          session,
+          contact,
+        }),
         rePrompt,
       ],
     };
@@ -452,7 +428,12 @@ async function runChoiceStep({
     });
     return {
       outbound: [
-        { to: contact.phone_num, content: "Thanks for participating!" },
+        withStepContext({
+          base: { to: contact.phone_num, content: "Thanks for participating!" },
+          step,
+          session,
+          contact,
+        }),
       ],
     };
   }
@@ -505,10 +486,15 @@ async function runInputStep({ contact, session, step, incomingText }) {
     });
     return {
       outbound: [
-        {
-          to: contact.phone_num,
-          content: errorText,
-        },
+        withStepContext({
+          base: {
+            to: contact.phone_num,
+            content: errorText,
+          },
+          step,
+          session,
+          contact,
+        }),
       ],
     };
   }
@@ -522,10 +508,15 @@ async function runInputStep({ contact, session, step, incomingText }) {
     });
     return {
       outbound: [
-        {
-          to: contact.phone_num,
-          content: "Thanks for your response!",
-        },
+        withStepContext({
+          base: {
+            to: contact.phone_num,
+            content: "Thanks for your response!",
+          },
+          step,
+          session,
+          contact,
+        }),
       ],
     };
   }
@@ -566,11 +557,17 @@ async function runApiStep({ contact, session, step }) {
   const targetStepId = isSuccess ? step.next_step_id : step.failure_step_id;
   const outbound = [];
   if (step.prompt_text || step.media_url) {
-    const msg = { to: contact.phone_num, content: step.prompt_text || "" };
     const mediaPayload = buildMediaWaPayload(step);
-    if (mediaPayload) {
-      msg.waPayload = mediaPayload;
-    }
+    const msg = withStepContext({
+      base: {
+        to: contact.phone_num,
+        content: step.prompt_text || "",
+        ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+      },
+      step,
+      session,
+      contact,
+    });
     outbound.push(msg);
   }
   return { outbound, nextStepId: targetStepId };
@@ -584,7 +581,12 @@ async function runEndStep({ contact, session, step }) {
 
   return {
     outbound: [
-      { to: contact.phone_num, content: step.prompt_text || "Thank you!" },
+      withStepContext({
+        base: { to: contact.phone_num, content: step.prompt_text || "Thank you!" },
+        step,
+        session,
+        contact,
+      }),
     ],
   };
 }
@@ -636,31 +638,57 @@ async function runStepAndReturnMessages({ contact, session, step }) {
           orderBy: { choice_id: "asc" },
         });
         const listMessage = buildChoiceMessage(contact, current.prompt_text, choices);
-        outbound.push(listMessage);
+        outbound.push(
+          withStepContext({
+            base: listMessage,
+            step: current,
+            session,
+            contact,
+          })
+        );
         return { outbound };
       }
 
       if (current.prompt_text || current.media_url) {
-        const msg = {
-          to: contact.phone_num,
-          content: current.prompt_text || "",
-        };
         const mediaPayload = buildMediaWaPayload(current);
-        if (mediaPayload) {
-          msg.waPayload = mediaPayload;
-        }
-        outbound.push(msg);
+        outbound.push(
+          withStepContext({
+            base: {
+              to: contact.phone_num,
+              content: current.prompt_text || "",
+              ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+            },
+            step: current,
+            session,
+            contact,
+          })
+        );
       }
       return { outbound };
     }
 
     if (current.prompt_text || current.media_url) {
-      const msg = { to: contact.phone_num, content: current.prompt_text || "" };
       const mediaPayload = buildMediaWaPayload(current);
-      if (mediaPayload) {
-        msg.waPayload = mediaPayload;
-      }
-      outbound.push(msg);
+      console.log("[ENGINE] Sending step", {
+        step_id: current.step_id,
+        campaign_id: current.campaign_id,
+        action: current.action_type,
+        has_text: !!(current.prompt_text && current.prompt_text.trim()),
+        media_url: current.media_url || null,
+        media_payload_type: mediaPayload?.type || null,
+      });
+      outbound.push(
+        withStepContext({
+          base: {
+            to: contact.phone_num,
+            content: current.prompt_text || "",
+            ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+          },
+          step: current,
+          session,
+          contact,
+        })
+      );
     }
 
     if (isEnd) {
@@ -687,13 +715,24 @@ async function runStepAndReturnMessages({ contact, session, step }) {
   return { outbound };
 }
 
+// Infer media type from URL when media_type is not set
+function inferMediaType(url, fallback = "image") {
+  if (!url) return fallback;
+  const lower = url.toLowerCase();
+  if (/\.(mp4|mov|avi|mkv|webm)$/.test(lower)) return "video";
+  if (/\.(mp3|wav|m4a|aac|ogg)$/.test(lower)) return "audio";
+  if (/\.(pdf|docx?|xls|xlsx|ppt|pptx)$/.test(lower)) return "document";
+  if (/\.(jpe?g|png|gif|webp|bmp|tiff?)$/.test(lower)) return "image";
+  return fallback;
+}
+
 // Build media WA payload from step.media_* fields
 function buildMediaWaPayload(step) {
   if (!step || !step.media_url) return null;
-  const type = step.media_type || "image";
+  const resolvedType = inferMediaType(step.media_url, step.media_type || "image");
   const caption = step.media_caption || step.prompt_text || undefined;
 
-  if (type === "image") {
+  if (resolvedType === "image") {
     return {
       type: "image",
       image: {
@@ -702,7 +741,7 @@ function buildMediaWaPayload(step) {
       },
     };
   }
-  if (type === "video") {
+  if (resolvedType === "video") {
     return {
       type: "video",
       video: {
@@ -711,7 +750,7 @@ function buildMediaWaPayload(step) {
       },
     };
   }
-  if (type === "audio") {
+  if (resolvedType === "audio") {
     return {
       type: "audio",
       audio: {
@@ -719,7 +758,7 @@ function buildMediaWaPayload(step) {
       },
     };
   }
-  if (type === "document") {
+  if (resolvedType === "document") {
     return {
       type: "document",
       document: {
@@ -729,6 +768,34 @@ function buildMediaWaPayload(step) {
     };
   }
   return null;
+}
+
+function deriveContentType(waPayload, step) {
+  if (waPayload?.type) return waPayload.type;
+  if (step?.media_url) {
+    return inferMediaType(step.media_url, step.media_type || "image");
+  }
+  return "text";
+}
+
+function withStepContext({ base = {}, step, session, contact }) {
+  const waPayload = base.waPayload ?? (step?.media_url ? buildMediaWaPayload(step) : null);
+  const contentValue = base.content ?? step?.prompt_text ?? "";
+
+  return {
+    ...base,
+    to: base.to ?? contact?.phone_num,
+    content: contentValue,
+    waPayload: waPayload || undefined,
+    contentType: base.contentType ?? deriveContentType(waPayload, step),
+    stepContext: {
+      campaign_id: session?.campaign_id ?? null,
+      campaign_session_id: session?.campaign_session_id ?? null,
+      contact_id: contact?.contact_id ?? null,
+      step_id: step?.step_id ?? null,
+      template_source_id: step?.template_source_id ?? null,
+    },
+  };
 }
 
 function buildChoiceMessage(contact, prompt, choices) {
