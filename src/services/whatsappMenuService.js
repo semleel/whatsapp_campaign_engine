@@ -7,7 +7,9 @@ import { prisma } from "../config/prismaClient.js";
 export const buildWhatsappMenuList = async () => {
   const campaigns = await prisma.campaign.findMany({
     where: {
-      status: "Active",
+      status: { in: ["On Going", "Upcoming"] },
+      is_active: true,
+      OR: [{ is_deleted: false }, { is_deleted: null }],
       keyword: { some: {} },              // at least 1 keyword
       entry_contentkeyid: { not: null },  // has an entry content key
     },

@@ -229,7 +229,7 @@ async function findCampaignByKeyword(text) {
 
   return prisma.campaign.findFirst({
     where: {
-      status: "Active",
+      status: { in: ["On Going", "Upcoming"] },
       is_active: true,
       OR: [{ is_deleted: false }, { is_deleted: null }],
       campaign_keyword: {
@@ -930,7 +930,7 @@ async function showMainMenu(contact, opts = {}) {
   const now = new Date();
   const campaigns = await prisma.campaign.findMany({
     where: {
-      status: "Active",
+      status: { in: ["On Going", "Upcoming"] },
       is_active: true,
       OR: [{ is_deleted: false }, { is_deleted: null }],
       OR: [{ start_at: null }, { start_at: { lte: now } }],

@@ -17,7 +17,7 @@ interface Campaign {
   start_at?: string | null;
   end_at?: string | null;
   hasKeyword?: boolean;
-  hasTemplate?: boolean;
+  hasSteps?: boolean;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -260,11 +260,11 @@ export default function CampaignsPage() {
                 const allowEdit = editable;
                 const allowArchive = canArchive && !isRunning;
                 const missingKeyword = c.hasKeyword === false;
-                const missingTemplate = c.hasTemplate === false;
-                const hasWarning = missingKeyword || missingTemplate;
+                const missingSteps = c.hasSteps === false;
+                const hasWarning = missingKeyword || missingSteps;
                 const warningText = [
                   missingKeyword ? "Missing keyword" : null,
-                  missingTemplate ? "Missing template" : null,
+                  missingSteps ? "Missing steps" : null,
                 ]
                   .filter(Boolean)
                   .join(" | ");
@@ -293,7 +293,7 @@ export default function CampaignsPage() {
                                 openWarningId === c.campaignid
                                   ? "block"
                                   : "hidden"
-                              } w-56 max-h-48 overflow-y-auto rounded-lg border border-amber-200 bg-white p-3 text-xs text-amber-800 shadow-lg`}
+                              } w-52 max-h-40 overflow-y-auto rounded-lg border border-amber-200 bg-white p-3 text-xs text-amber-800 shadow-lg`}
                             >
                               <div className="font-semibold text-amber-800 mb-2">
                                 {warningText || "Missing configuration"}
@@ -307,12 +307,12 @@ export default function CampaignsPage() {
                                     Manage keywords
                                   </Link>
                                 )}
-                                {missingTemplate && (
+                                {missingSteps && (
                                   <Link
-                                    href="/content/templates/create"
+                                    href={`/campaign/${c.campaignid}`}
                                     className="rounded border border-amber-200 px-2 py-1 text-amber-800 hover:bg-amber-50"
                                   >
-                                    Create template
+                                    Add steps
                                   </Link>
                                 )}
                               </div>
