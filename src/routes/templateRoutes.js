@@ -7,6 +7,7 @@ import {
   setTemplateExpiry,
   softDeleteTemplate,
   deleteTemplate,
+  getTemplatesOverview,
 } from "../controllers/templateController.js";
 import authMiddleware from "../middleware/auth.js";
 import { requirePrivilege } from "../middleware/permission.js";
@@ -18,6 +19,7 @@ router.use(authMiddleware);
 // RESTful endpoints
 router.get("/", listTemplates);
 router.post("/", createTemplate);
+router.get("/overview", getTemplatesOverview);
 router.get("/list", listTemplates);
 router.post("/create", createTemplate);
 router.post("/:id/archive", requirePrivilege("content", "archive"), softDeleteTemplate);

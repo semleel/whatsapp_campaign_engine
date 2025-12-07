@@ -432,6 +432,51 @@ export type TemplatePayload = {
     interactiveType?: string | null;
 };
 
+export interface TemplateOverviewCounts {
+  total: number;
+  approved: number;
+  pendingMeta: number;
+  draft: number;
+  expired: number;
+  rejected: number;
+}
+
+export interface TemplateActivityItem {
+  id: number;
+  title: string;
+  status: string | null;
+  updatedAt: string | null;
+}
+
+export interface TemplateUsageItem {
+  id: number;
+  title: string;
+  status: string | null;
+  type: string | null;
+  usageCount: number;
+}
+
+export interface TemplateExpiryItem {
+  id: number;
+  title: string;
+  status: string | null;
+  expiresAt: string | null;
+}
+
+export interface TemplatesOverviewResponse {
+  counts: TemplateOverviewCounts;
+  pipeline: {
+    draft: number;
+    pendingMeta: number;
+    approved: number;
+    rejected: number;
+    expired: number;
+  };
+  recent: TemplateActivityItem[];
+  mostUsed: TemplateUsageItem[];
+  upcomingExpiries: TemplateExpiryItem[];
+}
+
 // ========================
 // Flow list / detail types
 // ========================

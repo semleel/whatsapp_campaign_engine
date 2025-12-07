@@ -57,6 +57,7 @@ type TemplateMenu = {
 };
 
 const STATUS_OPTIONS = ["All", "Active", "Archived"];
+const TYPE_OPTIONS = ["All", "message", "choice", "api", "input"];
 const PAGE_SIZE_OPTIONS = [8, 12, 20];
 
 const INLINE_FORMATTERS = [
@@ -178,6 +179,8 @@ function renderFormattedLines(text: string, placeholder: string) {
   });
 }
 
+const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
+
 export default function TemplateLibraryPage() {
   const [items, setItems] = useState<TemplateWithPreview[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,7 +188,7 @@ export default function TemplateLibraryPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
-  const [categoryFilter, setCategoryFilter] = useState<string>("All");
+  const [typeFilter, setTypeFilter] = useState<string>("All");
   const [archivingId, setArchivingId] = useState<number | null>(null);
 
   // pagination
@@ -316,14 +319,6 @@ export default function TemplateLibraryPage() {
     load();
   }, [canView, privLoading]);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((i) => {
-      if (i.category && i.category.trim()) set.add(i.category);
-    });
-    return Array.from(set);
-  }, [items]);
-
   const filteredItems = useMemo(() => {
     return items.filter((t) => {
       const matchesSearch =
@@ -345,18 +340,19 @@ export default function TemplateLibraryPage() {
         matchesStatus = !isArchived && statusNorm === filterNorm;
       }
 
-      const matchesCategory =
-        categoryFilter === "All" ||
-        (t.category || "").toLowerCase() === categoryFilter.toLowerCase();
+      const matchesCategory = true;
+      const matchesType =
+        typeFilter === "All" ||
+        (t.type || "").toLowerCase() === typeFilter.toLowerCase();
 
-      return matchesSearch && matchesStatus && matchesCategory;
+      return matchesSearch && matchesStatus && matchesCategory && matchesType;
     });
-  }, [items, search, statusFilter, categoryFilter]);
+  }, [items, search, statusFilter, typeFilter]);
 
   // reset page when filter/search/pageSize change
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, categoryFilter, pageSize]);
+  }, [search, statusFilter, pageSize, typeFilter]);
 
   const totalItems = filteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -488,13 +484,12 @@ export default function TemplateLibraryPage() {
 
           <select
             className="rounded-md border px-3 py-2 text-sm"
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
           >
-            <option value="All">Category: All</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>
-                Category: {c}
+            {TYPE_OPTIONS.map((t) => (
+              <option key={t} value={t}>
+                Type: {t === "All" ? "All" : t}
               </option>
             ))}
           </select>
@@ -602,14 +597,32 @@ export default function TemplateLibraryPage() {
 
                       {/* WhatsApp-style preview */}
                       <div className="flex-1 rounded-xl border bg-muted/40 p-3">
-                        {t.headerType === "media" && t.mediaurl && (
+                        {t.mediaurl && (
                           <div className="mb-2 overflow-hidden rounded-md bg-background">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={t.mediaurl}
-                              alt="Header"
-                              className="block w-full max-h-32 object-cover"
-                            />
+                            {looksLikeVideo(t.mediaurl) ? (
+                              <video
+                                src={t.mediaurl}
+                                className="block w-full max-h-32 object-cover"
+                                muted
+                                playsInline
+                                preload="metadata"
+                                controls={false}
+                                onLoadedMetadata={(e) => {
+                                  try {
+                                    (e.currentTarget as HTMLVideoElement).currentTime = 0;
+                                  } catch {
+                                    // ignore seek errors
+                                  }
+                                }}
+                              />
+                            ) : (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={t.mediaurl}
+                                alt="Header"
+                                className="block w-full max-h-32 object-cover"
+                              />
+                            )}
                           </div>
                         )}
 

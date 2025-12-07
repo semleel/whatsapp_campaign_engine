@@ -15,7 +15,7 @@ const SUPPORTED_LOCALES = [
   { value: "zh", label: "Chinese" },
 ];
 
-type ButtonType = "visit_website" | "call_phone" | "quick_reply";
+type ButtonType = "quick_reply";
 
 type TemplateButton = {
   id: string;
@@ -80,12 +80,14 @@ const ALLOWED_UPLOAD_TYPES = [
 ];
 const MAX_UPLOAD_SIZE = 16 * 1024 * 1024; // 16 MB
 const BUTTON_CONFIG_ERROR =
-  "Invalid button configuration: WhatsApp allows up to 3 reply buttons OR up to 2 CTA buttons (1 website + 1 phone). Mixing types is not allowed.";
+  "Invalid button configuration: WhatsApp allows up to 3 quick reply buttons.";
 const MENU_CONFIG_ERROR =
   "List message is invalid. Provide a button label, at least one section, and 1-10 options in total. Every option must have a title.";
 
 const countTotalOptions = (sections: TemplateMenuSection[]) =>
   sections.reduce((sum, sec) => sum + (sec.options?.length || 0), 0);
+
+const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
 
 function createEmptyMenu(): TemplateMenu {
   return {
@@ -108,22 +110,8 @@ function createEmptyMenu(): TemplateMenu {
 
 function validateButtons(buttons: TemplateButton[]): string | null {
   const quickReplies = buttons.filter((b) => b.type === "quick_reply");
-  const websiteButtons = buttons.filter((b) => b.type === "visit_website");
-  const callButtons = buttons.filter((b) => b.type === "call_phone");
 
-  const hasQuick = quickReplies.length > 0;
-  const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
-
-  if (hasQuick && hasCTA) {
-    return BUTTON_CONFIG_ERROR;
-  }
   if (quickReplies.length > MAX_QUICK_REPLIES) {
-    return BUTTON_CONFIG_ERROR;
-  }
-  if (websiteButtons.length > 1 || callButtons.length > 1) {
-    return BUTTON_CONFIG_ERROR;
-  }
-  if (hasCTA && websiteButtons.length + callButtons.length > 2) {
     return BUTTON_CONFIG_ERROR;
   }
   if (buttons.some((b) => (b.label || "").length > BUTTON_LABEL_HARD_LIMIT)) {
@@ -293,50 +281,15 @@ export default function ContentCreatePage() {
 
     setForm((prev) => {
       const quickReplies = prev.buttons.filter((b) => b.type === "quick_reply");
-      const websiteButtons = prev.buttons.filter((b) => b.type === "visit_website");
-      const callButtons = prev.buttons.filter((b) => b.type === "call_phone");
-      const hasQuick = quickReplies.length > 0;
-      const hasCTA = websiteButtons.length > 0 || callButtons.length > 0;
-
-      if (type === "quick_reply") {
-        if (hasCTA) {
-          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
-          return prev;
-        }
-        if (quickReplies.length >= MAX_QUICK_REPLIES) {
-          setButtonError("WhatsApp only allows up to 3 quick reply buttons.");
-          return prev;
-        }
-      } else {
-        if (hasQuick) {
-          setButtonError("You cannot mix quick replies with website/phone buttons in the same template.");
-          return prev;
-        }
-        if (type === "visit_website" && websiteButtons.length >= 1) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
-        if (type === "call_phone" && callButtons.length >= 1) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
-        if (websiteButtons.length + callButtons.length >= 2) {
-          setButtonError("You can only have one website and one phone button per template.");
-          return prev;
-        }
+      if (quickReplies.length >= MAX_QUICK_REPLIES) {
+        setButtonError("WhatsApp only allows up to 3 quick reply buttons.");
+        return prev;
       }
 
       const nextButton: TemplateButton = {
         id: generateId(),
         type,
-        label:
-          type === "visit_website"
-            ? "Visit website"
-            : type === "call_phone"
-            ? "Call now"
-            : "Quick reply",
-        url: type === "visit_website" ? "" : undefined,
-        phone: type === "call_phone" ? "" : undefined,
+        label: "Quick reply",
       };
 
       return {
@@ -733,22 +686,10 @@ export default function ContentCreatePage() {
   const previewBody = form.body.trim() || "Body text here";
 
   const quickReplyCount = form.buttons.filter((b) => b.type === "quick_reply").length;
-  const hasWebsite = form.buttons.some((b) => b.type === "visit_website");
-  const hasCall = form.buttons.some((b) => b.type === "call_phone");
-  const hasCTA = hasWebsite || hasCall;
 
   const disableQuickReply =
     form.interactiveType !== "buttons" ||
-    quickReplyCount >= MAX_QUICK_REPLIES ||
-    hasCTA;
-  const disableVisitWebsite =
-    form.interactiveType !== "buttons" ||
-    hasWebsite ||
-    quickReplyCount > 0;
-  const disableCallPhone =
-    form.interactiveType !== "buttons" ||
-    hasCall ||
-    quickReplyCount > 0;
+    quickReplyCount >= MAX_QUICK_REPLIES;
 
   const activeMenu = form.interactiveType === "menu" ? ensureMenu(form.menu) : null;
   const totalMenuOptions = activeMenu ? countTotalOptions(activeMenu.sections) : 0;
@@ -1017,32 +958,16 @@ export default function ContentCreatePage() {
                     (Optional)
                   </span>
                 </h4>
-                <p className="text-xs text-muted-foreground">
-                  Max 3 quick replies OR 1 website + 1 phone.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <button
-                  type="button"
-                  onClick={() => addButton("visit_website")}
-                  className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
-                  disabled={disableVisitWebsite}
-                >
-                  + Add Visit Website
-                </button>
-                <button
-                  type="button"
-                  onClick={() => addButton("call_phone")}
-                  className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
-                  disabled={disableCallPhone}
-                >
-                  + Add Call Phone
-                </button>
-                <button
-                  type="button"
-                  onClick={() => addButton("quick_reply")}
-                  className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
-                  disabled={disableQuickReply}
+        <p className="text-xs text-muted-foreground">
+          Max 3 quick replies.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <button
+          type="button"
+          onClick={() => addButton("quick_reply")}
+          className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
+          disabled={disableQuickReply}
                 >
                   + Add Quick Reply
                 </button>
@@ -1057,20 +982,16 @@ export default function ContentCreatePage() {
                   {form.buttons.slice(0, MAX_QUICK_REPLIES).map((btn) => (
                     <div
                       key={btn.id}
-                      className="rounded-md border p-3 space-y-2 text-sm"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">
-                          {btn.type === "visit_website"
-                            ? "Call to Action - Visit website"
-                            : btn.type === "call_phone"
-                            ? "Call to Action - Call phone"
-                            : "Quick reply"}
-                        </span>
-                        <button
-                          type="button"
-                          className="text-xs text-red-500"
-                          onClick={() => removeButton(btn.id)}
+                    className="rounded-md border p-3 space-y-2 text-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        Quick reply
+                      </span>
+                      <button
+                        type="button"
+                        className="text-xs text-red-500"
+                        onClick={() => removeButton(btn.id)}
                         >
                           Remove
                         </button>
@@ -1093,38 +1014,6 @@ export default function ContentCreatePage() {
                             Max {BUTTON_LABEL_SOFT_LIMIT} chars recommended (hard limit {BUTTON_LABEL_HARD_LIMIT}).
                           </span>
                         </label>
-                        {btn.type === "visit_website" && (
-                          <label className="space-y-1 text-xs font-medium md:col-span-2">
-                            <span>Website URL</span>
-                            <input
-                              type="text"
-                              value={btn.url || ""}
-                              onChange={(e) =>
-                                updateButton(btn.id, {
-                                  url: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border px-2 py-1"
-                              placeholder="https://example.com"
-                            />
-                          </label>
-                        )}
-                        {btn.type === "call_phone" && (
-                          <label className="space-y-1 text-xs font-medium md:col-span-2">
-                            <span>Phone number</span>
-                            <input
-                              type="text"
-                              value={btn.phone || ""}
-                              onChange={(e) =>
-                                updateButton(btn.id, {
-                                  phone: e.target.value,
-                                })
-                              }
-                              className="w-full rounded-md border px-2 py-1"
-                              placeholder="+60..."
-                            />
-                          </label>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -1355,10 +1244,13 @@ export default function ContentCreatePage() {
               {/* media preview (URL-based) */}
               {form.mediaurl.trim() && (
                 <div className="mb-2 overflow-hidden rounded-md bg-background">
-                  {form.mediaurl.match(/\\.mp4$/i) ? (
+                  {looksLikeVideo(form.mediaurl) ? (
                     <video
                       className="w-full max-h-40"
                       controls
+                      muted
+                      playsInline
+                      preload="metadata"
                       src={form.mediaurl.trim()}
                     />
                   ) : (
