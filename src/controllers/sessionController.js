@@ -5,6 +5,13 @@ import { prisma } from "../config/prismaClient.js";
 /**
  * Helper: map DB session to API shape
  */
+function deriveCheckpoint(session) {
+    const step = session?.campaign_step;
+    if (!step) return session?.checkpoint ?? null; // fallback if column exists in some envs
+    if (step.step_code) return step.step_code;
+    if (typeof step.step_number === "number") return `Step ${step.step_number}`;
+    return null;
+}
 
 const SESSION_STATUS = {
   ACTIVE: "ACTIVE",
@@ -21,7 +28,7 @@ function formatSession(s) {
         campaignid: s.campaign_id,
         campaignname: s.campaign?.campaign_name ?? null,
         contact_phonenum: s.contact?.phone_num ?? null,
-        checkpoint: s.checkpoint ?? null,
+        checkpoint: deriveCheckpoint(s),
         status: s.session_status ?? "ACTIVE",
         createdAt: s.created_at ?? null,
         lastActiveAt: s.last_active_at ?? null,
@@ -38,6 +45,7 @@ export async function listSessions(req, res) {
             include: {
                 campaign: { select: { campaign_name: true } },
                 contact: { select: { phone_num: true } },
+                campaign_step: { select: { step_code: true, step_number: true } },
             },
             orderBy: { last_active_at: "desc" },
             take: 1000,
@@ -63,6 +71,7 @@ export async function getSession(req, res) {
             include: {
                 campaign: true,
                 contact: true,
+                campaign_step: { select: { step_code: true, step_number: true } },
                 message: { orderBy: { created_at: "asc" }, take: 500 },
                 session_log: { orderBy: { logged_at: "asc" }, take: 200 },
             },
@@ -79,11 +88,11 @@ export async function getSession(req, res) {
 
 /**
  * POST /api/session/create
- * Body: { contactid, campaignid, checkpoint? }
+ * Body: { contactid, campaignid }
  */
 export async function createSession(req, res) {
     try {
-        const { contactid, campaignid, checkpoint } = req.body;
+        const { contactid, campaignid } = req.body;
         if (!contactid || !campaignid) {
             return res
                 .status(400)
@@ -97,7 +106,6 @@ export async function createSession(req, res) {
                 data: {
                     contact_id: Number(contactid),
                     campaign_id: Number(campaignid),
-                    checkpoint: checkpoint ?? null,
                     session_status: "ACTIVE",
                     last_active_at: new Date(),
                 },
@@ -159,7 +167,11 @@ export async function resumeSession(req, res) {
 
         const session = await prisma.campaign_session.findUnique({
             where: { campaign_session_id: id },
-            include: { campaign: true, contact: true },
+            include: {
+                campaign: true,
+                contact: true,
+                campaign_step: { select: { step_code: true, step_number: true } },
+            },
         });
 
         if (!session) {
@@ -222,6 +234,7 @@ export async function listSessionsByContact(req, res) {
       include: {
         campaign: { select: { campaign_name: true } },
         contact: { select: { phone_num: true } },
+        campaign_step: { select: { step_code: true, step_number: true } },
       },
     });
 

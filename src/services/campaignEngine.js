@@ -18,6 +18,42 @@ export async function handleIncomingMessage(args) {
   const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
 
   if (campaignFromKeyword) {
+    const activeForCampaign = await findActiveSession(
+      contact.contact_id,
+      campaignFromKeyword.campaign_id
+    );
+    if (activeForCampaign) {
+      return continueCampaignSession({
+        contact,
+        session: activeForCampaign,
+        incomingText: normalizedText,
+        type,
+        payload,
+      });
+    }
+
+    const expiredForCampaign = await findExpiredSession(
+      contact.contact_id,
+      campaignFromKeyword.campaign_id
+    );
+    if (expiredForCampaign) {
+      const revived = await prisma.campaign_session.update({
+        where: { campaign_session_id: expiredForCampaign.campaign_session_id },
+        data: { session_status: "ACTIVE", last_active_at: new Date() },
+        include: { campaign: true },
+      });
+
+      const result = await continueCampaignSession({
+        contact,
+        session: revived,
+        incomingText: normalizedText,
+        type,
+        payload,
+      });
+
+      return result;
+    }
+
     await prisma.campaign_session.updateMany({
       where: {
         contact_id: contact.contact_id,
@@ -88,12 +124,13 @@ async function findOrCreateContact(phone) {
   return contact;
 }
 
-async function findActiveSession(contactId) {
+async function findActiveSession(contactId, campaignId) {
   const cutoff = new Date(Date.now() - SESSION_EXPIRY_MINUTES * 60_000);
 
   return prisma.campaign_session.findFirst({
     where: {
       contact_id: contactId,
+      ...(campaignId ? { campaign_id: campaignId } : {}),
       session_status: "ACTIVE",
       last_active_at: { gte: cutoff },
     },
@@ -101,10 +138,11 @@ async function findActiveSession(contactId) {
   });
 }
 
-async function findExpiredSession(contactId) {
+async function findExpiredSession(contactId, campaignId) {
   return prisma.campaign_session.findFirst({
     where: {
       contact_id: contactId,
+      ...(campaignId ? { campaign_id: campaignId } : {}),
       session_status: "EXPIRED",
     },
     orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
@@ -253,8 +291,50 @@ async function continueCampaignSession({
   type,
   payload,
 }) {
+  let stepId = session.current_step_id;
+
+  // If session has no current step (e.g., expired/resumed), try to recover last checkpoint
+  if (!stepId) {
+    const lastResponse = await prisma.campaign_response.findFirst({
+      where: { session_id: session.campaign_session_id },
+      orderBy: { created_at: "desc" },
+      select: { step_id: true },
+    });
+    if (lastResponse?.step_id) {
+      stepId = lastResponse.step_id;
+    }
+  }
+
+  // If still none, jump to first step
+  if (!stepId) {
+    const firstStep = await prisma.campaign_step.findFirst({
+      where: { campaign_id: session.campaign_id },
+      orderBy: { step_number: "asc" },
+    });
+    if (!firstStep) {
+      await prisma.campaign_session.update({
+        where: { campaign_session_id: session.campaign_session_id },
+        data: { session_status: "CANCELLED", current_step_id: null, last_active_at: new Date() },
+      });
+      return {
+        outbound: [
+          { to: contact.phone_num, content: "This campaign has no steps configured." },
+        ],
+      };
+    }
+    stepId = firstStep.step_id;
+  }
+
+  // Ensure DB reflects the recovered step
+  if (stepId !== session.current_step_id) {
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: { current_step_id: stepId, last_active_at: new Date() },
+    });
+  }
+
   const step = await prisma.campaign_step.findUnique({
-    where: { step_id: session.current_step_id },
+    where: { step_id: stepId },
   });
 
   if (!step) {

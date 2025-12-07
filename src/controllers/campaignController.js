@@ -29,13 +29,42 @@ export async function createCampaign(req, res) {
       return res.status(400).json({ error: "campaignName is required" });
     }
 
+    const startDate = parseNullableDate(startAt);
+    const endDate = parseNullableDate(endAt);
+    const now = new Date();
+
+    if (startDate && endDate && startDate > endDate) {
+      return res
+        .status(400)
+        .json({ error: "startAt must be before endAt." });
+    }
+
+    const scheduleAlreadyEnded =
+      endDate && endDate < now && (!startDate || startDate <= endDate);
+    if (scheduleAlreadyEnded) {
+      return res.status(400).json({
+        error: "The campaign schedule is already in the past. Please choose a future start/end date.",
+      });
+    }
+
+    const normalizedStatus = normalizeCampaignStatus(status, DEFAULT_STATUS);
+
+    let derivedStatus = null;
+    if (startDate && now < startDate) {
+      derivedStatus = STATUS_ON_HOLD;
+    } else if (startDate && now >= startDate && (!endDate || now <= endDate)) {
+      derivedStatus = STATUS_ACTIVE;
+    } else if (endDate && now > endDate) {
+      derivedStatus = STATUS_INACTIVE;
+    }
+
     const data = {
       campaign_name: campaignName,
       objective: objective || null,
       target_region_id: parseNullableInt(targetRegionID),
-      status: normalizeCampaignStatus(status, DEFAULT_STATUS),
-      start_at: parseNullableDate(startAt),
-      end_at: parseNullableDate(endAt),
+      status: derivedStatus || normalizedStatus,
+      start_at: startDate,
+      end_at: endDate,
       created_by_admin_id: req.adminId || null,
     };
 
