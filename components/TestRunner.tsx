@@ -1,3 +1,5 @@
+// components/TestRunner.tsx
+
 "use client";
 
 import { useMemo, useState } from "react";
@@ -10,8 +12,13 @@ function formatUrl(endpoint: EndpointConfig) {
   return `${base}${path}`;
 }
 
-export default function TestRunner({ endpoints }: { endpoints: EndpointConfig[] }) {
-  const [endpointId, setEndpointId] = useState<string>("");
+type Props = {
+  endpoints: EndpointConfig[];
+  initialEndpointId?: string;
+};
+
+export default function TestRunner({ endpoints, initialEndpointId = "" }: Props) {
+  const [endpointId, setEndpointId] = useState<string>(initialEndpointId);
   const [varsText, setVarsText] = useState(
     JSON.stringify({ contact: { phonenum: "60123456789" }, campaign: { code: "RAYA2025" } }, null, 2)
   );
@@ -20,6 +27,18 @@ export default function TestRunner({ endpoints }: { endpoints: EndpointConfig[] 
   const [error, setError] = useState<string | null>(null);
 
   const endpointOptions = useMemo(() => endpoints.filter((endpoint) => endpoint.apiid), [endpoints]);
+  const duration = (result as any)?.timeMs ?? (result as any)?.duration ?? 0;
+  const payloadToRender =
+    result == null
+      ? null
+      : result.ok
+      ? result.responseJson ??
+        ("raw" in (result as any)
+          ? { raw: (result as any).raw, formatted: (result as any).formatted ?? null }
+          : {})
+      : {
+          error: result.errorMessage || (result as any).error || "Failed to execute test",
+        };
 
   const handleRun = async () => {
     setError(null);
@@ -34,7 +53,7 @@ export default function TestRunner({ endpoints }: { endpoints: EndpointConfig[] 
     setRunning(true);
     try {
       const res = await Api.runTest({
-        endpointId,
+        endpointId: Number(endpointId),
         sampleVars: payloadVars,
       });
       setResult(res);
@@ -89,17 +108,16 @@ export default function TestRunner({ endpoints }: { endpoints: EndpointConfig[] 
         <div className="space-y-3 rounded-xl border p-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">
             <span
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                result.ok ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
-              }`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${result.ok ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+                }`}
             >
               {result.ok ? "Success" : "Failed"}
             </span>
             <span>Status: {result.status}</span>
-            <span>Duration: {result.timeMs} ms</span>
+            <span>Duration: {duration} ms</span>
           </div>
           <pre className="max-h-96 overflow-auto rounded-lg bg-muted px-3 py-2 text-xs">
-            {JSON.stringify(result.responseJson ?? { error: result.errorMessage }, null, 2)}
+            {JSON.stringify(payloadToRender ?? {}, null, 2)}
           </pre>
         </div>
       )}

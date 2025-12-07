@@ -23,6 +23,7 @@ router.use("/campaign", campaignRoutes);
 router.use("/reference", regionRoutes);
 router.use("/wa", whatsappRoutes);
 router.use("/template", templateRoutes);
+router.use("/templates", templateRoutes);
 router.use("/integration", integrationRoutes);
 router.use("/debug", debugRoutes);
 router.use("/system", systemRoutes);

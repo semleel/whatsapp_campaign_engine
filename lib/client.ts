@@ -309,23 +309,6 @@ export const Api = {
   listMappings: () =>
     http<CampaignApiMapping[]>("/api/integration/mappings"),
 
-  createMapping: (payload: CampaignApiMapping) =>
-    http<CampaignApiMapping>("/api/integration/mappings", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  updateMapping: (id: string | number, payload: CampaignApiMapping) =>
-    http<CampaignApiMapping>(`/api/integration/mappings/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  deleteMapping: (id: string | number) =>
-    http<{ success: true }>(`/api/integration/mappings/${id}`, {
-      method: "DELETE",
-    }),
-
   // =========================================================
   // Integration -> Test Runner helper
   // =========================================================
@@ -400,51 +383,88 @@ export const Api = {
   // Templates (content)
   // =========================================================
 
-  listTemplates: (includeDeleted = false) =>
-    http<TemplateListItem[]>(
-      `/api/template/list${includeDeleted ? "?includeDeleted=true" : ""}`
-    ),
+  listTemplates: (
+    options: boolean | { includeDeleted?: boolean; status?: string; type?: string; search?: string } = {}
+  ) => {
+    const opts = typeof options === "boolean" ? { includeDeleted: options } : options || {};
+    const params = new URLSearchParams();
+    if (opts.includeDeleted) params.append("includeDeleted", "true");
+    if (opts.status) params.append("status", opts.status);
+    if (opts.type) params.append("type", opts.type);
+    if (opts.search) params.append("search", opts.search);
+    const qs = params.toString();
+    const suffix = qs ? `?${qs}` : "";
+    return http<TemplateListItem[]>(`/api/templates${suffix}`);
+  },
 
-  getTemplate: (id: number | string) =>
-    http<TemplateDetail>(`/api/template/${id}`),
+  getTemplate: (id: number | string, includeDeleted = false) =>
+    http<TemplateDetail>(
+      `/api/templates/${id}${includeDeleted ? "?includeDeleted=true" : ""}`
+    ),
 
   createTemplate: (payload: TemplatePayload) =>
-    http<{ message: string; data: TemplateDetail }>(
-      "/api/template/create",
-      {
-        method: "POST",
-        body: JSON.stringify(payload),
-      }
-    ),
+    http<{ message: string; data: TemplateDetail }>("/api/templates", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   updateTemplate: (id: number | string, payload: TemplatePayload) =>
-    http<{ message: string; data: TemplateDetail }>(`/api/template/${id}`, {
+    http<{ message: string; data: TemplateDetail }>(`/api/templates/${id}`, {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
 
   setTemplateExpiry: (id: number | string, expiresAt: string) =>
-    http<{ message: string }>(`/api/template/${id}/expire`, {
+    http<{ message: string }>(`/api/templates/${id}/expire`, {
       method: "POST",
       body: JSON.stringify({ expiresAt }),
     }),
 
-  deleteTemplate: (id: number | string) =>
-    http<{ message: string }>(`/api/template/${id}`, {
-      method: "DELETE",
-    }),
-
-
-  softDeleteTemplate: (id: number | string) =>
-    http<{ message: string }>(`/api/template/${id}/delete`, {
+  archiveTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/templates/${id}/archive`, {
       method: "POST",
     }),
 
-  recoverTemplate: (id: number | string) =>
-    http<{ message: string }>(`/api/template/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ isdeleted: false }),
+  softDeleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/templates/${id}/archive`, {
+      method: "POST",
     }),
+
+  deleteTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/templates/${id}`, {
+      method: "DELETE",
+    }),
+
+  recoverTemplate: (id: number | string) =>
+    http<{ message: string }>(`/api/templates/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ isdeleted: false, is_deleted: false }),
+    }),
+
+  // =========================================================
+  // Uploads (Supabase Storage)
+  // =========================================================
+  uploadAttachment: async (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    const url = withBase("/api/uploads");
+    const token = typeof window !== "undefined" ? getStoredToken() : null;
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData,
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) {
+      let details: any = null;
+      try {
+        details = await res.json();
+      } catch {
+        // ignore
+      }
+      throw new Error(details?.error || "Upload failed");
+    }
+    return (await res.json()) as { url: string };
+  },
 
   // =========================================================
   // Tags

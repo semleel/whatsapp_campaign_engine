@@ -113,6 +113,7 @@ export default function CampaignStepsPage() {
         input_type: inputType,
         expected_input: expected,
         jump_mode,
+        template: (step as any).template ?? null,
         template_source_id: (step as any).template_source_id ?? null,
       };
     });
@@ -278,7 +279,7 @@ export default function CampaignStepsPage() {
       : steps[0] || null;
   const activeStepNumber = activeStep ? steps.indexOf(activeStep) + 1 : null;
   const nextLabel = (() => {
-    if (!activeStep) return "—";
+    if (!activeStep) return "";
     if (activeStep.action_type === "choice") return "Per choice";
     if (activeStep.is_end_step) return "End";
     if (activeStep.next_step_id) return `Step ${activeStep.next_step_id}`;
@@ -915,3 +916,4 @@ export default function CampaignStepsPage() {
     </div>
   );
 }
+

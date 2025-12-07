@@ -260,7 +260,7 @@ export default function CampaignsPage() {
                           <div className="relative inline-flex warning-popover">
                             <button
                               type="button"
-                              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-rose-100 text-rose-700 text-xs font-bold"
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-100 text-amber-800 text-xs font-bold"
                               onClick={() =>
                                 setOpenWarningId((prev) =>
                                   prev === c.campaignid ? null : c.campaignid
@@ -275,16 +275,16 @@ export default function CampaignsPage() {
                                 openWarningId === c.campaignid
                                   ? "block"
                                   : "hidden"
-                              } w-56 max-h-48 overflow-y-auto rounded-lg border border-rose-200 bg-white p-3 text-xs text-rose-700 shadow-lg`}
+                              } w-56 max-h-48 overflow-y-auto rounded-lg border border-amber-200 bg-white p-3 text-xs text-amber-800 shadow-lg`}
                             >
-                              <div className="font-semibold text-rose-700 mb-2">
+                              <div className="font-semibold text-amber-800 mb-2">
                                 {warningText || "Missing configuration"}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 {missingKeyword && (
                                   <Link
                                     href="/campaign/keywords"
-                                    className="rounded border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
+                                    className="rounded border border-amber-200 px-2 py-1 text-amber-800 hover:bg-amber-50"
                                   >
                                     Manage keywords
                                   </Link>
@@ -292,7 +292,7 @@ export default function CampaignsPage() {
                                 {missingTemplate && (
                                   <Link
                                     href="/content/templates/create"
-                                    className="rounded border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
+                                    className="rounded border border-amber-200 px-2 py-1 text-amber-800 hover:bg-amber-50"
                                   >
                                     Create template
                                   </Link>

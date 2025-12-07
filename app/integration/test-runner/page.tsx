@@ -1,6 +1,9 @@
+// app/integration/test-runner/page.tsx
+
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Api } from "@/lib/client";
 import type { EndpointConfig } from "@/lib/types";
 import TestRunner from "@/components/TestRunner";
@@ -8,6 +11,8 @@ import { usePrivilege } from "@/lib/permissions";
 
 export default function LiveTestRunnerPage() {
   const { canView, loading: privLoading } = usePrivilege("integration");
+  const searchParams = useSearchParams();
+  const initialEndpointId = searchParams.get("endpointId") ?? "";
   const [endpoints, setEndpoints] = useState<EndpointConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +58,7 @@ export default function LiveTestRunnerPage() {
         ) : endpoints.length === 0 ? (
           <p className="text-sm text-muted-foreground">No endpoints available yet.</p>
         ) : (
-          <TestRunner endpoints={endpoints} />
+          <TestRunner endpoints={endpoints} initialEndpointId={initialEndpointId} />
         )}
       </section>
     </div>

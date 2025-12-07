@@ -1,5 +1,8 @@
+// src/services/integrationService.js
+
 import { URL } from "url";
-import { appendLog, getEndpoint, getResponseTemplate } from "./integrationStore.js";
+import { appendLog } from "./integrationStore.js";
+import { getRuntimeEndpoint } from "./apiEndpointRuntime.js";
 import { log as appLog, warn as appWarn } from "../utils/logger.js";
 
 const PLACEHOLDER = /{{\s*([^}]+)\s*}}/g;
@@ -93,17 +96,19 @@ export function materializeVariables(baseVars, paramMap) {
 }
 
 export async function dispatchEndpoint(endpointId, vars = {}) {
-  const endpoint = await getEndpoint(endpointId);
+  const endpoint = await getRuntimeEndpoint(endpointId);
   if (!endpoint) throw new Error("Endpoint not found");
 
   const resolvedVars = { ...vars };
   const requestContext = { ...resolvedVars, campaign: resolvedVars.campaign || {}, args: resolvedVars };
   const url = buildUrl(endpoint, requestContext);
+  const method = endpoint.method || "GET";
   const headers = {
     "Content-Type": "application/json",
     ...buildHeaders(endpoint, requestContext),
   };
   const body = buildBody(endpoint, requestContext);
+  const bodyString = body == null ? null : typeof body === "string" ? body : JSON.stringify(body);
   const retries = Math.max(0, Number(endpoint.retries) || 0);
   const timeoutMs = Math.max(1000, Number(endpoint.timeoutMs) || 8000);
   const backoffMs = Math.max(0, Number(endpoint.backoffMs) || 0);
@@ -114,20 +119,38 @@ export async function dispatchEndpoint(endpointId, vars = {}) {
     const started = Date.now();
     try {
       const res = await fetch(url, {
-        method: endpoint.method,
+        method,
         headers,
         body,
         signal: controller.signal,
       });
       const duration = Date.now() - started;
       const ct = res.headers.get("content-type") || "";
-      let payload;
-      if (ct.includes("application/json")) {
-        payload = await res.json();
-      } else {
-        payload = await res.text();
+      let rawText = "";
+      try {
+        rawText = await res.text();
+      } catch {
+        rawText = "";
       }
-      return { ok: res.ok, status: res.status, duration, payload };
+
+      let payload = rawText;
+      if (ct.includes("application/json")) {
+        try {
+          payload = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          payload = rawText;
+        }
+      }
+
+      return {
+        ok: res.ok,
+        status: res.status,
+        duration,
+        payload,
+        url,
+        method,
+        requestBody: bodyString,
+      };
     } finally {
       clearTimeout(timeout);
     }
@@ -138,7 +161,13 @@ export async function dispatchEndpoint(endpointId, vars = {}) {
     try {
       const result = await attempt();
       if (!result.ok) throw new Error(`Remote responded with status ${result.status}`);
-      return result;
+      return {
+        ...result,
+        url,
+        method,
+        apiId: endpoint.id ?? endpoint.api_id ?? endpointId,
+        requestBody: body,
+      };
     } catch (err) {
       lastError = err;
       if (i < retries) {
@@ -151,28 +180,19 @@ export async function dispatchEndpoint(endpointId, vars = {}) {
   throw lastError || new Error("Unknown error during dispatch");
 }
 
-export function renderResponse(templateId, payload, vars = {}) {
-  if (!templateId) return null;
-  const template = getResponseTemplate(templateId);
-  if (!template) return null;
-  const context = { ...vars, ...normalizePayload(payload), args: payload };
-  return {
-    templateId: template.id,
-    body: renderTemplateString(template.body, context),
-    locale: template.locale,
-  };
-}
-
-function normalizePayload(payload) {
-  if (payload && typeof payload === "object") return payload;
-  return { value: payload };
+export function renderResponse() {
+  // Integration-specific formatter templates have been removed.
+  // Message bodies should be rendered via content/template tables instead.
+  return null;
 }
 
 export async function runTest({ endpointId, sampleVars = {}, templateId }) {
   const ts = new Date().toISOString();
+
   try {
     const result = await dispatchEndpoint(endpointId, sampleVars);
     const formatted = renderResponse(templateId, result.payload, sampleVars);
+
     appendLog({
       id: `${ts}-${Math.random().toString(36).slice(2, 6)}`,
       ts,
@@ -185,14 +205,14 @@ export async function runTest({ endpointId, sampleVars = {}, templateId }) {
         duration: result.duration,
       },
     });
-    appLog(`Integration test successful for endpoint ${endpointId}`);
+
     return {
       ok: true,
       status: result.status,
       timeMs: result.duration,
       responseJson: {
         raw: result.payload,
-        formatted,
+        formatted: formatted ?? null,
       },
     };
   } catch (error) {
@@ -204,12 +224,12 @@ export async function runTest({ endpointId, sampleVars = {}, templateId }) {
       message: error.message,
       meta: { endpointId, sampleVars },
     });
-    appWarn(`Integration test failed for endpoint ${endpointId}: ${error.message}`);
+
     return {
       ok: false,
       status: 500,
       timeMs: 0,
-      errorMessage: error.message,
+      errorMessage: error.message || "Failed to execute test",
     };
   }
 }

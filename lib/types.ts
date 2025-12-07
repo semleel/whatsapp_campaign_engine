@@ -55,19 +55,19 @@ export type EndpointConfig = {
     parameters?: ApiParameter[];    // from apiparameter
 };
 
-// campaign_api_mapping table
+// campaign_step rows with action_type = 'api'
 export type CampaignApiMapping = {
-    mappingid?: number;          // DB: mappingid (PK)
+    step_id: number;              // campaign_step.step_id
+    campaignid: number;           // campaign_step.campaign_id
+    campaignname?: string | null; // joined campaign.campaign_name (optional)
 
-    campaignid: number;          // DB: campaignid (FK to campaign)
-    contentkeyid: string;        // DB: contentkeyid (FK to keymapping)
+    step_number: number;          // campaign_step.step_number
+    step_code?: string | null;    // campaign_step.step_code
 
-    apiid: number;               // DB: apiid (FK to api)
+    apiid?: number | null;        // campaign_step.api_id
+    api_name?: string | null;     // joined api.name (optional)
 
-    success_contentkeyid?: string | null; // DB: success_contentkeyid
-    error_contentkeyid?: string | null;   // DB: error_contentkeyid
-
-    is_active?: boolean;         // DB: is_active
+    is_active?: boolean;          // derived from campaign.status if available
 };
 
 // api_log table (for viewing logs in UI, if you want)
@@ -286,9 +286,12 @@ export type CampaignStep = {
     action_type: ActionType;
     api_id: number | null;
     next_step_id: number | null;
+    next_step_number?: number | null;
     failure_step_id: number | null;
+    failure_step_number?: number | null;
     is_end_step: boolean;
     template_source_id?: number | null;
+    template?: TemplateDetail | null;
 };
 
 export type CampaignStepChoice = {
@@ -307,6 +310,9 @@ export type CampaignStepWithChoices = CampaignStep & {
     jump_mode?: JumpMode;
     // Optional media per step (hosted in your own storage, linked via URL)
     media_url?: string | null;
+    template?: TemplateDetail | null;
+    next_step_number?: number | null;
+    failure_step_number?: number | null;
     campaign_step_choice: CampaignStepChoice[];
 };
 
@@ -365,15 +371,22 @@ export interface TemplateListItem {
     title: string;
     type: string;
     status: string;
+    lang?: string | null;
     defaultlang: string;
     category: string | null;
     currentversion: number | null;
     updatedat?: string | null;
     lastupdated?: string | null;
+    updated_at?: string | null;
+    createdat?: string | null;
+    expires_at?: string | null;
     isdeleted?: boolean | null;
+    is_deleted?: boolean | null;
     mediaurl?: string | null;
     media_url?: string | null;
     expiresat?: string | null;
+    body?: string | null;
+    placeholders?: Record<string, unknown> | null;
 }
 
 export interface TemplateDetail extends TemplateListItem {
@@ -398,12 +411,25 @@ export type TemplatePayload = {
     title: string;
     type: string;
     status: string;
-    defaultLang: string;
+    lang: string;
+    defaultLang?: string;
     category?: string | null;
     description?: string | null;
     mediaUrl?: string | null;
+    media_url?: string | null;
     body?: string | null;
+    placeholders?: Record<string, unknown> | null;
     expiresat?: string | null;
+    expiresAt?: string | null;
+    expires_at?: string | null;
+    isdeleted?: boolean | null;
+    is_deleted?: boolean | null;
+    headerText?: string | null;
+    headerType?: string | null;
+    headerMediaType?: string | null;
+    buttons?: unknown[] | null;
+    menu?: unknown;
+    interactiveType?: string | null;
 };
 
 // ========================

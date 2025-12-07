@@ -9,6 +9,7 @@ import apiRoutes from "./routes/index.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import { startJobs } from "./jobs/index.js";
 import systemCommandRoutes from "./routes/systemCommandRoutes.js";
+import uploadRoutes from "./routes/uploadRoutes.js";
 
 // --- Middleware ---
 import errorHandler from "./middleware/errorHandler.js";
@@ -52,6 +53,7 @@ const PORT = config.server.port || process.env.PORT || 3000;
 // --- API Routes ---
 // Register independent routes first
 app.use("/api/system/commands", systemCommandRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 // Then mount the grouped /api routes
 app.use("/api", apiRoutes);

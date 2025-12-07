@@ -10,9 +10,6 @@ import { showCenteredAlert } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
-
 // ------------------------------
 // Types
 // ------------------------------
@@ -103,7 +100,7 @@ const TEMPLATE_CATEGORY_OPTIONS: {
 const SUPPORTED_LOCALES = [
   { value: "en", label: "English" },
   { value: "my", label: "Bahasa Melayu" },
-  { value: "cn", label: "Chinese" },
+  { value: "zh", label: "Chinese" },
 ];
 
 function normalizeStatus(status: string | null | undefined): string {
@@ -152,6 +149,14 @@ const MAX_MENU_OPTION_TITLE = 24;
 const MAX_MENU_OPTION_DESC = 72;
 const BUTTON_LABEL_SOFT_LIMIT = 20;
 const BUTTON_LABEL_HARD_LIMIT = 24;
+const ALLOWED_UPLOAD_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "video/mp4",
+  "application/pdf",
+];
+const MAX_UPLOAD_SIZE = 16 * 1024 * 1024; // 16 MB
 const BUTTON_CONFIG_ERROR =
   "Invalid button configuration: WhatsApp allows up to 3 reply buttons OR up to 2 CTA buttons (1 website + 1 phone). Mixing types is not allowed.";
 const MENU_CONFIG_ERROR =
@@ -292,25 +297,38 @@ type FeedbackState = {
 };
 
 const INLINE_FORMATTERS = [
+  // Monospace block: ```text```
   {
-    regex: /\*\*(.+?)\*\*/g,
-    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
-  },
-  {
-    regex: /\*(.+?)\*/g,
-    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
-  },
-  {
-    regex: /~~(.+?)~~/g,
-    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
-  },
-  {
-    regex: /`([^`]+)`/g,
+    regex: /```([^`]+)```/g,
     wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px]">
+      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
         {content}
       </code>
     ),
+  },
+  // Inline code: `text`
+  {
+    regex: /`([^`]+)`/g,
+    wrap: (content: string, key: string) => (
+      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
+        {content}
+      </code>
+    ),
+  },
+  // Bold: *text*
+  {
+    regex: /\*(?!\s)([^*]+?)\*(?!\s)/g,
+    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
+  },
+  // Italic: _text_
+  {
+    regex: /_(?!\s)([^_]+?)_(?!\s)/g,
+    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
+  },
+  // Strikethrough: ~text~
+  {
+    regex: /~(?!\s)([^~]+?)~(?!\s)/g,
+    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
   },
 ];
 
@@ -377,6 +395,8 @@ export default function EditTemplatePage() {
   const [error, setError] = useState<string | null>(null);
   const [buttonError, setButtonError] = useState<string | null>(null);
   const [menuError, setMenuError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [form, setForm] = useState<TemplateData>({
     contentid: 0,
@@ -467,7 +487,7 @@ export default function EditTemplatePage() {
         setLoading(true);
 
         // ✅ use shared API client
-        const data = await Api.getTemplate(templateId);
+        const data = await Api.getTemplate(templateId, true);
 
         const isdeleted: boolean | null = (data as any).isdeleted ?? null;
         const rawPlaceholders =
@@ -635,6 +655,40 @@ export default function EditTemplatePage() {
       ...prev,
       buttons: prev.buttons!.filter((btn) => btn.id !== id),
     }));
+  };
+
+  const appendFormatSnippet = (snippet: string) => {
+    setForm((prev) => ({
+      ...prev,
+      body: `${prev.body}${prev.body ? " " : ""}${snippet}`,
+    }));
+  };
+
+  const handleUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadError(null);
+
+    if (!ALLOWED_UPLOAD_TYPES.includes(file.type)) {
+      setUploadError("Invalid file type. Allowed: JPEG, PNG, MP4, PDF.");
+      return;
+    }
+    if (file.size > MAX_UPLOAD_SIZE) {
+      setUploadError("File too large. Max 16MB.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const res = await Api.uploadAttachment(file);
+      if (res?.url) {
+        setForm((prev) => ({ ...prev, mediaurl: res.url }));
+      }
+    } catch (err: any) {
+      setUploadError(err?.message || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleInteractiveTypeChange = (type: TemplateInteractiveType) => {
@@ -869,10 +923,7 @@ export default function EditTemplatePage() {
         }
       }
 
-      const finalMediaUrl =
-        form.headerType === "media" && form.mediaurl?.trim()
-          ? form.mediaurl.trim()
-          : null;
+      const finalMediaUrl = form.mediaurl?.trim() || null;
 
       const expiresAtIso = form.expiresat
         ? new Date(form.expiresat).toISOString()
@@ -882,10 +933,7 @@ export default function EditTemplatePage() {
         form.interactiveType === "default" ? undefined : form.interactiveType;
 
       const placeholderData = {
-        headerText: form.headerType === "text" ? form.headerText || "" : null,
-        headerType: form.headerType,
-        headerMediaType:
-          form.headerType === "media" ? form.headerMediaType : null,
+        footerText: form.footerText,
         buttons: form.buttons,
         interactiveType: apiInteractiveType,
       };
@@ -906,9 +954,6 @@ export default function EditTemplatePage() {
         description: form.description || form.body || null,
         mediaUrl: finalMediaUrl,
         expiresat: expiresAtIso,
-        headerText: placeholderData.headerText,
-        headerType: placeholderData.headerType,
-        headerMediaType: placeholderData.headerMediaType,
         buttons:
           form.interactiveType === "buttons"
             ? placeholderData.buttons?.slice(0, MAX_QUICK_REPLIES)
@@ -949,7 +994,7 @@ export default function EditTemplatePage() {
     setSaving(true);
 
     try {
-      await Api.softDeleteTemplate(form.contentid);
+      await Api.archiveTemplate(form.contentid);
 
       setForm((prev) => ({ ...prev, isdeleted: true }));
 
@@ -1212,6 +1257,16 @@ export default function EditTemplatePage() {
                   type="radio"
                   name="interactiveType"
                   className="h-4 w-4"
+                  checked={form.interactiveType === "default"}
+                  onChange={() => handleInteractiveTypeChange("default")}
+                />
+                Default (No interactions)
+              </label>
+              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="interactiveType"
+                  className="h-4 w-4"
                   checked={form.interactiveType === "buttons"}
                   onChange={() => handleInteractiveTypeChange("buttons")}
                 />
@@ -1226,16 +1281,6 @@ export default function EditTemplatePage() {
                   onChange={() => handleInteractiveTypeChange("menu")}
                 />
                 Menu (List Message)
-              </label>
-              <label className="inline-flex items-center gap-2 border rounded px-3 py-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="interactiveType"
-                  className="h-4 w-4"
-                  checked={form.interactiveType === "default"}
-                  onChange={() => handleInteractiveTypeChange("default")}
-                />
-                Default (No interactions)
               </label>
             </div>
           </div>
@@ -1323,6 +1368,39 @@ export default function EditTemplatePage() {
           </div>
           */}
 
+          {/* Media / Attachment */}
+          <div className="border-t pt-4 space-y-2">
+            <h4 className="text-sm font-semibold">Media / attachment URL</h4>
+            <p className="text-xs text-muted-foreground">
+              Optional. Link to an image / video / document to include with this message. Only URLs are stored.
+            </p>
+            <label className="flex items-center gap-3">
+              <span className="inline-flex items-center rounded-md border px-3 py-2 text-xs font-medium bg-white shadow-sm cursor-pointer hover:bg-muted">
+                Choose file
+                <input
+                  type="file"
+                  accept={ALLOWED_UPLOAD_TYPES.join(",")}
+                  onChange={handleUploadChange}
+                  className="hidden"
+                  disabled={uploading}
+                />
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {uploading ? "Uploading..." : "JPEG, PNG, MP4 or PDF (max 16MB)"}
+              </span>
+            </label>
+            {uploadError && (
+              <p className="text-xs text-red-500">{uploadError}</p>
+            )}
+            <input
+              type="text"
+              className="w-full border rounded px-3 py-2 text-sm"
+              placeholder="https://example.com/image-or-document"
+              value={form.mediaurl || ""}
+              onChange={(e) => setForm({ ...form, mediaurl: e.target.value })}
+            />
+          </div>
+
           {/* EXPIRY */}
           <div className="border-t pt-4 space-y-2">
             <h4 className="text-sm font-semibold">Expiry</h4>
@@ -1340,95 +1418,49 @@ export default function EditTemplatePage() {
             />
           </div>
 
-          {/* HEADER SECTION */}
-          <div className="border-t pt-4 space-y-3">
-            <h4 className="font-semibold text-sm">
-              Header{" "}
-              <span className="text-xs text-muted-foreground">(Optional)</span>
-            </h4>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <label className="text-sm space-y-1">
-                <span className="font-medium">Header Type</span>
-                <select
-                  className="w-full border rounded px-3 py-2"
-                  value={form.headerType}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      headerType: e.target.value as "none" | "text" | "media",
-                    })
-                  }
-                >
-                  <option value="none">None</option>
-                  <option value="text">Text</option>
-                  <option value="media">Media</option>
-                </select>
-              </label>
-
-              {form.headerType === "media" && (
-                <label className="text-sm space-y-1">
-                  <span className="font-medium">Media Type</span>
-                  <select
-                    className="w-full border rounded px-3 py-2"
-                    value={form.headerMediaType}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        headerMediaType: e.target.value as
-                          | "image"
-                          | "video"
-                          | "document",
-                      })
-                    }
-                  >
-                    <option value="image">Image</option>
-                    <option value="video">Video</option>
-                    <option value="document">Document</option>
-                  </select>
-                </label>
-              )}
-            </div>
-
-            {form.headerType === "text" && (
-              <label className="text-sm block space-y-1">
-                <span className="font-medium">Header Text</span>
-                <input
-                  className="w-full border rounded px-3 py-2"
-                  value={form.headerText || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, headerText: e.target.value })
-                  }
-                />
-              </label>
-            )}
-
-            {form.headerType === "media" && (
-              <label className="text-sm block space-y-1">
-                <span className="font-medium">Header media URL</span>
-                <input
-                  type="url"
-                  className="w-full border rounded px-3 py-2"
-                  placeholder="https://example.com/image.jpg"
-                  value={form.mediaurl || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, mediaurl: e.target.value })
-                  }
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Provide a public URL to an image / media that will be rendered
-                  above the message. Only URL is stored, no local file upload.
-                </p>
-              </label>
-            )}
-          </div>
-
           {/* BODY */}
           <label className="text-sm border-t pt-4 block space-y-1">
             <span className="font-medium">Body</span>
             <p className="text-xs text-muted-foreground">
-              Formatting supported: **bold**, *italic*, ~~strikethrough~~, `code`.
+              WhatsApp formatting supported: *bold*, _italic_, ~strikethrough~, ```monospace```, and inline `code`.
             </p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <button
+                type="button"
+                className="rounded border px-2 py-1 hover:bg-muted"
+                onClick={() => appendFormatSnippet("*bold*")}
+              >
+                *bold*
+              </button>
+              <button
+                type="button"
+                className="rounded border px-2 py-1 hover:bg-muted"
+                onClick={() => appendFormatSnippet("_italic_")}
+              >
+                _italic_
+              </button>
+              <button
+                type="button"
+                className="rounded border px-2 py-1 hover:bg-muted"
+                onClick={() => appendFormatSnippet("~strikethrough~")}
+              >
+                ~strike~
+              </button>
+              <button
+                type="button"
+                className="rounded border px-2 py-1 hover:bg-muted"
+                onClick={() => appendFormatSnippet("```monospace```")}
+              >
+                ```mono```
+              </button>
+              <button
+                type="button"
+                className="rounded border px-2 py-1 hover:bg-muted"
+                onClick={() => appendFormatSnippet("`code`")}
+              >
+                `code`
+              </button>
+            </div>
             <textarea
               className="w-full border rounded px-3 py-2 min-h-32"
               value={form.body}
@@ -1806,22 +1838,25 @@ export default function EditTemplatePage() {
             </p>
 
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
-              {form.headerType === "media" && form.mediaurl && (
-                <img
-                  src={form.mediaurl}
-                  className="rounded w-full object-cover max-h-40 mb-2"
-                  alt="Header media"
-                />
-              )}
-
-              {form.headerType === "text" && form.headerText && (
-                <p className="text-xs font-semibold mb-1">
-                  {form.headerText}
-                </p>
+              {form.mediaurl?.trim() && (
+                <div className="mb-2 overflow-hidden rounded-md bg-background">
+                  {form.mediaurl.match(/\.mp4$/i) ? (
+                    <video className="w-full max-h-40" controls src={form.mediaurl.trim()} />
+                  ) : (
+                    <img
+                      src={form.mediaurl.trim()}
+                      className="rounded w-full object-cover max-h-40"
+                      alt="Media preview"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  )}
+                </div>
               )}
 
               <div className="bg-background rounded p-2 text-xs shadow">
-                {renderFormattedLines(form.body, " ")}
+                {renderFormattedLines(form.body, "Body text here")}
               </div>
 
               {form.interactiveType === "buttons" && previewButtons.length > 0 && (

@@ -1,6 +1,7 @@
 // src/controllers/campaignController.js
 
 import { prisma } from "../config/prismaClient.js";
+import { mapContentToResponse } from "./templateController.js";
 import { normalizeCampaignStatus, statusFromId, statusToId } from "../constants/campaignStatus.js";
 
 const DEFAULT_STATUS = "New";
@@ -28,13 +29,42 @@ export async function createCampaign(req, res) {
       return res.status(400).json({ error: "campaignName is required" });
     }
 
+    const startDate = parseNullableDate(startAt);
+    const endDate = parseNullableDate(endAt);
+    const now = new Date();
+
+    if (startDate && endDate && startDate > endDate) {
+      return res
+        .status(400)
+        .json({ error: "startAt must be before endAt." });
+    }
+
+    const scheduleAlreadyEnded =
+      endDate && endDate < now && (!startDate || startDate <= endDate);
+    if (scheduleAlreadyEnded) {
+      return res.status(400).json({
+        error: "The campaign schedule is already in the past. Please choose a future start/end date.",
+      });
+    }
+
+    const normalizedStatus = normalizeCampaignStatus(status, DEFAULT_STATUS);
+
+    let derivedStatus = null;
+    if (startDate && now < startDate) {
+      derivedStatus = STATUS_ON_HOLD;
+    } else if (startDate && now >= startDate && (!endDate || now <= endDate)) {
+      derivedStatus = STATUS_ACTIVE;
+    } else if (endDate && now > endDate) {
+      derivedStatus = STATUS_INACTIVE;
+    }
+
     const data = {
       campaign_name: campaignName,
       objective: objective || null,
       target_region_id: parseNullableInt(targetRegionID),
-      status: normalizeCampaignStatus(status, DEFAULT_STATUS),
-      start_at: parseNullableDate(startAt),
-      end_at: parseNullableDate(endAt),
+      status: derivedStatus || normalizedStatus,
+      start_at: startDate,
+      end_at: endDate,
       created_by_admin_id: req.adminId || null,
     };
 
@@ -273,6 +303,59 @@ const parseStepPayload = (body = {}) => {
   };
 };
 
+const mapStepResponse = (step, idToNumber) => {
+  let inputType = null;
+  let expectedInput = step.expected_input;
+  if (step.action_type === "input") {
+    if (step.expected_input === "number" || step.expected_input === "email") {
+      inputType = step.expected_input;
+    } else {
+      inputType = "text";
+    }
+    expectedInput = inputType;
+  } else if (step.action_type === "choice") {
+    expectedInput = "choice";
+  } else {
+    expectedInput = "none";
+  }
+
+  const template = step.content ? mapContentToResponse(step.content) : null;
+
+  return {
+    step_id: step.step_id,
+    campaign_id: step.campaign_id,
+    step_number: step.step_number,
+    step_code: step.step_code,
+    prompt_text: step.prompt_text,
+    error_message: step.error_message,
+    expected_input: expectedInput,
+    input_type: inputType,
+    action_type: step.action_type,
+    api_id: step.api_id,
+    next_step_id: step.next_step_id,
+    next_step_number: step.next_step_id && idToNumber ? idToNumber.get(step.next_step_id) || null : null,
+    failure_step_id: step.failure_step_id,
+    failure_step_number: step.failure_step_id && idToNumber ? idToNumber.get(step.failure_step_id) || null : null,
+    is_end_step: step.is_end_step,
+    template_source_id: step.template_source_id,
+    template,
+    media_url: step.media_url,
+    jump_mode: step.next_step_id ? "custom" : "next",
+    campaign_step_choice: (
+      step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
+    ).map((c) => ({
+      choice_id: c.choice_id,
+      campaign_id: c.campaign_id,
+      step_id: c.step_id,
+      choice_code: c.choice_code,
+      label: c.label,
+      next_step_id: c.next_step_id,
+      next_step_number: c.next_step_id && idToNumber ? idToNumber.get(c.next_step_id) || null : null,
+      is_correct: c.is_correct,
+    })),
+  };
+};
+
 export async function getCampaignWithSteps(req, res) {
   try {
     const campaignID = parseInt(req.params.id, 10);
@@ -287,6 +370,7 @@ export async function getCampaignWithSteps(req, res) {
         campaign_step: {
           orderBy: { step_number: "asc" },
           include: {
+            content: true,
             campaign_step_choice_campaign_step_choice_step_idTocampaign_step: {
               orderBy: { choice_id: "asc" },
             },
@@ -312,56 +396,9 @@ export async function getCampaignWithSteps(req, res) {
       idToNumber.set(s.step_id, s.step_number);
     });
 
-    const mappedSteps = (campaign.campaign_step || []).map((step) => {
-      let inputType = null;
-      let expectedInput = step.expected_input;
-      if (step.action_type === "input") {
-        if (step.expected_input === "number" || step.expected_input === "email") {
-          inputType = step.expected_input;
-        } else {
-          inputType = "text";
-        }
-        expectedInput = inputType;
-      } else if (step.action_type === "choice") {
-        expectedInput = "choice";
-      } else {
-        expectedInput = "none";
-      }
-
-      const jumpMode = step.next_step_id ? "custom" : "next";
-
-      return {
-        step_id: step.step_id,
-        campaign_id: step.campaign_id,
-        step_number: step.step_number,
-        step_code: step.step_code,
-        prompt_text: step.prompt_text,
-        error_message: step.error_message,
-        expected_input: expectedInput,
-        input_type: inputType,
-        action_type: step.action_type,
-        api_id: step.api_id,
-        next_step_id: step.next_step_id,
-        failure_step_id: step.failure_step_id,
-        is_end_step: step.is_end_step,
-        template_source_id: step.template_source_id,
-
-        media_url: step.media_url,
-        jump_mode: step.next_step_id ? "custom" : "next",
-        campaign_step_choice: (
-          step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
-        ).map((c) => ({
-          choice_id: c.choice_id,
-          campaign_id: c.campaign_id,
-          step_id: c.step_id,
-          choice_code: c.choice_code,
-          label: c.label,
-          next_step_id: c.next_step_id,
-          next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
-          is_correct: c.is_correct,
-        })),
-      };
-    });
+    const mappedSteps = (campaign.campaign_step || []).map((step) =>
+      mapStepResponse(step, idToNumber)
+    );
 
     return res.status(200).json({
       campaign: mappedCampaign,
@@ -772,6 +809,7 @@ export async function saveCampaignStepsBulk(req, res) {
           campaign_step: {
             orderBy: { step_number: "asc" },
             include: {
+              content: true,
               campaign_step_choice_campaign_step_choice_step_idTocampaign_step: {
                 orderBy: { choice_id: "asc" },
               },
@@ -800,53 +838,9 @@ export async function saveCampaignStepsBulk(req, res) {
       idToNumber.set(s.step_id, s.step_number);
     });
 
-    const mappedSteps = (result.campaign_step || []).map((step) => {
-      let inputType = null;
-      let expectedInput = step.expected_input;
-      if (step.action_type === "input") {
-        if (step.expected_input === "number" || step.expected_input === "email") {
-          inputType = step.expected_input;
-        } else {
-          inputType = "text";
-        }
-        expectedInput = inputType;
-      } else if (step.action_type === "choice") {
-        expectedInput = "choice";
-      } else {
-        expectedInput = "none";
-      }
-
-      return {
-        step_id: step.step_id,
-        campaign_id: step.campaign_id,
-        step_number: step.step_number,
-        step_code: step.step_code,
-        prompt_text: step.prompt_text,
-        error_message: step.error_message,
-        expected_input: expectedInput,
-        input_type: inputType,
-        action_type: step.action_type,
-        api_id: step.api_id,
-        next_step_id: step.next_step_id,
-        failure_step_id: step.failure_step_id,
-        is_end_step: step.is_end_step,
-        template_source_id: step.template_source_id,
-        media_url: step.media_url,
-        jump_mode: step.next_step_id ? "custom" : "next",
-        campaign_step_choice: (
-          step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
-        ).map((c) => ({
-          choice_id: c.choice_id,
-          campaign_id: c.campaign_id,
-          step_id: c.step_id,
-          choice_code: c.choice_code,
-          label: c.label,
-          next_step_id: c.next_step_id,
-          next_step_number: c.next_step_id ? idToNumber.get(c.next_step_id) || null : null,
-          is_correct: c.is_correct,
-        })),
-      };
-    });
+    const mappedSteps = (result.campaign_step || []).map((step) =>
+      mapStepResponse(step, idToNumber)
+    );
 
     return res.status(200).json({ campaign: mappedCampaign, steps: mappedSteps });
   } catch (err) {
