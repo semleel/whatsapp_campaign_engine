@@ -101,6 +101,12 @@ export async function webhookHandler(req, res) {
       return res.sendStatus(200);
     }
 
+    const activeWaConfig = await prisma.whatsapp_config.findFirst({
+      where: { is_active: true },
+      orderBy: { id: "desc" },
+      select: { phone_number: true, phone_number_id: true },
+    });
+
     for (const message of messages) {
       const from = message?.from;
       if (!from) {
@@ -164,18 +170,51 @@ export async function webhookHandler(req, res) {
       for (const outbound of result.outbound) {
         const to = outbound.to || from;
         const content = outbound.content || "";
+        const stepContext = outbound.stepContext || {};
         const waPayload =
           outbound.waPayload ||
           ({
             type: "text",
             text: { body: content || "..." },
           });
+        const senderId =
+          activeWaConfig?.phone_number_id ||
+          activeWaConfig?.phone_number ||
+          waPhoneNumberId ||
+          waDisplayPhone ||
+          "server-api";
+        const receiverId = to;
+        const contentType = outbound.contentType || waPayload.type || "text";
+
+        let messageRecord = null;
+        try {
+          messageRecord = await prisma.message.create({
+            data: {
+              campaign_id: stepContext.campaign_id ?? null,
+              campaign_session_id: stepContext.campaign_session_id ?? null,
+              contact_id: stepContext.contact_id ?? contact?.contact_id ?? null,
+              direction: "outbound",
+              content_type: contentType,
+              message_content:
+                content ||
+                (waPayload.type === "text"
+                  ? waPayload.text?.body ?? ""
+                  : "[interactive message]"),
+              sender_id: senderId,
+              receiver_id: receiverId,
+              payload_json: JSON.stringify(waPayload),
+              message_status: "pending",
+            },
+          });
+        } catch (createErr) {
+          error("Failed to persist outbound message record:", createErr);
+        }
 
         let providerId = null;
         try {
-          const sendRes = await sendWhatsAppMessage(to, waPayload);
+          const sendRes = await sendWhatsAppMessage(receiverId, waPayload, messageRecord);
           providerId = sendRes?.messages?.[0]?.id ?? null;
-          log(`Reply sent to: ${to}`);
+          log(`Reply sent to: ${receiverId}`);
         } catch (sendErr) {
           error(
             "WhatsApp send error (webhook reply):",
@@ -183,24 +222,28 @@ export async function webhookHandler(req, res) {
           );
         }
 
-        await prisma.message.create({
-          data: {
-            direction: "outbound",
-            content_type: waPayload.type || "text",
-            message_content:
-              content ||
-              (waPayload.type === "text"
-                ? waPayload.text?.body ?? ""
-                : "[interactive message]"),
-            sender_id: waDisplayPhone,
-            receiver_id: to,
-            provider_msg_id: providerId,
-            created_at: new Date(),
-            message_status: providerId ? "sent" : "error",
-            contact_id: contact?.contact_id ?? null,
-            payload_json: JSON.stringify(waPayload),
-          },
-        });
+        if (!messageRecord) {
+          await prisma.message.create({
+            data: {
+              campaign_id: stepContext.campaign_id ?? null,
+              campaign_session_id: stepContext.campaign_session_id ?? null,
+              contact_id: stepContext.contact_id ?? contact?.contact_id ?? null,
+              direction: "outbound",
+              content_type: contentType,
+              message_content:
+                content ||
+                (waPayload.type === "text"
+                  ? waPayload.text?.body ?? ""
+                  : "[interactive message]"),
+              sender_id: senderId,
+              receiver_id: receiverId,
+              provider_msg_id: providerId,
+              created_at: new Date(),
+              message_status: providerId ? "sent" : "error",
+              payload_json: JSON.stringify(waPayload),
+            },
+          });
+        }
       }
     }
 
