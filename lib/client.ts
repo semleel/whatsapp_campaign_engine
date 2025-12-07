@@ -309,23 +309,6 @@ export const Api = {
   listMappings: () =>
     http<CampaignApiMapping[]>("/api/integration/mappings"),
 
-  createMapping: (payload: CampaignApiMapping) =>
-    http<CampaignApiMapping>("/api/integration/mappings", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  updateMapping: (id: string | number, payload: CampaignApiMapping) =>
-    http<CampaignApiMapping>(`/api/integration/mappings/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  deleteMapping: (id: string | number) =>
-    http<{ success: true }>(`/api/integration/mappings/${id}`, {
-      method: "DELETE",
-    }),
-
   // =========================================================
   // Integration -> Test Runner helper
   // =========================================================

@@ -1,3 +1,5 @@
+// app/integration/formatters/page.tsx
+
 "use client";
 
 import { useMemo, useState } from "react";

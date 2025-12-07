@@ -55,19 +55,19 @@ export type EndpointConfig = {
     parameters?: ApiParameter[];    // from apiparameter
 };
 
-// campaign_api_mapping table
+// campaign_step rows with action_type = 'api'
 export type CampaignApiMapping = {
-    mappingid?: number;          // DB: mappingid (PK)
+    step_id: number;              // campaign_step.step_id
+    campaignid: number;           // campaign_step.campaign_id
+    campaignname?: string | null; // joined campaign.campaign_name (optional)
 
-    campaignid: number;          // DB: campaignid (FK to campaign)
-    contentkeyid: string;        // DB: contentkeyid (FK to keymapping)
+    step_number: number;          // campaign_step.step_number
+    step_code?: string | null;    // campaign_step.step_code
 
-    apiid: number;               // DB: apiid (FK to api)
+    apiid?: number | null;        // campaign_step.api_id
+    api_name?: string | null;     // joined api.name (optional)
 
-    success_contentkeyid?: string | null; // DB: success_contentkeyid
-    error_contentkeyid?: string | null;   // DB: error_contentkeyid
-
-    is_active?: boolean;         // DB: is_active
+    is_active?: boolean;          // derived from campaign.status if available
 };
 
 // api_log table (for viewing logs in UI, if you want)

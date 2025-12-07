@@ -1,21 +1,17 @@
+// src/controllers/integrationController.js
+
 import {
   appendLog,
   deleteEndpoint,
-  deleteMapping,
-  deleteResponseTemplate,
   getEndpoint,
   getMapping,
-  getResponseTemplate,
   listEndpoints,
   listLogs,
-  listMappings,
-  listResponseTemplates,
   saveEndpoint,
-  saveMapping,
-  saveResponseTemplate,
   seedIntegrationData,
 } from "../services/integrationStore.js";
-import { dispatchEndpoint, materializeVariables, renderResponse, runTest as runTestExecutor } from "../services/integrationService.js";
+import { dispatchEndpoint, materializeVariables, renderResponse } from "../services/integrationService.js";
+import prisma from "../config/prismaClient.js";
 
 seedIntegrationData();
 
@@ -64,19 +60,6 @@ function normalizeParameters(list) {
       required: Boolean(param.required),
     }))
     .filter((param) => param.key && param.value);
-}
-
-function normalizeMapping(body, current = {}) {
-  return {
-    campaignCode: body.campaignCode ?? current.campaignCode ?? "",
-    trigger: body.trigger || current.trigger || { type: "keyword", value: "" },
-    endpointId: Number(body.endpointId ?? current.endpointId ?? 0),
-    paramMap: typeof body.paramMap === "object" && body.paramMap ? body.paramMap : current.paramMap || {},
-    templateId: Number(body.templateId ?? current.templateId ?? 0) || undefined,
-    fallbackMessage: body.fallbackMessage ?? current.fallbackMessage,
-    retry: body.retry || current.retry,
-    errorTemplateId: body.errorTemplateId ?? current.errorTemplateId,
-  };
 }
 
 export async function getAllEndpoints(req, res) {
@@ -145,85 +128,107 @@ export async function removeEndpoint(req, res) {
   }
 }
 
-export function getAllResponseTemplates(req, res) {
-  res.json(listResponseTemplates());
-}
-
-export function createResponseTemplate(req, res) {
-  const payload = saveResponseTemplate({ ...req.body, id: undefined });
-  return res.status(201).json(payload);
-}
-
-export function updateResponseTemplate(req, res) {
-  const current = getResponseTemplate(req.params.id);
-  if (!current) return res.status(404).json({ error: "Formatter not found" });
-  const payload = saveResponseTemplate({ ...current, ...req.body, id: current.id });
-  return res.json(payload);
-}
-
-export function removeResponseTemplate(req, res) {
-  const success = deleteResponseTemplate(req.params.id);
-  if (!success) return res.status(404).json({ error: "Formatter not found" });
-  return res.json({ success: true });
-}
-
-export function getAllMappings(req, res) {
-  res.json(listMappings());
-}
-
-export async function createMapping(req, res) {
-  const normalized = normalizeMapping(req.body);
-  try {
-    const endpoint = await getEndpoint(normalized.endpointId);
-    if (!endpoint) return res.status(400).json({ error: "Endpoint not found" });
-    const payload = saveMapping({ ...normalized, id: undefined });
-    return res.status(201).json(payload);
-  } catch (err) {
-    return res.status(500).json({ error: err.message || "Failed to validate endpoint" });
-  }
-}
-
-export async function updateMapping(req, res) {
-  const current = getMapping(req.params.id);
-  if (!current) return res.status(404).json({ error: "Mapping not found" });
-  const normalized = normalizeMapping({ ...current, ...req.body }, current);
-  try {
-    const endpoint = await getEndpoint(normalized.endpointId);
-    if (!endpoint) return res.status(400).json({ error: "Endpoint not found" });
-    const payload = saveMapping({ ...current, ...normalized, id: current.id });
-    return res.json(payload);
-  } catch (err) {
-    return res.status(500).json({ error: err.message || "Failed to validate endpoint" });
-  }
-}
-
-export function removeMapping(req, res) {
-  const success = deleteMapping(req.params.id);
-  if (!success) return res.status(404).json({ error: "Mapping not found" });
-  return res.json({ success: true });
-}
-
-export function getIntegrationLogs(req, res) {
+export async function getIntegrationLogs(req, res) {
   const limit = Number(req.query.limit) || 100;
-  res.json(listLogs(limit));
+  try {
+    const rows = await listLogs(limit);
+    return res.json(rows);
+  } catch (err) {
+    console.error("[integration:logs] load error:", err);
+    return res.status(500).json({ error: err?.message || "Failed to load logs" });
+  }
 }
 
 export async function runTest(req, res) {
-  const payload = req.body || {};
-  if (!payload.endpointId) {
+  const { endpointId, sampleVars = {}, templateId } = req.body || {};
+
+  const apiId = Number(endpointId);
+  if (!apiId || Number.isNaN(apiId)) {
     return res.status(400).json({ error: "endpointId is required" });
   }
-  const result = await runTestExecutor(payload);
-  return res.json(result);
+
+  const vars = sampleVars && typeof sampleVars === "object" ? sampleVars : {};
+  const now = new Date();
+
+  const campaignId = vars.campaign?.campaignid ?? vars.campaign?.id ?? null;
+  const sessionId = vars.session?.campaignsessionid ?? vars.session?.id ?? null;
+  const contactId = vars.contact?.contactid ?? vars.contact?.id ?? null;
+
+  try {
+    const result = await dispatchEndpoint(apiId, vars);
+    const formatted = templateId ? renderResponse(templateId, result.payload, vars) : null;
+
+    try {
+      await prisma.api_log.create({
+        data: {
+          api_id: apiId,
+          campaign_id: campaignId,
+          campaign_session_id: sessionId,
+          contact_id: contactId,
+          request_url: result.url || null,
+          request_body: result.requestBody ?? null,
+          response_body: typeof result.payload === "string" ? result.payload : JSON.stringify(result.payload),
+          response_code: result.status,
+          status: "success",
+          error_message: null,
+          called_at: now,
+        },
+      });
+    } catch (logErr) {
+      console.warn("[integration:test] failed to write api_log:", logErr?.message || logErr);
+    }
+
+    return res.status(200).json({
+      ok: true,
+      status: result.status,
+      duration: result.duration,
+      raw: result.payload ?? null,
+      formatted: formatted ?? null,
+    });
+  } catch (err) {
+    console.error("[integration:test] dispatch error", err);
+
+    try {
+      await prisma.api_log.create({
+        data: {
+          api_id: apiId,
+          campaign_id: campaignId,
+          campaign_session_id: sessionId,
+          contact_id: contactId,
+          request_url: null,
+          request_body: null,
+          response_body: null,
+          response_code: 500,
+          status: "error",
+          error_message: err?.message || "Unknown error",
+          called_at: now,
+        },
+      });
+    } catch (logErr) {
+      console.warn("[integration:test] failed to write api_log for error:", logErr?.message || logErr);
+    }
+
+    return res.status(500).json({
+      error: err?.message || "Failed to execute test",
+    });
+  }
 }
 
 export async function dispatchMapping(req, res) {
   const { mappingId, vars = {} } = req.body || {};
-  if (!mappingId) return res.status(400).json({ error: "mappingId is required" });
+  if (!mappingId) {
+    return res.status(400).json({ error: "mappingId is required" });
+  }
   const mapping = getMapping(mappingId);
   if (!mapping) return res.status(404).json({ error: "Mapping not found" });
   const runtimeVars = materializeVariables(vars, mapping.paramMap);
   const attempts = Math.max(1, mapping.retry?.enabled ? Number(mapping.retry?.count || 1) : 1);
+
+  const campaignId = runtimeVars.campaign?.campaignid ?? runtimeVars.campaign?.id ?? null;
+  const sessionId = runtimeVars.session?.campaignsessionid ?? runtimeVars.session?.id ?? null;
+  const contactId = runtimeVars.contact?.contactid ?? runtimeVars.contact?.id ?? null;
+  const numericEndpointId = mapping.endpointId != null ? Number(mapping.endpointId) || null : null;
+
   try {
     let result;
     for (let i = 0; i < attempts; i += 1) {
@@ -235,6 +240,32 @@ export async function dispatchMapping(req, res) {
       }
     }
     const formatted = renderResponse(mapping.templateId, result.payload, runtimeVars);
+
+    try {
+      await prisma.api_log.create({
+        data: {
+          api_id: numericEndpointId,
+          campaign_id: campaignId,
+          campaign_session_id: sessionId,
+          contact_id: contactId,
+          request_url: result.url || null,
+          request_body:
+            result.requestBody == null
+              ? null
+              : typeof result.requestBody === "string"
+              ? result.requestBody
+              : JSON.stringify(result.requestBody),
+          response_body: typeof result.payload === "string" ? result.payload : JSON.stringify(result.payload),
+          response_code: result.status,
+          status: "success",
+          error_message: null,
+          called_at: new Date(),
+        },
+      });
+    } catch (logErr) {
+      console.warn("[integration:dispatch] failed to write api_log:", logErr?.message || logErr);
+    }
+
     return res.json({
       ok: true,
       status: result.status,
@@ -242,14 +273,37 @@ export async function dispatchMapping(req, res) {
       formatted,
     });
   } catch (err) {
+    const now = new Date();
+
     appendLog({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      ts: new Date().toISOString(),
+      ts: now.toISOString(),
       level: "error",
       source: "integration:dispatch",
       message: err.message,
       meta: { mappingId, vars },
     });
+
+    try {
+      await prisma.api_log.create({
+        data: {
+          api_id: numericEndpointId,
+          campaign_id: campaignId,
+          campaign_session_id: sessionId,
+          contact_id: contactId,
+          request_url: null,
+          request_body: null,
+          response_body: null,
+          response_code: null,
+          status: "error",
+          error_message: err.message || "Unknown error",
+          called_at: now,
+        },
+      });
+    } catch (logErr) {
+      console.warn("[integration:dispatch] failed to write api_log for error:", logErr?.message || logErr);
+    }
+
     return res.status(500).json({
       ok: false,
       error: mapping.fallbackMessage || "We're unable to retrieve your data at the moment. Please try again later.",

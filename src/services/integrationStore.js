@@ -1,31 +1,15 @@
-import crypto from "crypto";
+// src/services/integrationStore.js
+
 import { prisma } from "../config/prismaClient.js";
 
-const responseTemplateStore = new Map();
 const mappingStore = new Map();
-const logStore = [];
-
-let templateSeq = 1;
-
-const DEFAULT_LOG_LIMIT = 500;
 const BODY_TEMPLATE_KEY = "__body_template";
-
-function generateId(prefix) {
-  return `${prefix}_${Date.now().toString(36)}_${crypto.randomBytes(2).toString("hex")}`;
-}
+const logStore = [];
+const DEFAULT_LOG_LIMIT = 500;
 
 export function seedIntegrationData() {
-  if (responseTemplateStore.size) return;
-
-  const sampleTemplate = {
-    id: templateSeq++,
-    name: "Points balance (EN)",
-    locale: "en",
-    body: "Hi {{mobile}}, you have {{args.points|number}} points remaining.",
-    variables: ["mobile", "points"],
-  };
-
-  responseTemplateStore.set(sampleTemplate.id, sampleTemplate);
+  // Legacy integration templates have been removed.
+  // Real copy is managed via the content/template tables.
 }
 
 function ensureHttps(url) {
@@ -271,51 +255,82 @@ export async function deleteEndpoint(id) {
   }
 }
 
-export function listResponseTemplates() {
-  return Array.from(responseTemplateStore.values());
-}
-
-export function getResponseTemplate(id) {
-  return responseTemplateStore.get(Number(id));
-}
-
-export function saveResponseTemplate(data) {
-  const id = data.id ? Number(data.id) : templateSeq++;
-  const payload = { ...data, id };
-  responseTemplateStore.set(id, payload);
-  return payload;
-}
-
-export function deleteResponseTemplate(id) {
-  return responseTemplateStore.delete(Number(id));
-}
-
-export function listMappings() {
-  return Array.from(mappingStore.values());
-}
-
 export function getMapping(id) {
   return mappingStore.get(String(id));
 }
 
-export function saveMapping(data) {
-  const id = data.id ? String(data.id) : generateId("map");
-  const payload = { ...data, id };
-  mappingStore.set(id, payload);
-  return payload;
-}
-
-export function deleteMapping(id) {
-  return mappingStore.delete(String(id));
-}
-
-export function appendLog(entry) {
+export async function appendLog(entry) {
   logStore.unshift(entry);
   if (logStore.length > DEFAULT_LOG_LIMIT) {
     logStore.length = DEFAULT_LOG_LIMIT;
   }
+
+  let responseCode = null;
+  if (entry?.meta && typeof entry.meta.status === "number") {
+    responseCode = entry.meta.status;
+  }
+  if (!responseCode && typeof entry?.message === "string") {
+    const match = entry.message.match(/status\s+(\d{3})/i);
+    if (match) {
+      responseCode = Number(match[1]);
+    }
+  }
+
+  const apiId = entry?.meta?.endpointId ?? entry?.meta?.apiId ?? null;
+  const calledAt = entry?.ts ? new Date(entry.ts) : new Date();
+
+  try {
+    await prisma.api_log.create({
+      data: {
+        api_id: apiId ? Number(apiId) : null,
+        campaign_id: entry?.meta?.campaignId ?? null,
+        campaign_session_id: entry?.meta?.campaignSessionId ?? null,
+        contact_id: entry?.meta?.contactId ?? null,
+        request_url: entry?.meta?.requestUrl ?? null,
+        request_body: entry?.meta?.requestBody ?? null,
+        response_body: entry?.meta?.responseBody ?? null,
+        response_code: responseCode,
+        status:
+          entry?.level === "error"
+            ? "error"
+            : responseCode && responseCode >= 200 && responseCode < 300
+            ? "success"
+            : entry?.meta?.statusText || null,
+        error_message: entry?.error || entry?.message || null,
+        called_at: calledAt,
+      },
+    });
+  } catch (err) {
+    console.error("[integration] Failed to write api_log:", err);
+  }
 }
 
-export function listLogs(limit = 100) {
-  return logStore.slice(0, limit);
+export async function listLogs(limit = 100) {
+  const rows = await prisma.api_log.findMany({
+    orderBy: { called_at: "desc" },
+    take: limit,
+    include: {
+      api: true,
+    },
+  });
+
+  return rows.map((row) => ({
+    logid: row.log_id,
+    apiid: row.api_id,
+    campaignid: row.campaign_id,
+    campaignsessionid: row.campaign_session_id,
+    contactid: row.contact_id,
+    request_url: row.request_url,
+    request_body: row.request_body,
+    response_body: row.response_body,
+    response_code: row.response_code,
+    status: row.status,
+    error_message: row.error_message,
+    called_at: row.called_at.toISOString(),
+    endpoint: row.request_url || (row.api ? `${row.api.base_url || ""}${row.api.path || ""}` : null),
+    status_code: row.response_code,
+    method: row.api?.method || null,
+    path: row.api?.path || null,
+    createdat: row.called_at.toISOString(),
+  }));
 }
