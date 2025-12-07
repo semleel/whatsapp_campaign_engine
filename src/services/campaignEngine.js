@@ -492,7 +492,8 @@ async function runInputStep({ contact, session, step, incomingText }) {
       break;
     case "text":
     default:
-      isValid = value.length > 0;
+      // Require non-empty and not purely numeric for "text" input
+      isValid = value.length > 0 && !/^\d+$/.test(value);
       break;
   }
 

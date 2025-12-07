@@ -823,20 +823,37 @@ export async function saveCampaignStepsBulk(req, res) {
             where: { choice_id: { in: choiceIds } },
           });
         }
-        await tx.campaign_step_choice.deleteMany({ where: { step_id: stepId } });
+        // Delete removed
+        await tx.campaign_step_choice.deleteMany({
+          where: {
+            step_id: stepId,
+            choice_id: {
+              notIn: (Array.isArray(sourceChoices) ? sourceChoices : [])
+                .map((c) => Number(c.choice_id) || 0)
+                .filter((id) => id > 0),
+            },
+          },
+        });
 
         const payloadChoices = Array.isArray(sourceChoices) ? sourceChoices : [];
-        if (payloadChoices.length) {
-          await tx.campaign_step_choice.createMany({
-            data: payloadChoices.map((c) => ({
-              campaign_id: campaignID,
-              step_id: stepId,
-              choice_code: c.choice_code || "",
-              label: c.label || "",
-              next_step_id: resolveFromStepNumber(c.next_step_id),
-              is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
-            })),
-          });
+        for (const c of payloadChoices) {
+          const choiceId = Number(c.choice_id);
+          const data = {
+            campaign_id: campaignID,
+            step_id: stepId,
+            choice_code: c.choice_code || "",
+            label: c.label || "",
+            next_step_id: resolveFromStepNumber(c.next_step_id),
+            is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
+          };
+          if (choiceId > 0) {
+            await tx.campaign_step_choice.update({
+              where: { choice_id: choiceId },
+              data,
+            });
+          } else {
+            await tx.campaign_step_choice.create({ data });
+          }
         }
       }
 

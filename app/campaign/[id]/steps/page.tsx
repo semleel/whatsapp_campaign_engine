@@ -25,6 +25,7 @@ type TemplateListItem = {
   media_url?: string | null;
   description?: string | null;
   body?: string | null;
+  placeholders?: Record<string, unknown> | null;
   is_deleted?: boolean | null;
   isdeleted?: boolean | null;
   expires_at?: string | null;
@@ -48,21 +49,14 @@ const isTemplateActiveForSteps = (template: TemplateListItem) => {
     (val || "")
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
-  const type = normalize(template.type);
-  const status = normalize(template.status);
-  const allowedTypes = new Set(["whatsapp_template", "message", "template", "wa_template", ""]);
   const isDeleted = (template.is_deleted ?? template.isdeleted) === true;
   const expiresRaw = template.expires_at ?? template.expiresat;
   const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
   const isExpired =
     expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt.getTime() < Date.now() : false;
 
-  return (
-    allowedTypes.has(type) &&
-    (status === "active" || status === "approved") &&
-    !isDeleted &&
-    !isExpired
-  );
+  // Align with template library default: show anything not deleted/expired
+  return !isDeleted && !isExpired;
 };
 
 const resolveMessageMode = (step: StepFormState) =>
@@ -260,15 +254,106 @@ export default function CampaignStepsPage() {
       const tmpl = (res as any)?.data || res;
       if (!tmpl) return;
 
-      const body: string = tmpl.body || "";
+      const body: string = tmpl.body ?? "";
       const mediaUrl: string | null = tmpl.media_url ?? tmpl.mediaurl ?? null;
+      const buttons = (tmpl as any).buttons || (tmpl as any).menu;
+      const normalizedType = ((tmpl as any).type || "").toString().toLowerCase();
 
-      updateStep(stepIndex, {
-        message_mode: "template",
-        template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
-        prompt_text: body,
-        media_url: mediaUrl,
-      } as any);
+      let placeholders = (tmpl as any).placeholders as any;
+      if (placeholders && typeof placeholders === "string") {
+        try {
+          placeholders = JSON.parse(placeholders);
+        } catch {
+          placeholders = null;
+        }
+      }
+
+      const extractedChoices: any[] =
+        Array.isArray(placeholders?.buttons) && placeholders.buttons.length
+          ? placeholders.buttons
+          : Array.isArray(placeholders?.choices)
+          ? placeholders.choices
+          : [];
+      const fallbackText =
+        (placeholders?.fallback as string) ||
+        (placeholders?.fallbackText as string) ||
+        (placeholders?.error_message as string) ||
+        (placeholders?.footerText as string) ||
+        null;
+
+      const inferredAction: ActionType = (() => {
+        if (normalizedType.includes("input")) return "input";
+        if (
+          (buttons && Array.isArray(buttons) && buttons.length) ||
+          normalizedType.includes("choice") ||
+          normalizedType.includes("button") ||
+          normalizedType.includes("interactive")
+        ) {
+          return "choice";
+        }
+        return "message";
+      })();
+
+      const inferredExpected: any =
+        inferredAction === "choice"
+          ? "choice"
+          : inferredAction === "input"
+          ? (placeholders?.inputType as any) ||
+            (placeholders?.expected_input as any) ||
+            "text"
+          : "none";
+
+      setSteps((prev) =>
+        prev.map((s, i) =>
+          i === stepIndex
+            ? (() => {
+                const nextAction = inferredAction;
+                const shouldSeedChoices =
+                  nextAction === "choice" &&
+                  (!s.campaign_step_choice || s.campaign_step_choice.length === 0) &&
+                  extractedChoices.length > 0;
+                return {
+                  ...s,
+                  message_mode: "template",
+                template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
+                  prompt_text: body,
+                  media_url: mediaUrl ?? null,
+                  action_type: nextAction,
+                  expected_input: inferredExpected as any,
+                  input_type:
+                    nextAction === "input"
+                      ? ((placeholders?.inputType as InputType) || s.input_type || "text")
+                      : s.input_type,
+                  campaign_step_choice: shouldSeedChoices
+                    ? extractedChoices.map((c: any, idx: number) => ({
+                        choice_id: 0,
+                        campaign_id: s.campaign_id,
+                        step_id: s.step_id || 0,
+                        choice_code:
+                          (c.id as string) ||
+                          (c.code as string) ||
+                          (c.choice_code as string) ||
+                          (c.text as string) ||
+                          (c.label as string) ||
+                          `CHOICE_${idx + 1}`,
+                        label:
+                          (c.label as string) ||
+                          (c.text as string) ||
+                          (c.title as string) ||
+                          `Option ${idx + 1}`,
+                        next_step_id: null,
+                        is_correct: typeof c.is_correct === "boolean" ? c.is_correct : null,
+                      }))
+                    : s.campaign_step_choice,
+                  error_message:
+                    nextAction === "choice"
+                      ? (fallbackText ?? null)
+                      : s.error_message,
+                };
+              })()
+            : s
+        )
+      );
     } catch (err) {
       console.error("Failed to apply template:", err);
       await showCenteredAlert(
@@ -276,6 +361,20 @@ export default function CampaignStepsPage() {
       );
     }
   };
+
+  // Seed choices/fallback for choice steps that already reference a template but have no choices yet.
+  useEffect(() => {
+    steps.forEach((s, idx) => {
+      if (
+        s.action_type === "choice" &&
+        (s.campaign_step_choice?.length ?? 0) === 0 &&
+        s.template_source_id
+      ) {
+        handleApplyTemplateToStep(idx, Number(s.template_source_id));
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [steps.length]);
 
   const handleSaveAll = async () => {
     if (!canUpdate) {
@@ -636,7 +735,13 @@ export default function CampaignStepsPage() {
                                       onChange={async (e) => {
                                         const val = e.target.value;
                                         if (!val) {
-                                          updateStep(idx, { template_source_id: null, message_mode: "template" });
+                                          updateStep(idx, {
+                                            template_source_id: null,
+                                            message_mode: "custom",
+                                            prompt_text: "",
+                                            media_url: null,
+                                            error_message: null,
+                                          });
                                           return;
                                         }
                                         const templateId = Number(val);
@@ -728,7 +833,7 @@ export default function CampaignStepsPage() {
 
                               {s.action_type === "input" && (
                                 <label className="space-y-1 text-sm font-medium">
-                                  <span>Input type</span>
+                                  <span>Allow input type</span>
                                   <select
                                     className="w-full rounded border px-3 py-2"
                                     value={s.input_type || "text"}
@@ -801,7 +906,8 @@ export default function CampaignStepsPage() {
                                     <button
                                       type="button"
                                       onClick={() => addChoice(idx)}
-                                      className="text-xs rounded border px-2 py-1 hover:bg-muted"
+                                      className="text-xs rounded border px-2 py-1 hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
+                                      disabled={(s.campaign_step_choice?.length ?? 0) >= 3}
                                     >
                                       Add choice
                                     </button>
@@ -938,7 +1044,7 @@ export default function CampaignStepsPage() {
               </div>
 
               {activeStep.media_url?.trim() ? (
-                looksLikeImage(activeStep.media_url) ? (
+                <div className="space-y-2">
                   <div className="rounded-md overflow-hidden border bg-muted">
                     <img
                       src={activeStep.media_url}
@@ -946,15 +1052,26 @@ export default function CampaignStepsPage() {
                       className="block w-full object-cover max-h-40"
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).style.display = "none";
+                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                        if (fallback) fallback.style.display = "block";
                       }}
                     />
                   </div>
-                ) : (
-                  <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                    <span className="block">Attachment</span>
-                    <span className="block truncate">{activeStep.media_url}</span>
+                  <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground hidden">
+                    <span className="block font-semibold">Attachment</span>
+                    <a href={activeStep.media_url} className="block truncate text-primary hover:underline" target="_blank" rel="noreferrer">
+                      {activeStep.media_url}
+                    </a>
                   </div>
-                )
+                  {!looksLikeImage(activeStep.media_url) ? (
+                    <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="block font-semibold">Attachment</span>
+                      <a href={activeStep.media_url} className="block truncate text-primary hover:underline" target="_blank" rel="noreferrer">
+                        {activeStep.media_url}
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
               ) : null}
 
               <div className="rounded-lg bg-background px-3 py-2 leading-relaxed shadow-sm whitespace-pre-line">
