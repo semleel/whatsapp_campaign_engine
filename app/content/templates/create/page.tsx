@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { showCenteredAlert } from "@/lib/showAlert";
+import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
@@ -249,6 +249,13 @@ function createEmptyForm(): TemplateForm {
 export default function ContentCreatePage() {
   const router = useRouter();
   const { canCreate, loading: privLoading } = usePrivilege("content");
+  const navLinkClass =
+    "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
+  const backIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M11.5 5.5 7 10l4.5 4.5 1.4-1.4L9.8 10l3.1-3.1z" />
+    </svg>
+  );
 
   const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
   const [message, setMessage] = useState<string | null>(null);
@@ -594,6 +601,7 @@ export default function ContentCreatePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canCreate) {
+      await showPrivilegeDenied({ action: "create templates", resource: "Content" });
       setMessage("You do not have permission to create templates.");
       return;
     }
@@ -716,8 +724,9 @@ export default function ContentCreatePage() {
         </div>
         <Link
           href="/content/templates"
-          className="text-sm font-medium text-primary hover:underline"
+          className={navLinkClass}
         >
+          {backIcon}
           Back to library
         </Link>
       </div>

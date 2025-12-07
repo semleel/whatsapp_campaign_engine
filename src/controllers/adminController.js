@@ -8,6 +8,7 @@ const BASELINE_ADMIN_ID = Number(process.env.BASELINE_ADMIN_ID || 0);
 const NEW_STAFF_TEMPLATE_ADMIN_ID = Number(
   process.env.NEW_STAFF_TEMPLATE_ADMIN_ID || BASELINE_ADMIN_ID
 );
+const ADMIN_FULL_PRIV_IDS = [1]; // ensure root admin has all perms in staff_privilege table
 const toTitle = (role) => {
   if (!role) return null;
   const r = String(role).trim();
@@ -27,16 +28,54 @@ const DEFAULT_BASELINE_PRIVILEGES = [
   "flows",
   "contacts",
   "integration",
+  "feedback",
   "reports",
   "system",
   "conversations",
 ].map((resource) => ({
   resource,
-  view: true,
-  create: false,
-  update: false,
-  archive: false,
+  can_view: true,
+  can_create: false,
+  can_update: false,
+  can_archive: false,
 }));
+
+async function ensureAdminFullPrivileges() {
+  const resources = DEFAULT_BASELINE_PRIVILEGES.map((r) => r.resource);
+  for (const adminId of ADMIN_FULL_PRIV_IDS) {
+    if (!Number.isFinite(adminId) || adminId <= 0) continue;
+    const existing = await prisma.staff_privilege.findMany({
+      where: { admin_id: adminId, resource: { in: resources } },
+    });
+    const have = new Set(existing.map((r) => r.resource));
+    const missing = resources.filter((r) => !have.has(r));
+    if (missing.length) {
+      await prisma.staff_privilege.createMany({
+        data: missing.map((resource) => ({
+          admin_id: adminId,
+          resource,
+          can_view: true,
+          can_create: true,
+          can_update: true,
+          can_archive: true,
+        })),
+        skipDuplicates: true,
+      });
+    }
+    // Ensure any existing rows are elevated to full access
+    if (existing.length) {
+      await prisma.staff_privilege.updateMany({
+        where: { admin_id: adminId, resource: { in: resources } },
+        data: {
+          can_view: true,
+          can_create: true,
+          can_update: true,
+          can_archive: true,
+        },
+      });
+    }
+  }
+}
 
 async function ensureTemplateAdminExists(adminid) {
   if (!Number.isFinite(adminid)) return null;
@@ -58,6 +97,7 @@ async function ensureTemplateAdminExists(adminid) {
 }
 
 async function ensureBaselinePrivileges() {
+  await ensureAdminFullPrivileges();
   await ensureTemplateAdminExists(BASELINE_ADMIN_ID);
   let baseline = await prisma.staff_privilege.findMany({ where: { admin_id: BASELINE_ADMIN_ID } });
   if (!baseline.length) {
@@ -74,6 +114,7 @@ async function ensureBaselinePrivileges() {
 }
 
 async function ensureTemplatePrivileges() {
+  await ensureAdminFullPrivileges();
   const templateId = NEW_STAFF_TEMPLATE_ADMIN_ID;
   await ensureTemplateAdminExists(templateId);
   let template = await prisma.staff_privilege.findMany({ where: { admin_id: templateId } });
@@ -127,7 +168,7 @@ export async function listAdmins(req, res) {
     orderBy: { admin_id: "asc" },
   });
   const normalized = rows.map((r) => {
-    const { _count, ...rest } = r;
+    const { _count } = r;
     return {
       adminid: r.admin_id,
       name: r.name,
@@ -136,7 +177,6 @@ export async function listAdmins(req, res) {
       phonenum: r.phone_num,
       is_active: r.is_active,
       createdat: r.created_at,
-      role: toTitle(r.role),
       has_privileges: (_count?.staff_privilege || 0) > 0,
     };
   });
@@ -192,7 +232,7 @@ export async function createAdmin(req, res) {
           email,
           password_hash,
           role: normalizedRole,
-          phonenum: phonenum || null,
+          phone_num: phonenum || null,
           is_active: true,
         },
       });
@@ -204,7 +244,7 @@ export async function createAdmin(req, res) {
     try {
       admin = await createRow();
     } catch (err) {
-      if (err.code === "P2002" && Array.isArray(err.meta?.target) && err.meta.target.includes("adminid")) {
+      if (err.code === "P2002" && Array.isArray(err.meta?.target) && err.meta.target.includes("admin_id")) {
         await syncAdminIdSequence();
         admin = await createRow();
       } else if (err.code === "P2002" && Array.isArray(err.meta?.target) && err.meta.target.includes("email")) {
@@ -217,20 +257,18 @@ export async function createAdmin(req, res) {
     // Apply general baseline privileges (adminid = BASELINE_ADMIN_ID) to new staff by default
     let appliedBaseline = false;
     try {
-      const { template } = await ensureTemplatePrivileges();
+    const { template } = await ensureTemplatePrivileges();
 
       if (template.length) {
-        await prisma.staff_privilege.createMany({
-          data: template.map((row) => ({
-            adminid: admin.adminid,
-            resource: row.resource,
-            view: row.view,
-            create: row.create,
-            update: row.update,
-            archive: row.archive,
-          })),
-          skipDuplicates: true,
-        });
+        const rowsToInsert = template.map((row) => ({
+          admin_id: admin.admin_id,
+          resource: row.resource,
+          can_view: row.can_view ?? row.view ?? false,
+          can_create: row.can_create ?? row.create ?? false,
+          can_update: row.can_update ?? row.update ?? false,
+          can_archive: row.can_archive ?? row.archive ?? false,
+        }));
+        await prisma.staff_privilege.createMany({ data: rowsToInsert, skipDuplicates: true });
         appliedBaseline = true;
       }
     } catch (err) {
@@ -239,11 +277,11 @@ export async function createAdmin(req, res) {
     }
 
     return res.status(201).json({
-      adminid: admin.adminid,
+      adminid: admin.admin_id,
       name: admin.name,
       email: admin.email,
       role: admin.role,
-      phonenum: admin.phonenum,
+      phonenum: admin.phone_num,
       is_active: admin.is_active,
       has_privileges: appliedBaseline,
     });
@@ -262,18 +300,23 @@ export async function updateAdmin(req, res) {
     return res.status(400).json({ error: "Invalid role" });
   }
 
-  const data = { name, email, phonenum, is_active };
+  const data = {
+    name,
+    email,
+    phone_num: phonenum,
+    is_active,
+  };
   if (role !== undefined) data.role = normalizedRole;
   if (password) data.password_hash = await bcrypt.hash(password, SALT_ROUNDS);
 
   try {
-    const updated = await prisma.admin.update({ where: { adminid: id }, data });
+    const updated = await prisma.admin.update({ where: { admin_id: id }, data });
     return res.json({
-      adminid: updated.adminid,
+      adminid: updated.admin_id,
       name: updated.name,
       email: updated.email,
       role: updated.role,
-      phonenum: updated.phonenum,
+      phonenum: updated.phone_num,
       is_active: updated.is_active,
     });
   } catch (err) {
@@ -285,10 +328,10 @@ export async function deleteAdmin(req, res) {
   const id = Number(req.params.id);
   try {
     const updated = await prisma.admin.update({
-      where: { adminid: id },
+      where: { admin_id: id },
       data: { is_active: false },
     });
-    return res.json({ success: true, adminid: updated.adminid, is_active: updated.is_active });
+    return res.json({ success: true, adminid: updated.admin_id, is_active: updated.is_active });
   } catch (err) {
     return res.status(404).json({ error: "Admin not found" });
   }

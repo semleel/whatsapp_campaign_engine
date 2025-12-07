@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Api } from "@/lib/client";
-import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
+import { usePrivilege } from "@/lib/permissions";
+import { showCenteredAlert, showCenteredConfirm, showPrivilegeDenied } from "@/lib/showAlert";
 
 interface Campaign {
   campaignid: number;
@@ -26,9 +27,23 @@ export default function ArchivedCampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const { canView, canArchive, loading: privLoading } = usePrivilege("campaigns");
+  const navLinkClass =
+    "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
+  const backIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M11.5 5.5 7 10l4.5 4.5 1.4-1.4L9.8 10l3.1-3.1z" />
+    </svg>
+  );
 
   useEffect(() => {
     (async () => {
+      if (privLoading) return;
+      if (!canView) {
+        setMessage("You do not have permission to view archived campaigns.");
+        setLoading(false);
+        return;
+      }
       try {
         const data = await Api.listArchivedCampaigns();
         setCampaigns(data);
@@ -42,6 +57,10 @@ export default function ArchivedCampaignsPage() {
   }, []);
 
   const handleRestore = async (id: number) => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "restore campaigns", resource: "Campaigns" });
+      return;
+    }
     const confirmed = await showCenteredConfirm("Restore this campaign?");
     if (!confirmed) return;
     try {
@@ -60,6 +79,10 @@ export default function ArchivedCampaignsPage() {
   };
 
   const handleDelete = async (id: number) => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "delete campaigns", resource: "Campaigns" });
+      return;
+    }
     const confirmed = await showCenteredConfirm(
       "Permanently delete this archived campaign? This cannot be undone."
     );
@@ -80,6 +103,10 @@ export default function ArchivedCampaignsPage() {
   };
 
   const handleBulkDelete = async () => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "delete campaigns", resource: "Campaigns" });
+      return;
+    }
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
     const confirmed = await showCenteredConfirm(
@@ -101,6 +128,10 @@ export default function ArchivedCampaignsPage() {
   };
 
   const handleBulkRestore = async () => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "restore campaigns", resource: "Campaigns" });
+      return;
+    }
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
     const confirmed = await showCenteredConfirm(
@@ -192,13 +223,14 @@ export default function ArchivedCampaignsPage() {
           >
             Delete selected
           </button>
-          <Link
-            href="/campaign"
-            className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
-          >
-            Back to active list
-          </Link>
-        </div>
+        <Link
+          href="/campaign"
+          className={navLinkClass}
+        >
+          {backIcon}
+          Back to campaigns
+        </Link>
+      </div>
       </div>
 
       {message && <div className="text-sm text-muted-foreground">{message}</div>}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Api } from "@/lib/client";
 import type { WhatsAppConfig } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 
 const emptyConfig: WhatsAppConfig = {
   display_name: "",
@@ -47,6 +48,7 @@ export default function WhatsAppConfigPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update WhatsApp config", resource: "System" });
       setMessage("You do not have permission to update WhatsApp config.");
       return;
     }

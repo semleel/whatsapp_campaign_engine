@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
 import type { CampaignCreatePayload } from "@/lib/types";
-import { showCenteredAlert } from "@/lib/showAlert";
+import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
 type SelectOption = { id: string; name: string; code?: string };
@@ -15,6 +15,13 @@ type SelectOption = { id: string; name: string; code?: string };
 export default function CampaignCreatePage() {
   const router = useRouter();
   const { canCreate, loading: privLoading } = usePrivilege("campaigns");
+  const navLinkClass =
+    "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
+  const backIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M11.5 5.5 7 10l4.5 4.5 1.4-1.4L9.8 10l3.1-3.1z" />
+    </svg>
+  );
   const [formData, setFormData] = useState({
     campaignName: "",
     objective: "",
@@ -92,6 +99,7 @@ export default function CampaignCreatePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canCreate) {
+      await showPrivilegeDenied({ action: "create campaigns", resource: "Campaigns" });
       setKeywordMessage("You do not have permission to create campaigns.");
       return;
     }
@@ -192,9 +200,10 @@ export default function CampaignCreatePage() {
         </div>
         <Link
           href="/campaign"
-          className="text-sm font-medium text-primary hover:underline"
+          className={navLinkClass}
         >
-          Back to list
+          {backIcon}
+          Back to campaigns
         </Link>
       </div>
 

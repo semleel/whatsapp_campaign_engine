@@ -624,6 +624,18 @@ export interface CampaignSession {
     lastActiveAt?: string | null;
 }
 
+// Feedback
+export type FeedbackEntry = {
+    feedback_id: number;
+    contact_id: number | null;
+    contact_phone?: string | null;
+    contact_name?: string | null;
+    campaign_session_id?: number | null;
+    rating: number | null;
+    comment: string | null;
+    created_at?: string | null;
+};
+
 // ========================
 // System Flow / Keyword (DB-configurable core commands)
 // ========================

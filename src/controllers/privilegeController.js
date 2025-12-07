@@ -10,6 +10,7 @@ const DEFAULT_BASELINE_PRIVILEGES = [
   "flows",
   "contacts",
   "integration",
+  "feedback",
   "reports",
   "system",
   "conversations",

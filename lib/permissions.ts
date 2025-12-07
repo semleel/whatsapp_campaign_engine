@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Api } from "./client";
+import { getStoredAdmin } from "./auth";
 
 export type PrivilegeState = {
   loading: boolean;
@@ -13,8 +14,8 @@ export type PrivilegeState = {
 
 type PrivMap = Record<string, { view: boolean; create: boolean; update: boolean; archive: boolean }>;
 
-let cachedPrivileges: PrivMap | null = null;
-let fetchPromise: Promise<void> | null = null;
+const privilegeCache = new Map<number, PrivMap>();
+const fetchPromises = new Map<number, Promise<void>>();
 
 const EMPTY_PRIV: PrivilegeState = {
   loading: true,
@@ -42,43 +43,98 @@ function selectModulePriv(moduleKey: string, privs: PrivMap | null): PrivilegeSt
 }
 
 export function usePrivilege(moduleKey: string): PrivilegeState {
+  const initialAdminId =
+    typeof window !== "undefined" ? getStoredAdmin()?.id ?? null : null;
+  const initialRole =
+    typeof window !== "undefined" ? (getStoredAdmin()?.role || "").toLowerCase() : "";
+  const isAdminRole = initialRole === "admin" || initialRole === "super";
+  const initialPrivs = initialAdminId ? privilegeCache.get(initialAdminId) || null : null;
+
   const [state, setState] = useState<PrivilegeState>(() =>
-    cachedPrivileges ? selectModulePriv(moduleKey, cachedPrivileges) : EMPTY_PRIV
+    isAdminRole
+      ? { loading: false, canView: true, canCreate: true, canUpdate: true, canArchive: true }
+      : initialPrivs
+      ? selectModulePriv(moduleKey, initialPrivs)
+      : EMPTY_PRIV
   );
+  const [authVersion, setAuthVersion] = useState(0);
+
+  useEffect(() => {
+    function handleAuthChanged() {
+      privilegeCache.clear();
+      fetchPromises.clear();
+      setState(EMPTY_PRIV);
+      setAuthVersion((v) => v + 1);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("auth-changed", handleAuthChanged);
+      return () => {
+        window.removeEventListener("auth-changed", handleAuthChanged);
+      };
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    const admin = getStoredAdmin();
+    const adminId = admin?.id ?? null;
+    const role = (admin?.role || "").toLowerCase();
+    const isAdmin = role === "admin" || role === "super";
 
-    async function ensurePrivilegesLoaded() {
+    if (isAdmin) {
+      setState({
+        loading: false,
+        canView: true,
+        canCreate: true,
+        canUpdate: true,
+        canArchive: true,
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function ensurePrivilegesLoaded(currentAdminId: number | null) {
+      if (!currentAdminId) {
+        if (!cancelled) {
+          setState({ ...EMPTY_PRIV, loading: false });
+        }
+        return;
+      }
+
       try {
-        if (!cachedPrivileges) {
-          if (!fetchPromise) {
-            fetchPromise = Api.getPrivileges(1)
+        if (!privilegeCache.has(currentAdminId)) {
+          let promise = fetchPromises.get(currentAdminId);
+          if (!promise) {
+            promise = Api.getPrivileges(currentAdminId)
               .then((res) => {
-                cachedPrivileges = res.privileges || {};
+                privilegeCache.set(currentAdminId, res.privileges || {});
               })
               .finally(() => {
-                fetchPromise = null;
+                fetchPromises.delete(currentAdminId);
               });
+            fetchPromises.set(currentAdminId, promise);
           }
-          await fetchPromise;
+          await promise;
         }
 
         if (cancelled) return;
-        setState(selectModulePriv(moduleKey, cachedPrivileges));
+        const privs = privilegeCache.get(currentAdminId) || null;
+        setState(selectModulePriv(moduleKey, privs));
       } catch (err) {
         if (cancelled) return;
-        setState((prev) => ({ ...prev, loading: false }));
+        setState({ ...EMPTY_PRIV, loading: false });
         console.error("[usePrivilege] Failed to load privileges:", err);
       }
     }
 
-    ensurePrivilegesLoaded();
+    ensurePrivilegesLoaded(adminId);
 
     return () => {
       cancelled = true;
     };
-  }, [moduleKey]);
+  }, [moduleKey, authVersion]);
 
   return state;
 }

@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SidebarSection from "./SidebarSection";
 import { MENU } from "@/lib/menuConfig";
 import { getStoredAdmin } from "@/lib/auth";
 import { Api } from "@/lib/client";
+import Image from "next/image";
 
 export default function Sidebar() {
   const pathname = usePathname() || "/";
@@ -14,6 +15,11 @@ export default function Sidebar() {
   const [role, setRole] = useState<string | null>(null);
   const [allowedSections, setAllowedSections] = useState<Set<string>>(new Set());
   const [accessReady, setAccessReady] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("sidebar-collapsed") === "true";
+  });
+  const persistedCollapsed = useRef<boolean>(collapsed);
 
   async function refreshAccess() {
     const admin = getStoredAdmin();
@@ -40,6 +46,23 @@ export default function Sidebar() {
   useEffect(() => {
     refreshAccess();
   }, [pathname]);
+
+  const toggleCollapsed = () => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("sidebar-collapsed", String(next));
+      persistedCollapsed.current = next;
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const handler = () => {
+      toggleCollapsed();
+    };
+    window.addEventListener("sidebar-toggle", handler as any);
+    return () => window.removeEventListener("sidebar-toggle", handler as any);
+  }, []);
 
   useEffect(() => {
     const handleExternalChange = () => refreshAccess();
@@ -92,11 +115,57 @@ export default function Sidebar() {
   if (pathname === "/login") return null;
 
   return (
-    <aside className="hidden md:flex md:w-72 md:flex-col md:sticky md:top-0 md:h-screen border-r border-border bg-sidebar text-sidebar-foreground">
-      <div className="h-14 shrink-0 flex items-center px-4 border-b border-border">
-        <Link href="/" className="text-lg font-semibold tracking-tight">
-          Ops Control
-        </Link>
+    <aside
+      onMouseEnter={() => {
+        if (persistedCollapsed.current) setCollapsed(false);
+      }}
+      onMouseLeave={() => {
+        if (persistedCollapsed.current) setCollapsed(true);
+      }}
+      className={`hidden md:flex ${collapsed ? "md:w-20" : "md:w-72"} transition-all duration-200 md:flex-col md:sticky md:top-0 md:h-screen border-r border-border bg-sidebar text-sidebar-foreground overflow-hidden`}
+    >
+      <div className="h-14 shrink-0 flex items-center px-3 border-b border-border">
+        <div className="flex items-center justify-between w-full gap-2">
+          <Link
+            href="/"
+            className={`flex items-center ${collapsed ? "justify-center w-full" : "gap-2"}`}
+          >
+            {collapsed ? (
+              <div className="relative h-10 w-10">
+                <Image
+                  src="/LOGO_icon.png"
+                  alt="WICE icon"
+                  fill
+                  className="object-contain"
+                  priority
+                />
+              </div>
+            ) : (
+              <div className="relative h-12 w-32">
+                <Image
+                  src="/LOGO_WICE.png"
+                  alt="WICE logo"
+                  fill
+                  className="object-contain"
+                  priority
+                />
+              </div>
+            )}
+          </Link>
+          <button
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={toggleCollapsed}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-secondary text-foreground shadow-sm hover:bg-secondary/80 transition"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className={`h-5 w-5 transition-transform duration-200 ${collapsed ? "" : "rotate-180"}`}
+              fill="currentColor"
+            >
+              <path d="m9.707 17.707-1.414-1.414L12.586 12 8.293 7.707l1.414-1.414L15.414 12z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-1">
@@ -106,6 +175,7 @@ export default function Sidebar() {
             section={section}
             // Admin/Super bypass privilege filtering; staff respects allowedSections
             allowed={!isStaff || allowedSections.has(section.id)}
+            collapsed={collapsed}
           />
         ))}
       </nav>

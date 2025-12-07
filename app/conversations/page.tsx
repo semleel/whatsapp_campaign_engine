@@ -9,6 +9,7 @@ import type {
   CampaignSession,
 } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 
 function statusPill(status: ConversationThread["status"]) {
   const base = "pill";
@@ -103,6 +104,7 @@ export default function ConversationsPage() {
 
   const handleSend = async () => {
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "send messages", resource: "Conversations" });
       setSendError("You do not have permission to send messages.");
       return;
     }

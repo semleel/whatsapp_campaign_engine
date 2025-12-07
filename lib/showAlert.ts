@@ -74,6 +74,97 @@ export function showCenteredAlert(message: string): Promise<void> {
 }
 
 /**
+ * Permission-specific alert with consistent wording and styling.
+ * Use when a user attempts an action they are not allowed to perform.
+ */
+export function showPrivilegeDenied(opts: { action?: string; resource?: string; message?: string } | string): Promise<void> {
+  const normalized =
+    typeof opts === "string"
+      ? { message: opts }
+      : {
+          action: opts.action,
+          resource: opts.resource,
+          message: opts.message,
+        };
+
+  const actionText = normalized.action || "perform this action";
+  const resourceText = normalized.resource ? ` on ${normalized.resource}` : "";
+  const body =
+    normalized.message ||
+    `You need permission to ${actionText}${resourceText}. Please contact an admin or request access.`;
+
+  if (typeof window === "undefined") return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const existing = document.getElementById("app-privilege-alert");
+    if (existing) existing.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "app-privilege-alert";
+    overlay.className =
+      "fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4";
+
+    const box = document.createElement("div");
+    box.className =
+      "w-full max-w-md rounded-2xl border border-amber-200/70 bg-gradient-to-br from-amber-50 to-white p-6 shadow-2xl text-foreground animate-[fadeIn_150ms_ease-out]";
+
+    const iconWrap = document.createElement("div");
+    iconWrap.className =
+      "mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 shadow-inner";
+    iconWrap.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="h-6 w-6">
+        <path d="M12 2a10 10 0 1 0 10 10A10.011 10.011 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8a8.009 8.009 0 0 1-8 8Zm0-12a1.25 1.25 0 1 0-1.25-1.25A1.25 1.25 0 0 0 12 8Zm0 2a1 1 0 0 0-1 1v5a1 1 0 0 0 2 0v-5a1 1 0 0 0-1-1Z" />
+      </svg>
+    `;
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "text-base font-semibold text-center mb-1 text-amber-700";
+    titleEl.textContent = "Permission required";
+
+    const messageEl = document.createElement("p");
+    messageEl.className = "text-sm text-muted-foreground text-center leading-relaxed";
+    messageEl.textContent = body;
+
+    const hintEl = document.createElement("p");
+    hintEl.className = "mt-2 text-xs text-amber-700/80 text-center";
+    hintEl.textContent = "If this is unexpected, ask your admin to grant access in System > Staff.";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      "mt-5 inline-flex w-full items-center justify-center rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow hover:opacity-90 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500";
+    button.textContent = "OK";
+
+    const close = () => {
+      overlay.remove();
+      resolve();
+    };
+
+    button.addEventListener("click", close);
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key === "Escape") close();
+      },
+      { once: true }
+    );
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
+
+    box.appendChild(iconWrap);
+    box.appendChild(titleEl);
+    box.appendChild(messageEl);
+    box.appendChild(hintEl);
+    box.appendChild(button);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    button.focus();
+  });
+}
+
+/**
  * Render a centered confirm box with OK/Cancel.
  * Resolves to true when confirmed, false when dismissed.
  */

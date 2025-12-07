@@ -6,7 +6,7 @@ import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { showCenteredAlert } from "@/lib/showAlert";
+import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
@@ -375,6 +375,13 @@ export default function EditTemplatePage() {
     [params]
   );
   const { canView, canUpdate, canArchive, loading: privLoading } = usePrivilege("content");
+  const navLinkClass =
+    "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
+  const backIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M11.5 5.5 7 10l4.5 4.5 1.4-1.4L9.8 10l3.1-3.1z" />
+    </svg>
+  );
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -835,7 +842,7 @@ export default function EditTemplatePage() {
 
   const doSave = async () => {
     if (!canUpdate) {
-      await showCenteredAlert("You do not have permission to update templates.");
+      await showPrivilegeDenied({ action: "update templates", resource: "Content" });
       return;
     }
     if (!form.title.trim()) {
@@ -944,6 +951,10 @@ export default function EditTemplatePage() {
 
   // Soft delete (archive)
   const doDelete = async () => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "archive templates", resource: "Content" });
+      return;
+    }
     setSaving(true);
 
     try {
@@ -973,6 +984,10 @@ export default function EditTemplatePage() {
 
   // Hard delete (permanent)
   const doHardDelete = async () => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "delete templates", resource: "Content" });
+      return;
+    }
     setSaving(true);
 
     try {
@@ -999,6 +1014,10 @@ export default function EditTemplatePage() {
 
   // Recover from archive
   const doRecover = async () => {
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "recover templates", resource: "Content" });
+      return;
+    }
     setSaving(true);
     try {
       await Api.recoverTemplate(form.contentid);
@@ -1146,10 +1165,8 @@ export default function EditTemplatePage() {
           </p>
         </div>
 
-        <Link
-          href="/content/templates"
-          className="text-sm text-primary hover:underline"
-        >
+        <Link href="/content/templates" className={navLinkClass}>
+          {backIcon}
           Back to library
         </Link>
       </div>

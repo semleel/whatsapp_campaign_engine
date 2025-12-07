@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Api } from "@/lib/client";
 import type { EndpointConfig } from "@/lib/types";
-import { showCenteredConfirm } from "@/lib/showAlert";
+import { showCenteredConfirm, showPrivilegeDenied } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
 function formatUrl(endpoint: EndpointConfig) {
@@ -46,6 +46,7 @@ export default function EndpointsPage() {
 
   const handleDelete = async (endpoint: EndpointConfig) => {
     if (!canArchive) {
+      await showPrivilegeDenied({ action: "delete endpoints", resource: "Integrations" });
       setError("You do not have permission to delete endpoints.");
       return;
     }

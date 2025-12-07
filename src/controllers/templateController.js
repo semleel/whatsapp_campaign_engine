@@ -8,7 +8,11 @@ import { prisma } from "../config/prismaClient.js";
 // Some environments may still be using an older Prisma client bundle that lacks the
 // `content` delegate. To keep the API working, we fall back to raw queries when the
 // delegate is missing (e.g., when prisma.content is undefined).
-const getContentDelegate = () => prisma?.content;
+// In some deployments the Prisma client may be out of sync with the DB schema
+// (e.g., client expects a `category` column that does not exist). Default to raw
+// SQL fallbacks unless explicitly enabled via env flag.
+const getContentDelegate = () =>
+  process.env.USE_PRISMA_CONTENT === "true" ? prisma?.content : null;
 
 const fallbackList = async ({ where }) => {
   const conditions = [];
@@ -257,9 +261,17 @@ export async function createTemplate(req, res) {
     };
 
     const contentDelegate = getContentDelegate();
-    const content = contentDelegate?.create
-      ? await contentDelegate.create({ data })
-      : await fallbackCreate(data);
+    let content = null;
+    if (contentDelegate?.create) {
+      try {
+        content = await contentDelegate.create({ data });
+      } catch (err) {
+        console.warn("Prisma content.create failed, falling back to raw insert:", err.message);
+        content = await fallbackCreate(data);
+      }
+    } else {
+      content = await fallbackCreate(data);
+    }
     return res.status(201).json({
       message: "Template created successfully",
       data: mapContentToResponse(content),
@@ -275,15 +287,23 @@ export async function listTemplates(req, res) {
     const { where } = buildTemplateFilters(req.query);
     const contentDelegate = getContentDelegate();
 
-    const templates = contentDelegate?.findMany
-      ? await contentDelegate.findMany({
+    let templates = [];
+    if (contentDelegate?.findMany) {
+      try {
+        templates = await contentDelegate.findMany({
           where,
           orderBy: [
             { updated_at: "desc" },
             { created_at: "desc" },
           ],
-        })
-      : await fallbackList({ where });
+        });
+      } catch (err) {
+        console.warn("Prisma content.findMany failed, falling back to raw list:", err.message);
+        templates = await fallbackList({ where });
+      }
+    } else {
+      templates = await fallbackList({ where });
+    }
 
     return res.status(200).json(templates.map(mapContentToResponse));
   } catch (err) {
@@ -303,11 +323,19 @@ export async function getTemplate(req, res) {
       parseBoolean(req.query.includeDeleted) || parseBoolean(req.query.include_deleted);
 
     const contentDelegate = getContentDelegate();
-    const content = contentDelegate?.findUnique
-      ? await contentDelegate.findUnique({
+    let content = null;
+    if (contentDelegate?.findUnique) {
+      try {
+        content = await contentDelegate.findUnique({
           where: { content_id: id },
-        })
-      : await fallbackGetById(id);
+        });
+      } catch (err) {
+        console.warn("Prisma content.findUnique failed, falling back to raw get:", err.message);
+        content = await fallbackGetById(id);
+      }
+    } else {
+      content = await fallbackGetById(id);
+    }
 
     if (!content || (!includeDeleted && content.is_deleted)) {
       return res.status(404).json({ error: "Template not found" });
@@ -350,12 +378,20 @@ export async function updateTemplate(req, res) {
     );
 
     const contentDelegate = getContentDelegate();
-    const content = contentDelegate?.update
-      ? await contentDelegate.update({
+    let content = null;
+    if (contentDelegate?.update) {
+      try {
+        content = await contentDelegate.update({
           where: { content_id: id },
           data: cleaned,
-        })
-      : await fallbackUpdate(id, cleaned);
+        });
+      } catch (err) {
+        console.warn("Prisma content.update failed, falling back to raw update:", err.message);
+        content = await fallbackUpdate(id, cleaned);
+      }
+    } else {
+      content = await fallbackUpdate(id, cleaned);
+    }
 
     return res.status(200).json({
       message: "Template updated",
@@ -380,10 +416,15 @@ export async function softDeleteTemplate(req, res) {
 
     const contentDelegate = getContentDelegate();
     if (contentDelegate?.update) {
-      await contentDelegate.update({
-        where: { content_id: id },
-        data: { is_deleted: true, updated_at: new Date() },
-      });
+      try {
+        await contentDelegate.update({
+          where: { content_id: id },
+          data: { is_deleted: true, updated_at: new Date() },
+        });
+      } catch (err) {
+        console.warn("Prisma content.update (soft delete) failed, falling back to raw:", err.message);
+        await fallbackUpdate(id, { is_deleted: true, updated_at: new Date() });
+      }
     } else {
       await fallbackUpdate(id, { is_deleted: true, updated_at: new Date() });
     }
@@ -405,7 +446,12 @@ export async function deleteTemplate(req, res) {
 
     const contentDelegate = getContentDelegate();
     if (contentDelegate?.delete) {
-      await contentDelegate.delete({ where: { content_id: id } });
+      try {
+        await contentDelegate.delete({ where: { content_id: id } });
+      } catch (err) {
+        console.warn("Prisma content.delete failed, falling back to raw delete:", err.message);
+        await prisma.$executeRawUnsafe(`DELETE FROM content WHERE content_id = $1`, id);
+      }
     } else {
       await prisma.$executeRawUnsafe(`DELETE FROM content WHERE content_id = $1`, id);
     }
@@ -436,12 +482,20 @@ export async function getTemplatesOverview(_req, res) {
     const lookaheadMs = 30 * 24 * 60 * 60 * 1000;
     const contentDelegate = getContentDelegate();
 
-    const templatesRaw = contentDelegate?.findMany
-      ? await contentDelegate.findMany({
+    let templatesRaw = [];
+    if (contentDelegate?.findMany) {
+      try {
+        templatesRaw = await contentDelegate.findMany({
           where: { is_deleted: false },
           orderBy: [{ updated_at: "desc" }, { created_at: "desc" }],
-        })
-      : await fallbackList({ where: { is_deleted: false } });
+        });
+      } catch (err) {
+        console.warn("Prisma content.findMany (overview) failed, falling back to raw list:", err.message);
+        templatesRaw = await fallbackList({ where: { is_deleted: false } });
+      }
+    } else {
+      templatesRaw = await fallbackList({ where: { is_deleted: false } });
+    }
 
     const templates = templatesRaw
       .map((t) => {
@@ -628,12 +682,20 @@ export async function setTemplateExpiry(req, res) {
     }
 
     const contentDelegate = getContentDelegate();
-    const content = contentDelegate?.update
-      ? await contentDelegate.update({
+    let content = null;
+    if (contentDelegate?.update) {
+      try {
+        content = await contentDelegate.update({
           where: { content_id: id },
           data: { expires_at: date, updated_at: new Date() },
-        })
-      : await fallbackUpdate(id, { expires_at: date, updated_at: new Date() });
+        });
+      } catch (err) {
+        console.warn("Prisma content.update (expiry) failed, falling back to raw update:", err.message);
+        content = await fallbackUpdate(id, { expires_at: date, updated_at: new Date() });
+      }
+    } else {
+      content = await fallbackUpdate(id, { expires_at: date, updated_at: new Date() });
+    }
 
     return res.status(200).json({
       message: "Template expiry updated",

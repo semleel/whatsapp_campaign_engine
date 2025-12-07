@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_BASE_URL, clearStoredSession, getStoredAdmin, getStoredToken } from "@/lib/auth";
 import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 
 type Staff = {
@@ -56,6 +57,7 @@ const PRIVILEGE_CATALOG: PrivilegeGroup[] = [
       { id: "contacts", label: "Contacts", actions: buildCrudActions() },
       { id: "conversations", label: "Conversations", actions: buildCrudActions() },
       { id: "integration", label: "Integrations", actions: buildCrudActions() },
+      { id: "feedback", label: "Feedback", actions: buildCrudActions() },
       { id: "reports", label: "Reports", actions: buildCrudActions() },
       { id: "system", label: "System", actions: buildCrudActions() },
     ],
@@ -197,23 +199,23 @@ function PrivilegeGroupCard({
 }) {
   const accent =
     group.accent === "amber"
-      ? { dot: "bg-amber-500", border: "border-amber-200", text: "text-amber-700", bg: "bg-amber-50" }
-      : { dot: "bg-sky-500", border: "border-sky-200", text: "text-sky-700", bg: "bg-sky-50" };
+      ? { dot: "bg-amber-500", border: "border-amber-200/70", text: "text-amber-200 dark:text-amber-200", bg: "bg-amber-50/60 dark:bg-amber-500/10" }
+      : { dot: "bg-sky-500", border: "border-sky-200/70", text: "text-sky-200 dark:text-sky-200", bg: "bg-sky-50/60 dark:bg-sky-500/10" };
 
   return (
-    <div className="space-y-3 rounded-xl border p-3 bg-gradient-to-b from-white to-slate-50/40">
+    <div className="space-y-3 rounded-xl border border-border/70 p-3 bg-card/80 shadow-sm">
       <div className="flex items-center gap-2 text-sm font-semibold">
         <span className={`h-2.5 w-2.5 rounded-full ${accent.dot}`} />
-        <span>{group.title}</span>
+        <span className="text-foreground">{group.title}</span>
       </div>
       <div className="space-y-2">
         {group.items.map((item) => (
           <div
             key={item.id}
-            className="rounded-lg border bg-white/80 px-3 py-2 shadow-sm transition hover:border-primary/30"
+            className="rounded-lg border border-border/70 bg-card px-3 py-2 shadow-sm transition hover:border-primary/40"
           >
             <div className="grid items-center gap-3 md:grid-cols-[1fr_minmax(420px,1fr)]">
-              <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <input
                   type="checkbox"
                   className="h-4 w-4 rounded border"
@@ -235,7 +237,7 @@ function PrivilegeGroupCard({
                   return (
                     <label
                       key={action.key}
-                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border bg-white px-3 py-1.5 text-xs font-semibold shadow-sm ${disabled ? "opacity-50" : "hover:border-primary/30"}`}
+                      className={`flex items-center gap-2 whitespace-nowrap rounded-full border border-border/70 bg-secondary px-3 py-1.5 text-xs font-semibold shadow-sm ${disabled ? "opacity-50" : "hover:border-primary/30"}`}
                     >
                       <input
                         type="checkbox"
@@ -285,6 +287,8 @@ export default function StaffPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<"recent" | "oldest" | "name">("recent");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [generalPrivileges, setGeneralPrivileges] = useState<PrivilegeState>(() =>
     loadStoredGeneralPrivileges()
   );
@@ -350,6 +354,17 @@ export default function StaffPage() {
 
     return sorted;
   }, [staff, search, sortKey]);
+
+  const totalPages = Math.max(1, Math.ceil(displayedStaff.length / pageSize));
+  const pagedStaff = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return displayedStaff.slice(start, start + pageSize);
+  }, [displayedStaff, page, pageSize]);
+
+  useEffect(() => {
+    // Clamp page if filtering/sorting shrinks the result
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   useEffect(() => {
     const admin = getStoredAdmin();
@@ -544,6 +559,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
 
   async function saveBaseline() {
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update the staff baseline", resource: "System > Staff" });
       setError("You do not have permission to update staff privileges.");
       return;
     }
@@ -569,6 +585,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
 
   async function saveSelectedOverride() {
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update staff privileges", resource: "System > Staff" });
       setError("You do not have permission to update staff privileges.");
       return;
     }
@@ -607,6 +624,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
     setMessage(null);
     // Do not clear existing error for other actions (e.g., permission errors) unless create is allowed
     if (!canCreate) {
+      await showPrivilegeDenied({ action: "create staff", resource: "System > Staff" });
       setError("You do not have permission to create staff.");
       return;
     }
@@ -736,6 +754,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
 
   async function saveEdit(id: number | null) {
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update staff", resource: "System > Staff" });
       setError("You do not have permission to update staff.");
       return;
     }
@@ -931,13 +950,13 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
       </div>
 
       <div className="space-y-4 rounded-xl border p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-          <h4 className="text-base font-semibold">Access control</h4>
-          <p className="text-xs text-muted-foreground">
+          <h4 className="text-base font-semibold text-foreground">Access control</h4>
+          <p className="text-sm text-foreground/80">
             Set the default staff privilege baseline for future staff and override permissions for specific staff.
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-foreground/70">
             New staff automatically inherit the baseline below. Existing staff stay unchanged unless you set a per-staff override.
           </p>
           </div>
@@ -952,7 +971,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -986,7 +1005,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
             </div>
           </div>
 
-          <div className="space-y-3 rounded-xl border p-3 shadow-sm bg-white/70">
+          <div className="space-y-3 rounded-xl border border-border bg-card p-3 shadow-sm">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1174,7 +1193,7 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                 </tr>
               </thead>
               <tbody>
-              {displayedStaff.map((member) => {
+              {pagedStaff.map((member) => {
                 const isAdminRow = (member.role || "").toLowerCase() === "admin";
                 const isSelf = currentAdminId === member.adminid;
                 const adminLocked = isAdminRow && !isSelf;
@@ -1357,6 +1376,53 @@ function toggleStaffPrivilege(keys: string | string[], next?: boolean) {
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Rows per page</span>
+              <select
+                className="rounded-md border px-2 py-1"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+              >
+                {[5, 10, 20, 50].map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground">
+                {(() => {
+                  const start = displayedStaff.length ? (page - 1) * pageSize + 1 : 0;
+                  const end = Math.min(page * pageSize, displayedStaff.length);
+                  return `Showing ${start}-${end} of ${displayedStaff.length}`;
+                })()}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn btn-ghost px-3 py-1"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                >
+                  Prev
+                </button>
+                <span className="min-w-[4rem] text-center">
+                  Page {page} / {totalPages}
+                </span>
+                <button
+                  className="btn btn-ghost px-3 py-1"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </>
       )}

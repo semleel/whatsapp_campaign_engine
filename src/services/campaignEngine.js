@@ -12,7 +12,7 @@ export async function handleIncomingMessage(args) {
   const normalizedText = (text || "").trim();
 
   if (normalizedText.startsWith("/")) {
-    return handleSystemCommand({ contact, command: normalizedText });
+    return handleSystemCommand({ contact, command: normalizedText, rawText: text || "" });
   }
 
   const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
@@ -160,7 +160,7 @@ export async function markExpiredSessions() {
   });
 }
 
-async function handleSystemCommand({ contact, command }) {
+async function handleSystemCommand({ contact, command, rawText }) {
   const normalized = command.toLowerCase();
 
   const cmdRow = await prisma.system_command.findUnique({
@@ -210,7 +210,7 @@ async function handleSystemCommand({ contact, command }) {
         ],
       };
     case "/feedback":
-      return startFeedbackFlow(contact);
+      return handleFeedbackCommand(contact, rawText || command);
     default:
       return {
         outbound: [
@@ -979,6 +979,51 @@ async function startFeedbackFlow(contact) {
       {
         to: contact.phone_num,
         content: "Please rate our service from 1 to 5.",
+      },
+    ],
+  };
+}
+
+async function handleFeedbackCommand(contact, text) {
+  const parts = (text || "").trim().split(/\s+/).slice(1); // drop /feedback
+  const ratingRaw = parts[0];
+  const rating = ratingRaw ? Number(ratingRaw) : NaN;
+  const hasValidRating = !Number.isNaN(rating) && rating >= 1 && rating <= 5;
+  const comment = hasValidRating ? parts.slice(1).join(" ").trim() || null : null;
+
+  if (hasValidRating) {
+    // Attach to the most recent session if available
+    const latestSession = await prisma.campaign_session.findFirst({
+      where: { contact_id: contact.contact_id },
+      orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
+      select: { campaign_session_id: true },
+    });
+
+    await prisma.service_feedback.create({
+      data: {
+        contact_id: contact.contact_id,
+        campaign_session_id: latestSession?.campaign_session_id ?? null,
+        rating,
+        comment,
+      },
+    });
+
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Thanks for your feedback! We appreciate your rating.",
+        },
+      ],
+    };
+  }
+
+  return {
+    outbound: [
+      {
+        to: contact.phone_num,
+        content:
+          "To share feedback, reply with /feedback <1-5> <optional comment>. Example: /feedback 5 Great service!",
       },
     ],
   };

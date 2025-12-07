@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 import type { TemplateDetail, TemplateListItem } from "@/lib/types";
 
 type TemplateSummary = TemplateListItem & {
@@ -394,7 +395,10 @@ export default function TemplateLibraryPage() {
   };
 
   const handleArchive = async (id: number) => {
-    if (!canArchive) return;
+    if (!canArchive) {
+      await showPrivilegeDenied({ action: "archive templates", resource: "Content" });
+      return;
+    }
     setArchivingId(id);
     try {
       await Api.archiveTemplate(id);

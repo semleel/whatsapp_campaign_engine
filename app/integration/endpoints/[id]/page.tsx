@@ -7,6 +7,8 @@ import { useParams, useRouter } from "next/navigation";
 import EndpointForm from "@/components/EndpointForm";
 import type { EndpointConfig } from "@/lib/types";
 import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 
 export default function EditEndpointPage() {
   const { id } = useParams<{ id: string }>();
@@ -15,11 +17,18 @@ export default function EditEndpointPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { canView, canUpdate, loading: privLoading } = usePrivilege("integration");
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
+        if (privLoading) return;
+        if (!canView) {
+          setError("You do not have permission to view endpoints.");
+          setLoading(false);
+          return;
+        }
         const data = await Api.getEndpoint(id);
         if (mounted) setInitial(data);
       } catch (err: any) {
@@ -33,6 +42,8 @@ export default function EditEndpointPage() {
     };
   }, [id]);
 
+  if (!privLoading && !canView)
+    return <div className="text-sm text-amber-700 border border-amber-200 bg-amber-50 px-3 py-2 rounded">You do not have permission to view endpoints.</div>;
   if (loading) return <div className="text-sm text-muted-foreground">Loading endpoint...</div>;
   if (error) return <div className="text-sm text-rose-600">{error}</div>;
   if (!initial) return <div className="text-sm text-muted-foreground">Endpoint not found.</div>;
@@ -51,6 +62,10 @@ export default function EditEndpointPage() {
         submitting={saving}
         onCancel={() => router.push("/integration/endpoints")}
         onSubmit={async (data) => {
+          if (!canUpdate) {
+            await showPrivilegeDenied({ action: "update endpoints", resource: "Integrations" });
+            return;
+          }
           setSaving(true);
           try {
             await Api.updateEndpoint(id, data);

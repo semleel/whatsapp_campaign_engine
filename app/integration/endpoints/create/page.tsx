@@ -7,6 +7,8 @@ import { useState } from "react";
 import EndpointForm from "@/components/EndpointForm";
 import type { EndpointConfig } from "@/lib/types";
 import { Api } from "@/lib/client";
+import { usePrivilege } from "@/lib/permissions";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 
 const INITIAL_ENDPOINT: EndpointConfig = {
   name: "",
@@ -25,6 +27,7 @@ const INITIAL_ENDPOINT: EndpointConfig = {
 export default function NewEndpointPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+  const { canCreate, loading: privLoading } = usePrivilege("integration");
 
   return (
     <div className="space-y-6">
@@ -42,6 +45,10 @@ export default function NewEndpointPage() {
         submitting={saving}
         onCancel={() => router.push("/integration/endpoints")}
         onSubmit={async (data) => {
+          if (privLoading || !canCreate) {
+            await showPrivilegeDenied({ action: "create endpoints", resource: "Integrations" });
+            return;
+          }
           setSaving(true);
           try {
             await Api.createEndpoint(data);

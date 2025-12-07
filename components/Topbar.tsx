@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getStoredAdmin, requestLogout } from "@/lib/auth";
+import ThemeToggle from "./ThemeToggle";
 
 const HIDDEN_ROUTES = new Set(["/login"]);
 
@@ -47,7 +48,9 @@ export default function Topbar() {
 
   return (
     <div className="h-14 border-b border-border flex items-center justify-between px-4 bg-[linear-gradient(90deg,rgba(0,0,0,0)_0%,color-mix(in_oklch,var(--primary)6%,transparent)_50%,rgba(0,0,0,0)_100%)]">
-      <h1 className="text-lg font-semibold">Team Dashboard</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-xl font-semibold">Team Dashboard</h1>
+      </div>
 
       <div className="flex items-center gap-3">
         <div className="hidden md:flex items-center gap-2 rounded-lg border border-border bg-secondary px-2">
@@ -59,6 +62,8 @@ export default function Topbar() {
             className="bg-transparent text-sm py-1.5 outline-none placeholder:opacity-60"
           />
         </div>
+
+        <ThemeToggle />
 
         {adminEmail && (
           <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/70 px-3 py-1.5 text-sm">

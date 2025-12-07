@@ -110,6 +110,7 @@ import type {
   FlowStat,
   ReportSummary,
   SystemCommand,
+  FeedbackEntry,
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -334,6 +335,16 @@ export const Api = {
     http<DeliveryReportRow[]>(`/api/report/delivery?limit=${limit}`),
   listFlowStats: () => http<FlowStat[]>(`/api/report/flow`),
   getReportSummary: () => http<ReportSummary>(`/api/report/summary`),
+
+  // Feedback
+  listFeedback: (filters: { rating?: number; minRating?: number; hasComment?: boolean } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.rating != null) params.append("rating", String(filters.rating));
+    if (filters.minRating != null) params.append("minRating", String(filters.minRating));
+    if (filters.hasComment) params.append("hasComment", "true");
+    const qs = params.toString();
+    return http<{ items: FeedbackEntry[] }>(`/api/feedback${qs ? `?${qs}` : ""}`);
+  },
 
   // Admin/staff
   listAdmins: () =>

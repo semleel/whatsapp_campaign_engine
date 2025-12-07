@@ -5,6 +5,7 @@
 import { useMemo, useState } from "react";
 import { Api } from "@/lib/client";
 import type { EndpointConfig, TestRunResult } from "@/lib/types";
+import { showPrivilegeDenied } from "@/lib/showAlert";
 
 function formatUrl(endpoint: EndpointConfig) {
   const base = endpoint.base_url?.replace(/\/+$/, "") || "";
@@ -15,9 +16,10 @@ function formatUrl(endpoint: EndpointConfig) {
 type Props = {
   endpoints: EndpointConfig[];
   initialEndpointId?: string;
+  canRun?: boolean;
 };
 
-export default function TestRunner({ endpoints, initialEndpointId = "" }: Props) {
+export default function TestRunner({ endpoints, initialEndpointId = "", canRun = true }: Props) {
   const [endpointId, setEndpointId] = useState<string>(initialEndpointId);
   const [varsText, setVarsText] = useState(
     JSON.stringify({ contact: { phonenum: "60123456789" }, campaign: { code: "RAYA2025" } }, null, 2)
@@ -41,6 +43,10 @@ export default function TestRunner({ endpoints, initialEndpointId = "" }: Props)
         };
 
   const handleRun = async () => {
+    if (!canRun) {
+      await showPrivilegeDenied({ action: "run endpoint tests", resource: "Integrations" });
+      return;
+    }
     setError(null);
     setResult(null);
     let payloadVars: Record<string, unknown> = {};
@@ -96,7 +102,7 @@ export default function TestRunner({ endpoints, initialEndpointId = "" }: Props)
         <button
           type="button"
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-          disabled={!endpointId || running}
+          disabled={!endpointId || running || !canRun}
           onClick={handleRun}
         >
           {running ? "Running..." : "Run test"}

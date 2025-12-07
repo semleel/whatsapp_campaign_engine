@@ -10,7 +10,7 @@ import TestRunner from "@/components/TestRunner";
 import { usePrivilege } from "@/lib/permissions";
 
 export default function LiveTestRunnerPage() {
-  const { canView, loading: privLoading } = usePrivilege("integration");
+  const { canView, canUpdate, loading: privLoading } = usePrivilege("integration");
   const searchParams = useSearchParams();
   const initialEndpointId = searchParams.get("endpointId") ?? "";
   const [endpoints, setEndpoints] = useState<EndpointConfig[]>([]);
@@ -58,7 +58,11 @@ export default function LiveTestRunnerPage() {
         ) : endpoints.length === 0 ? (
           <p className="text-sm text-muted-foreground">No endpoints available yet.</p>
         ) : (
-          <TestRunner endpoints={endpoints} initialEndpointId={initialEndpointId} />
+          <TestRunner
+            endpoints={endpoints}
+            initialEndpointId={initialEndpointId}
+            canRun={canUpdate || canView}
+          />
         )}
       </section>
     </div>

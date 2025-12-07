@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
-import { showCenteredAlert, showCenteredConfirm } from "@/lib/showAlert";
+import { showCenteredAlert, showCenteredConfirm, showPrivilegeDenied } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
 interface Campaign {
@@ -87,6 +87,7 @@ export default function CampaignsPage() {
 
   const handleEdit = (id: number) => {
     if (!canUpdate) {
+      void showPrivilegeDenied({ action: "edit campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to edit campaigns.");
       return;
     }
@@ -95,6 +96,7 @@ export default function CampaignsPage() {
 
   const handleArchive = async (id: number) => {
     if (!canArchive) {
+      await showPrivilegeDenied({ action: "archive campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to archive campaigns.");
       return;
     }
@@ -114,6 +116,7 @@ export default function CampaignsPage() {
 
   const handlePause = async (id: number) => {
     if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to update campaigns.");
       return;
     }

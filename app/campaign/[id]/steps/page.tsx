@@ -13,7 +13,7 @@ import type {
   InputType,
 } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
-import { showCenteredAlert } from "@/lib/showAlert";
+import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 
 type TemplateListItem = {
   content_id: number;
@@ -92,6 +92,18 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
 export default function CampaignStepsPage() {
   const { id } = useParams<{ id: string }>();
   const { loading: privLoading, canView, canUpdate } = usePrivilege("campaigns");
+  const navLinkClass =
+    "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
+  const backIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M11.5 5.5 7 10l4.5 4.5 1.4-1.4L9.8 10l3.1-3.1z" />
+    </svg>
+  );
+  const detailIcon = (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <path d="M4 4h12v2H4V4zm0 5h12v2H4V9zm0 5h7v2H4v-2z" />
+    </svg>
+  );
 
   const [campaignName, setCampaignName] = useState("");
   const [steps, setSteps] = useState<StepFormState[]>([]);
@@ -279,7 +291,7 @@ export default function CampaignStepsPage() {
 
   const handleSaveAll = async () => {
     if (!canUpdate) {
-      await showCenteredAlert("You do not have permission to update campaigns.");
+      await showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
       return;
     }
     // Validate unique step_code
@@ -359,10 +371,12 @@ export default function CampaignStepsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/campaign" className="text-sm text-primary hover:underline">
+          <Link href="/campaign" className={navLinkClass}>
+            {backIcon}
             Back to campaigns
           </Link>
-          <Link href={`/campaign/${id}`} className="text-sm text-primary hover:underline">
+          <Link href={`/campaign/${id}`} className={navLinkClass}>
+            {detailIcon}
             Campaign details
           </Link>
         </div>

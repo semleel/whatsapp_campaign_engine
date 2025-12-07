@@ -66,6 +66,13 @@ export const MENU: MenuSection[] = [
     ],
   },
   {
+    id: "feedback",
+    label: "Feedback",
+    items: [
+      { label: "Feedback", href: "/feedback", exact: true },
+    ],
+  },
+  {
     id: "reports",
     label: "Reports",
     items: [
