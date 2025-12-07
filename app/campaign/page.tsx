@@ -235,9 +235,9 @@ export default function CampaignsPage() {
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
-              <th className="px-3 py-2 text-left font-medium">Active</th>
               <th className="px-3 py-2 text-left font-medium">Start</th>
               <th className="px-3 py-2 text-left font-medium">End</th>
+              <th className="px-3 py-2 text-left font-medium">Active</th>
               <th className="px-3 py-2 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -331,6 +331,12 @@ export default function CampaignsPage() {
                         {c.currentstatus}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.start_at)}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {formatDateTime(c.end_at)}
+                    </td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
@@ -349,12 +355,6 @@ export default function CampaignsPage() {
                           }`}
                         />
                       </button>
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {formatDateTime(c.start_at)}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {formatDateTime(c.end_at)}
                     </td>
                     <td className="px-3 py-2 text-right space-x-2">
                       {allowEdit ? (
