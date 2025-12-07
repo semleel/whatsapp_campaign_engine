@@ -102,6 +102,7 @@ export async function listCampaigns(_req, res) {
       include: {
         target_region: { select: { region_name: true } },
         campaign_keyword: { select: { keyword_id: true } },
+        _count: { select: { campaign_step: true } },
       },
       orderBy: { campaign_id: "desc" },
     });
@@ -118,7 +119,7 @@ export async function listCampaigns(_req, res) {
       start_at: campaign.start_at,
       end_at: campaign.end_at,
       hasKeyword: (campaign.campaign_keyword?.length ?? 0) > 0,
-      hasTemplate: false,
+      hasSteps: (campaign._count?.campaign_step ?? 0) > 0,
     }));
 
     return res.status(200).json(formatted);
@@ -1013,11 +1014,20 @@ export async function autoCheckCampaignStatuses() {
   try {
     const now = new Date();
 
+    const deriveWindowStatus = (startAt, endAt) => {
+      const start = startAt ? new Date(startAt) : null;
+      const end = endAt ? new Date(endAt) : null;
+
+      if (!start && !end) return "Upcoming";
+      if (start && now < start) return "Upcoming";
+      if (end && now > end) return "Expired";
+      return "On Going";
+    };
+
     const campaigns = await prisma.campaign.findMany({
       where: {
-        status: {
-          in: [STATUS_ON_HOLD, STATUS_ACTIVE], 
-        },
+        status: { not: "Archived" },
+        OR: [{ is_deleted: false }, { is_deleted: null }],
       },
       select: {
         campaign_id: true,
@@ -1029,30 +1039,9 @@ export async function autoCheckCampaignStatuses() {
 
     for (const campaign of campaigns) {
       const currentStatus = campaign.status;
-      const startWindow = campaign.start_at
-        ? new Date(campaign.start_at)
-        : null;
-      const endWindow = campaign.end_at ? new Date(campaign.end_at) : null;
+      const nextStatus = deriveWindowStatus(campaign.start_at, campaign.end_at);
 
-      let nextStatus = null;
-
-      if (currentStatus === STATUS_ON_HOLD) {
-        if (startWindow && now >= startWindow) {
-          nextStatus = STATUS_ACTIVE;
-
-          if (endWindow && now > endWindow) {
-            nextStatus = STATUS_INACTIVE;
-          }
-        }
-      }
-
-      if (currentStatus === STATUS_ACTIVE) {
-        if (endWindow && now > endWindow) {
-          nextStatus = STATUS_INACTIVE;
-        }
-      }
-
-      if (nextStatus && nextStatus !== currentStatus) {
+      if (nextStatus !== currentStatus) {
         await prisma.campaign.update({
           where: { campaign_id: campaign.campaign_id },
           data: { status: nextStatus },
