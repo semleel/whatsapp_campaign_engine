@@ -18,17 +18,50 @@ export async function handleIncomingMessage(args) {
   const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
 
   if (campaignFromKeyword) {
-    // Restart the flow fresh when keyword is sent again:
-    // cancel any active/expired session for this campaign/contact and start from step 1.
-    await prisma.campaign_session.updateMany({
-      where: {
-        contact_id: contact.contact_id,
-        campaign_id: campaignFromKeyword.campaign_id,
-        session_status: { in: ["ACTIVE", "EXPIRED"] },
-      },
-      data: { session_status: "CANCELLED", current_step_id: null },
-    });
+    // If the keyword matches a campaign, try to reuse any existing session for that campaign
+    const activeForCampaign = await findActiveSession(
+      contact.contact_id,
+      campaignFromKeyword.campaign_id
+    );
+    if (activeForCampaign) {
+      return continueCampaignSession({
+        contact,
+        session: activeForCampaign,
+        incomingText: normalizedText,
+        type,
+        payload,
+      });
+    }
 
+    // Revive the latest expired session for this campaign instead of cancelling it
+    const expiredForCampaign = await findExpiredSession(
+      contact.contact_id,
+      campaignFromKeyword.campaign_id
+    );
+    if (expiredForCampaign) {
+      const revived = await prisma.campaign_session.update({
+        where: { campaign_session_id: expiredForCampaign.campaign_session_id },
+        data: { session_status: "ACTIVE", last_active_at: new Date() },
+        include: { campaign: true },
+      });
+
+      const resumeNotice = {
+        to: contact.phone_num,
+        content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
+      };
+
+      const result = await continueCampaignSession({
+        contact,
+        session: revived,
+        incomingText: normalizedText,
+        type,
+        payload,
+      });
+
+      return { outbound: [resumeNotice, ...(result?.outbound || [])] };
+    }
+
+    // No existing session, start a new one
     const newSession = await createSessionForCampaign(
       contact.contact_id,
       campaignFromKeyword.campaign_id
