@@ -34,6 +34,14 @@ type TemplateListItem = {
 
 type StepFormState = CampaignStepWithChoices & {
   message_mode?: "custom" | "template";
+  is_deleted?: boolean | null;
+  isdeleted?: boolean | null;
+  expires_at?: string | null;
+  expiresat?: string | null;
+};
+
+type StepFormState = CampaignStepWithChoices & {
+  message_mode?: "custom" | "template";
 };
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
@@ -49,14 +57,21 @@ const isTemplateActiveForSteps = (template: TemplateListItem) => {
     (val || "")
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
+  const type = normalize(template.type);
+  const status = normalize(template.status);
+  const allowedTypes = new Set(["whatsapp_template", "message", "template", "wa_template", ""]);
   const isDeleted = (template.is_deleted ?? template.isdeleted) === true;
   const expiresRaw = template.expires_at ?? template.expiresat;
   const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
   const isExpired =
     expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt.getTime() < Date.now() : false;
 
-  // Align with template library default: show anything not deleted/expired
-  return !isDeleted && !isExpired;
+  return (
+    allowedTypes.has(type) &&
+    (status === "active" || status === "approved") &&
+    !isDeleted &&
+    !isExpired
+  );
 };
 
 const resolveMessageMode = (step: StepFormState) =>
@@ -315,7 +330,8 @@ export default function CampaignStepsPage() {
                 return {
                   ...s,
                   message_mode: "template",
-                template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
+                message_mode: "template",
+        template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
                   prompt_text: body,
                   media_url: mediaUrl ?? null,
                   action_type: nextAction,
@@ -405,6 +421,16 @@ export default function CampaignStepsPage() {
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
       });
+      const payload = steps.map((s, idx) => {
+        const { message_mode, template, ...rest } = s as StepFormState & { template?: any };
+        const mode = resolveMessageMode(s);
+        return {
+          ...rest,
+          template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
+          step_number: idx + 1,
+          step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
+        };
+      });
       const res = await Api.saveCampaignStepsBulk(id, payload);
       const mapped = mapStepsForUi(res.steps || []);
       setSteps(mapped);
@@ -417,6 +443,8 @@ export default function CampaignStepsPage() {
       setSaving(false);
     }
   };
+
+  const activeTemplates = templates.filter(isTemplateActiveForSteps);
 
   const activeTemplates = templates.filter(isTemplateActiveForSteps);
 
@@ -575,6 +603,77 @@ export default function CampaignStepsPage() {
                                   </button>
                                 </div>
                                 <div className="grid gap-3 md:grid-cols-2">
+                  steps.map((s, idx) => {
+                    const messageMode = resolveMessageMode(s);
+                    const stepTemplateId = s.template_source_id ?? null;
+                    const selectedTemplate = activeTemplates.find(
+                      (t) => getTemplateId(t) === stepTemplateId
+                    );
+                    const showInactiveTemplateOption =
+                      messageMode === "template" && stepTemplateId && !selectedTemplate;
+
+                    return (
+                      <Fragment key={`step-${s.step_id ?? "new"}-${idx}`}>
+                        <tr
+                          className={`border-t cursor-pointer hover:bg-muted/40 ${
+                            expandedIndex === idx ? "bg-muted/40" : ""
+                          }`}
+                          onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
+                        >
+                          <td className="px-3 py-2 font-semibold">{idx + 1}</td>
+                          <td className="px-3 py-2 max-w-[240px]">
+                            <div className="font-medium truncate">{s.prompt_text || "-"}</div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {s.step_code || "No code"}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+                                {s.template_source_id
+                                  ? `From template (ID ${s.template_source_id}${
+                                      s.template?.title ? ` - ${s.template.title}` : ""
+                                    })`
+                                  : "Custom"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type === "input"
+                              ? s.input_type || "text"
+                              : s.action_type === "choice"
+                              ? "choice"
+                              : "none"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type || "message"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {summarizeChoices(s)}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.action_type === "choice"
+                              ? "Per choice"
+                              : idx === steps.length - 1
+                              ? "END"
+                              : `Next (step ${idx + 2})`}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
+                          </td>
+                        </tr>
+                        {expandedIndex === idx ? (
+                          <tr className="bg-muted/30 border-t">
+                            <td colSpan={7} className="px-4 py-4">
+                              <div className="space-y-4">
+                                <div className="flex justify-end">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveStep(idx)}
+                                    className="text-xs text-rose-600 hover:text-rose-700"
+                                  >
+                                    Remove step
+                                  </button>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-2">
                                 <label className="space-y-1 text-sm font-medium">
                                   <span>Action type</span>
                                   <select
@@ -625,7 +724,7 @@ export default function CampaignStepsPage() {
 
                                 {/* Step-level jump configuration (NOT for choice steps) */}
                                 {s.action_type !== "choice" && (
-                                  <label className="space-y-1 text-sm font-medium md:col-span-2">
+                                  <label className="space-y-1 text-sm font-medium md:col-span-2 md:col-span-2">
                                     <span>On success (jump)</span>
                                       <div className="flex flex-col gap-1 text-xs text-muted-foreground">
                                       <div className="flex items-center gap-2">
@@ -742,6 +841,79 @@ export default function CampaignStepsPage() {
                                             media_url: null,
                                             error_message: null,
                                           });
+                                          return;
+                                        }
+                                        const templateId = Number(val);
+                                        if (Number.isNaN(templateId)) return;
+                                        await handleApplyTemplateToStep(idx, templateId);
+                                      }}
+                                    >
+                                      <option value="">
+                                        {activeTemplates.length ? "Select a template" : "No active templates found"}
+                                      </option>
+                                      {showInactiveTemplateOption && stepTemplateId ? (
+                                        <option value={stepTemplateId}>
+                                          Template #{stepTemplateId} (inactive)
+                                        </option>
+                                      ) : null}
+                                      {activeTemplates.map((t) => {
+                                        const tid = getTemplateId(t);
+                                        return (
+                                          <option key={tid ?? t.title} value={tid ?? ""}>
+                                            {t.title} {tid ? `(ID ${tid})` : ""}
+                                          </option>
+                                        );
+                                      })}
+                                    </select>
+                                    <p className="text-xs text-muted-foreground">
+                                      Selecting a template copies its body and media into this step. You can
+                                      still edit them for this campaign without affecting the original.
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    Write a custom message for this step. Switching modes keeps your current text
+                                    and media.
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="space-y-2 rounded-md border px-3 py-2">
+                                <p className="text-sm font-semibold">Message source</p>
+                                <div className="flex flex-wrap gap-4 text-sm">
+                                  <label className="inline-flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`message-mode-${idx}`}
+                                      className="h-3 w-3"
+                                      checked={messageMode === "custom"}
+                                      onChange={() =>
+                                        updateStep(idx, { message_mode: "custom", template_source_id: null })
+                                      }
+                                    />
+                                    <span>Custom message</span>
+                                  </label>
+                                  <label className="inline-flex items-center gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`message-mode-${idx}`}
+                                      className="h-3 w-3"
+                                      checked={messageMode === "template"}
+                                      onChange={() => updateStep(idx, { message_mode: "template" })}
+                                    />
+                                    <span>Use template</span>
+                                  </label>
+                                </div>
+
+                                {messageMode === "template" ? (
+                                  <div className="space-y-2">
+                                    <select
+                                      className="w-full rounded border px-3 py-2"
+                                      value={stepTemplateId ?? ""}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        if (!val) {
+                                          updateStep(idx, { template_source_id: null, message_mode: "template" });
                                           return;
                                         }
                                         const templateId = Number(val);
@@ -993,6 +1165,7 @@ export default function CampaignStepsPage() {
                       ) : null}
                     </Fragment>
                   )
+                }
                 })
                 )}
                 <tr className="border-t">
