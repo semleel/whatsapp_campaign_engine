@@ -78,8 +78,27 @@ export async function createCampaign(req, res) {
 
 export async function listCampaigns(_req, res) {
   try {
+    const deriveWindowStatus = (startAt, endAt) => {
+      const now = new Date();
+      const start = startAt ? new Date(startAt) : null;
+      const end = endAt ? new Date(endAt) : null;
+
+      // Upcoming if there is no schedule at all, or start is in the future.
+      if (!start && !end) return "Upcoming";
+      if (start && now < start) return "Upcoming";
+
+      // Expired if an end date exists and has passed.
+      if (end && now > end) return "Expired";
+
+      // Otherwise we are within the active window (start reached, not past end).
+      return "On Going";
+    };
+
     const campaigns = await prisma.campaign.findMany({
-      where: { status: { not: "Archived" } },
+      where: {
+        status: { not: "Archived" },
+        OR: [{ is_deleted: false }, { is_deleted: null }],
+      },
       include: {
         target_region: { select: { region_name: true } },
         campaign_keyword: { select: { keyword_id: true } },
@@ -92,8 +111,9 @@ export async function listCampaigns(_req, res) {
       campaignname: campaign.campaign_name,
       objective: campaign.objective,
       regionname: campaign.target_region?.region_name ?? "N/A",
-      currentstatus: campaign.status ?? "Unknown",
-      status: campaign.status ?? "Unknown",
+      currentstatus: deriveWindowStatus(campaign.start_at, campaign.end_at),
+      status: deriveWindowStatus(campaign.start_at, campaign.end_at),
+      is_active: campaign.is_active ?? null, // surface null explicitly if not set
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
@@ -111,7 +131,9 @@ export async function listCampaigns(_req, res) {
 export async function listArchivedCampaigns(_req, res) {
   try {
     const campaigns = await prisma.campaign.findMany({
-      where: { status: "Archived" },
+      where: {
+        OR: [{ status: "Archived" }, { is_deleted: true }],
+      },
       include: {
         target_region: { select: { region_name: true } },
       },
@@ -123,7 +145,7 @@ export async function listArchivedCampaigns(_req, res) {
       campaignname: campaign.campaign_name,
       objective: campaign.objective,
       regionname: campaign.target_region?.region_name ?? "N/A",
-      currentstatus: campaign.status ?? "Archived",
+      currentstatus: campaign.is_deleted ? "Archived" : campaign.status ?? "Archived",
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
@@ -187,6 +209,7 @@ export async function updateCampaign(req, res) {
       status,
       startAt,
       endAt,
+      is_active,
     } = req.body;
 
     const existing = await prisma.campaign.findUnique({
@@ -235,6 +258,9 @@ export async function updateCampaign(req, res) {
     if (typeof endAt !== "undefined") {
       data.end_at = parseNullableDate(endAt);
     }
+    if (typeof is_active === "boolean") {
+      data.is_active = is_active;
+    }
 
     if (wantsScheduleChange && currentStatus !== "Active") {
       const now = new Date();
@@ -259,6 +285,17 @@ export async function updateCampaign(req, res) {
       }
     } else if (requestedStatus) {
       data.status = requestedStatus;
+    }
+
+    // Keep is_deleted in sync when status is explicitly set
+    if (typeof data.status !== "undefined") {
+      if (data.status === "Archived") {
+        data.is_deleted = true;
+        data.is_active = false;
+      } else {
+        data.is_deleted = false;
+        data.is_active = true;
+      }
     }
 
     await prisma.campaign.update({
@@ -876,7 +913,7 @@ export async function archiveCampaign(req, res) {
 
     await prisma.campaign.update({
       where: { campaign_id: campaignID },
-      data: { status: "Archived" },
+      data: { status: "Archived", is_deleted: true, is_active: false },
     });
 
     return res.status(200).json({ message: "Campaign archived successfully!" });
@@ -898,7 +935,7 @@ export async function restoreCampaign(req, res) {
 
     await prisma.campaign.update({
       where: { campaign_id: campaignID },
-      data: { status: "Inactive" },
+      data: { status: "Inactive", is_deleted: false, is_active: true },
     });
 
     return res.status(200).json({ message: "Campaign restored to Inactive!" });
@@ -927,7 +964,7 @@ export async function hardDeleteArchivedCampaign(req, res) {
       return res.status(404).json({ error: "Campaign not found" });
     }
 
-    if (campaign.status !== "Archived") {
+    if (campaign.status !== "Archived" && !campaign.is_deleted) {
       return res
         .status(400)
         .json({ error: "Only archived campaigns can be permanently deleted." });
@@ -956,7 +993,10 @@ export async function hardDeleteArchivedCampaigns(req, res) {
     }
 
     const result = await prisma.campaign.deleteMany({
-      where: { campaign_id: { in: parsedIds }, status: "Archived" },
+      where: {
+        campaign_id: { in: parsedIds },
+        OR: [{ status: "Archived" }, { is_deleted: true }],
+      },
     });
 
     return res.status(200).json({

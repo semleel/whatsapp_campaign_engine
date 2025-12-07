@@ -13,6 +13,7 @@ interface Campaign {
   campaignname: string;
   regionname: string;
   currentstatus: string;
+  is_active?: boolean | null;
   start_at?: string | null;
   end_at?: string | null;
   hasKeyword?: boolean;
@@ -20,16 +21,14 @@ interface Campaign {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  new: "bg-emerald-100 text-emerald-700",
-  paused: "bg-amber-100 text-amber-700",
-  "on hold": "bg-sky-100 text-sky-700",
-  inactive: "bg-slate-100 text-slate-700",
+  "on going": "bg-emerald-100 text-emerald-700",
+  upcoming: "bg-sky-100 text-sky-700",
+  expired: "bg-slate-100 text-slate-700",
 };
 
-// Only block editing when the campaign is Active
+// Only block editing when the campaign is actively running
 const canEditCampaign = (status: string | undefined | null) =>
-  (status || "").toLowerCase() !== "active";
+  (status || "").toLowerCase() !== "on going";
 
 export default function CampaignsPage() {
   const router = useRouter();
@@ -112,6 +111,27 @@ export default function CampaignsPage() {
     }
   };
 
+  const handleToggleActive = async (id: number, current?: boolean | null) => {
+    if (!canUpdate) {
+      setErrorMessage("You do not have permission to update campaigns.");
+      return;
+    }
+    const next = !current;
+    try {
+      await Api.updateCampaign(id, { is_active: next });
+      setCampaigns((prev) =>
+        prev.map((c) =>
+          c.campaignid === id ? { ...c, is_active: next } : c
+        )
+      );
+    } catch (err) {
+      console.error(err);
+      setErrorMessage(
+        err instanceof Error ? err.message : "Failed to update active state."
+      );
+    }
+  };
+
   const handlePause = async (id: number) => {
     if (!canUpdate) {
       setErrorMessage("You do not have permission to update campaigns.");
@@ -141,7 +161,7 @@ export default function CampaignsPage() {
   const activeCount = useMemo(
     () =>
       campaigns.filter(
-        (c) => c.currentstatus?.toLowerCase() === "active"
+        (c) => c.currentstatus?.toLowerCase() === "on going"
       ).length,
     [campaigns]
   );
@@ -187,11 +207,9 @@ export default function CampaignsPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
           >
             <option value="all">All</option>
-            <option value="New">New</option>
-            <option value="Active">Active</option>
-            <option value="On Hold">On Hold</option>
-            <option value="Paused">Paused</option>
-            <option value="Inactive">Inactive</option>
+            <option value="Upcoming">Upcoming</option>
+            <option value="On Going">On Going</option>
+            <option value="Expired">Expired</option>
           </select>
           <Link
             href="/campaign/archived"
@@ -217,6 +235,7 @@ export default function CampaignsPage() {
               <th className="px-3 py-2 text-left font-medium">Campaign</th>
               <th className="px-3 py-2 text-left font-medium">Region</th>
               <th className="px-3 py-2 text-left font-medium">Status</th>
+              <th className="px-3 py-2 text-left font-medium">Active</th>
               <th className="px-3 py-2 text-left font-medium">Start</th>
               <th className="px-3 py-2 text-left font-medium">End</th>
               <th className="px-3 py-2 text-right font-medium">Actions</th>
@@ -235,12 +254,11 @@ export default function CampaignsPage() {
                   STATUS_STYLES[c.currentstatus?.toLowerCase()] ||
                   "bg-slate-100 text-slate-700";
 
-                const isActive =
-                  (c.currentstatus || "").toLowerCase() === "active";
-                const editable = canEditCampaign(c.currentstatus);
-                const allowPause = canUpdate && isActive;
-                const allowEdit = canUpdate && editable;
-                const allowArchive = canArchive;
+                const isRunning = !!c.is_active; // when flagged active, lock edits/archiving
+                const editable = canUpdate && !isRunning;
+                const allowPause = false; // we now gate by is_active, not status-based pause
+                const allowEdit = editable;
+                const allowArchive = canArchive && !isRunning;
                 const missingKeyword = c.hasKeyword === false;
                 const missingTemplate = c.hasTemplate === false;
                 const hasWarning = missingKeyword || missingTemplate;
@@ -313,6 +331,25 @@ export default function CampaignsPage() {
                         {c.currentstatus}
                       </span>
                     </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleActive(c.campaignid, c.is_active)}
+                        disabled={!canUpdate}
+                        className={`relative h-6 w-11 overflow-hidden rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${
+                          c.is_active ? "bg-emerald-500 border-emerald-600" : "bg-slate-200 border-slate-300"
+                        } ${!canUpdate ? "cursor-not-allowed opacity-60" : "hover:opacity-90"}`}
+                        aria-pressed={!!c.is_active}
+                        aria-label={c.is_active ? "Deactivate campaign" : "Activate campaign"}
+                        aria-disabled={!canUpdate}
+                      >
+                        <span
+                          className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                            c.is_active ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {formatDateTime(c.start_at)}
                     </td>
@@ -320,15 +357,7 @@ export default function CampaignsPage() {
                       {formatDateTime(c.end_at)}
                     </td>
                     <td className="px-3 py-2 text-right space-x-2">
-                      {allowPause ? (
-                        <button
-                          onClick={() => handlePause(c.campaignid)}
-                          className="rounded border px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
-                          title="Pause this campaign to edit its schedule."
-                        >
-                          Pause
-                        </button>
-                      ) : allowEdit ? (
+                      {allowEdit ? (
                         <button
                           onClick={() => allowEdit && handleEdit(c.campaignid)}
                           disabled={!allowEdit}
@@ -350,11 +379,17 @@ export default function CampaignsPage() {
                         <button
                           onClick={() => handleArchive(c.campaignid)}
                           className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                          disabled={!allowArchive}
+                          title={
+                            allowArchive
+                              ? "Archive campaign"
+                              : "Cannot archive while active"
+                          }
                         >
                           Archive
                         </button>
                       ) : null}
-                      {!allowPause && !allowEdit && !allowArchive && (
+                      {!allowEdit && !allowArchive && (
                         <span className="text-xs text-muted-foreground">No actions</span>
                       )}
                     </td>
