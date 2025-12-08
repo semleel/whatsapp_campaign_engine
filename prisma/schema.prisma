@@ -23,23 +23,24 @@ model admin {
 }
 
 model api {
-  api_id           Int             @id @default(autoincrement())
-  name             String          @db.VarChar(150)
-  description      String?         @db.VarChar(500)
-  base_url         String          @db.VarChar(500)
-  path             String          @db.VarChar(500)
-  method           String          @db.VarChar(20)
-  auth_type        String?         @default("none") @db.VarChar(50)
-  auth_header_name String?         @default("Authorization") @db.VarChar(100)
-  auth_token       String?         @db.VarChar(500)
-  timeout_ms       Int?            @default(5000)
-  retry_enabled    Boolean?        @default(false)
-  retry_count      Int?            @default(0)
-  is_active        Boolean?        @default(true)
-  last_updated     DateTime?       @db.Timestamp(6)
-  api_log          api_log[]
-  api_parameter    api_parameter[]
-  campaign_step    campaign_step[]
+  api_id            Int             @id @default(autoincrement())
+  name              String          @db.VarChar(150)
+  description       String?         @db.VarChar(500)
+  base_url          String          @db.VarChar(500)
+  path              String          @db.VarChar(500)
+  method            String          @db.VarChar(20)
+  auth_type         String?         @default("none") @db.VarChar(50)
+  auth_header_name  String?         @default("Authorization") @db.VarChar(100)
+  auth_token        String?         @db.VarChar(500)
+  timeout_ms        Int?            @default(5000)
+  retry_enabled     Boolean?        @default(false)
+  retry_count       Int?            @default(0)
+  is_active         Boolean?        @default(true)
+  last_updated      DateTime?       @db.Timestamp(6)
+  response_template String?
+  api_log           api_log[]
+  api_parameter     api_parameter[]
+  campaign_step     campaign_step[]
 }
 
 model api_log {
@@ -87,6 +88,8 @@ model campaign {
   allow_repeat_join     Boolean                @default(true)
   max_joins_per_contact Int?
   opt_in_required       Boolean                @default(false)
+  is_deleted            Boolean?
+  is_active             Boolean?
   api_log               api_log[]
   admin                 admin?                 @relation(fields: [created_by_admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
   target_region         target_region?         @relation(fields: [target_region_id], references: [region_id], onDelete: NoAction, onUpdate: NoAction)

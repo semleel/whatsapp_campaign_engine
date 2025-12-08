@@ -5,6 +5,7 @@ import {
   dispatchMapping,
   getIntegrationLogs,
   runTest,
+  updateApiTemplate,
 } from "../controllers/integrationController.js";
 import {
   createEndpoint,
@@ -37,5 +38,6 @@ router.post("/test", requirePrivilege("integration", "update"), runTest);
 router.post("/dispatch", requirePrivilege("integration", "update"), dispatchMapping);
 router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
 router.get("/apis", requirePrivilege("integration", "view"), listApis);
+router.put("/apis/:id/template", requirePrivilege("integration", "update"), updateApiTemplate);
 
 export default router;

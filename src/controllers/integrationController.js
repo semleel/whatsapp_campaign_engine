@@ -10,10 +10,33 @@ import {
   saveEndpoint,
   seedIntegrationData,
 } from "../services/integrationStore.js";
-import { dispatchEndpoint, materializeVariables, renderResponse } from "../services/integrationService.js";
+import { dispatchEndpoint, materializeVariables } from "../services/integrationService.js";
 import prisma from "../config/prismaClient.js";
 
 seedIntegrationData();
+
+// ------------------------------
+// Update API response_template
+// ------------------------------
+export async function updateApiTemplate(req, res) {
+  const id = Number(req.params.id);
+  const { response_template } = req.body || {};
+
+  if (!id || Number.isNaN(id)) {
+    return res.status(400).json({ error: "Invalid API id" });
+  }
+
+  try {
+    const updated = await prisma.api.update({
+      where: { api_id: id },
+      data: { response_template: response_template || null },
+    });
+    return res.json({ ok: true, api: updated });
+  } catch (err) {
+    console.error("updateApiTemplate error:", err);
+    return res.status(500).json({ error: "Failed to update API template" });
+  }
+}
 
 function ensureHttps(url) {
   if (!/^https:\/\//i.test(url)) {
@@ -140,7 +163,7 @@ export async function getIntegrationLogs(req, res) {
 }
 
 export async function runTest(req, res) {
-  const { endpointId, sampleVars = {}, templateId } = req.body || {};
+  const { endpointId, sampleVars = {} } = req.body || {};
 
   const apiId = Number(endpointId);
   if (!apiId || Number.isNaN(apiId)) {
@@ -156,7 +179,10 @@ export async function runTest(req, res) {
 
   try {
     const result = await dispatchEndpoint(apiId, vars);
-    const formatted = templateId ? renderResponse(templateId, result.payload, vars) : null;
+    const formatted =
+      result?.payload && typeof result.payload.formattedText === "string"
+        ? result.payload.formattedText
+        : null;
 
     try {
       await prisma.api_log.create({
@@ -178,12 +204,18 @@ export async function runTest(req, res) {
       console.warn("[integration:test] failed to write api_log:", logErr?.message || logErr);
     }
 
+    const responseJson = {
+      raw: result.payload ?? null,
+      formatted,
+    };
     return res.status(200).json({
       ok: true,
       status: result.status,
+      timeMs: result.duration,
       duration: result.duration,
-      raw: result.payload ?? null,
-      formatted: formatted ?? null,
+      responseJson,
+      raw: responseJson.raw,
+      formatted: responseJson.formatted,
     });
   } catch (err) {
     console.error("[integration:test] dispatch error", err);
@@ -209,6 +241,10 @@ export async function runTest(req, res) {
     }
 
     return res.status(500).json({
+      ok: false,
+      status: 500,
+      timeMs: 0,
+      errorMessage: err?.message || "Failed to execute test",
       error: err?.message || "Failed to execute test",
     });
   }
@@ -239,7 +275,10 @@ export async function dispatchMapping(req, res) {
         if (i === attempts - 1) throw err;
       }
     }
-    const formatted = renderResponse(mapping.templateId, result.payload, runtimeVars);
+    const formatted =
+      result?.payload && typeof result.payload.formattedText === "string"
+        ? result.payload.formattedText
+        : null;
 
     try {
       await prisma.api_log.create({

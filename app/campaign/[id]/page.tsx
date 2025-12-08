@@ -1,3 +1,5 @@
+// app/campaign/[id]/page.tsx
+
 "use client";
 
 import Link from "next/link";
@@ -91,7 +93,6 @@ export default function CampaignDetailPage() {
     try {
       await Api.updateCampaign(id, {
         ...form,
-        userFlowID: undefined,
       });
       setMessage("Campaign updated successfully.");
       setTimeout(() => router.push("/campaign"), 1000);

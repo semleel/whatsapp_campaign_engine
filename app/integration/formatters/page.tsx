@@ -2,43 +2,106 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
-
-function renderPreview(template: string, payload: any) {
-  return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
-    const path = token.trim().split(".");
-    let value: any = payload;
-    for (const key of path) {
-      if (value == null) break;
-      value = value[key];
-    }
-    return value == null ? `{${token}}` : String(value);
-  });
-}
 
 export default function FormatterPlayground() {
   const { canView, loading } = usePrivilege("integration");
-  const [template, setTemplate] = useState("Hi {{contact.name}}, your balance is {{loyalty.points}} points.");
-  const [payloadText, setPayloadText] = useState(
-    JSON.stringify(
-      {
-        contact: { name: "Aisyah" },
-        loyalty: { points: 1200, tier: "Gold" },
-      },
-      null,
-      2
-    )
-  );
+  const searchParams = useSearchParams();
 
-  const { preview, error } = useMemo(() => {
+  const [apiList, setApiList] = useState<any[]>([]);
+  const [selectedApi, setSelectedApi] = useState<number | null>(null);
+
+  const [template, setTemplate] = useState("");
+  const [payloadText, setPayloadText] = useState("{}");
+  const [preview, setPreview] = useState("");
+  const [error, setError] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  // Load API list
+  useEffect(() => {
+    Api.listApis()
+      .then((list) => {
+        setApiList(list || []);
+        const paramId = searchParams.get("apiId");
+        if (paramId) {
+          const idNum = Number(paramId);
+          if (!Number.isNaN(idNum)) {
+            setSelectedApi(idNum);
+          }
+        }
+      })
+      .catch(() => setApiList([]));
+  }, [searchParams]);
+
+  // Load template + sample response when API selected
+  useEffect(() => {
+    if (!selectedApi) return;
+
+    (async () => {
+      try {
+        const apiDetails = await Api.getEndpoint(selectedApi);
+        setTemplate(apiDetails.response_template || "");
+
+        const logs = await Api.listLogs(20);
+        const log = logs.find((x: any) => x.apiid === selectedApi);
+        if (log?.response_body) {
+          try {
+            setPayloadText(JSON.stringify(JSON.parse(log.response_body), null, 2));
+          } catch {
+            setPayloadText(String(log.response_body));
+          }
+        } else {
+          setPayloadText("{}");
+        }
+      } catch (err: any) {
+        setError(err?.message || "Failed to load API details.");
+      }
+    })();
+  }, [selectedApi]);
+
+  // Live preview
+  useEffect(() => {
     try {
-      const data = payloadText ? JSON.parse(payloadText) : {};
-      return { preview: renderPreview(template, data), error: null as string | null };
+      const json = payloadText ? JSON.parse(payloadText) : {};
+      const ctx: any =
+        json && typeof json === "object" && json !== null && "response" in json
+          ? json
+          : { response: json };
+
+      const formatted = template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
+        const path = token.trim().split(".");
+        let value: any = ctx;
+        for (const key of path) {
+          value = value?.[key];
+          if (value == null) return "{missing}";
+        }
+        return String(value);
+      });
+
+      setPreview(formatted);
+      setError("");
     } catch (err: any) {
-      return { preview: "", error: err?.message || "Invalid JSON" };
+      setError(err.message);
     }
   }, [template, payloadText]);
+
+  const handleSaveTemplate = async () => {
+    if (!selectedApi) return;
+    try {
+      setSavingTemplate(true);
+      await Api.updateApiTemplate(selectedApi, {
+        response_template: template,
+      });
+      alert("Template saved.");
+    } catch (e: any) {
+      alert(e?.message || "Failed to save template.");
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
 
   if (!loading && !canView) {
     return (
@@ -54,9 +117,25 @@ export default function FormatterPlayground() {
         <div>
           <h3 className="text-lg font-semibold">Formatter playground</h3>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Map API payloads to WhatsApp-friendly copy before saving them as <code>content</code> records referenced by <code>contentkeyid</code>.
+            Select an API, load its latest response, and preview your template using {"{{ tokens }}"}.
           </p>
         </div>
+      </div>
+
+      <div>
+        <label className="text-sm font-medium">Select API</label>
+        <select
+          className="mt-1 block w-full rounded-md border px-3 py-2"
+          value={selectedApi ?? ""}
+          onChange={(e) => setSelectedApi(e.target.value ? Number(e.target.value) : null)}
+        >
+          <option value="">— Choose API —</option>
+          {apiList.map((api: any) => (
+            <option key={api.api_id} value={api.api_id}>
+              {api.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <section className="rounded-xl border p-4 space-y-3">
@@ -67,6 +146,7 @@ export default function FormatterPlayground() {
               className="min-h-[180px] w-full rounded-md border px-3 py-2"
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
+              placeholder="e.g. Weather is {{response.current_weather.temperature}}°C"
             />
           </label>
           <label className="space-y-2 text-sm font-medium">
@@ -83,8 +163,20 @@ export default function FormatterPlayground() {
 
       <section className="rounded-xl border p-4 space-y-2">
         <p className="text-sm font-medium">Preview</p>
-        <div className="rounded-lg bg-muted px-3 py-4 text-sm">{preview || "—"}</div>
+        <div className="rounded-lg bg-muted px-3 py-4 text-sm whitespace-pre-line">
+          {preview || "—"}
+        </div>
       </section>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          disabled={!selectedApi || savingTemplate}
+          onClick={handleSaveTemplate}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+        >
+          {savingTemplate ? "Saving..." : "Save template"}
+        </button>
+      </div>
     </div>
   );
 }

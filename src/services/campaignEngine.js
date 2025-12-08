@@ -1,15 +1,23 @@
-import prisma from "../config/prismaClient.js";
+// services/campaignEngine.js
 
-/** @typedef {"text" | "button" | "list"} EngineMessageType */
+import prisma from "../config/prismaClient.js";
+import { dispatchEndpoint } from "./integrationService.js";
+
+/** @typedef {"text" | "button" | "list" | "location"} EngineMessageType */
 /** @typedef {"message" | "choice" | "input" | "api" | "end"} ActionType */
-/** @typedef {"none" | "choice" | "text" | "number" | "email"} ExpectedInput */
+/** @typedef {"none" | "choice" | "text" | "number" | "email" | "location"} ExpectedInput */
 
 const SESSION_EXPIRY_MINUTES = 30; // global idle timeout
 
 export async function handleIncomingMessage(args) {
-  const { fromPhone, text, type, payload } = args;
+  const { fromPhone, text, type, payload, enginePayload } = args;
   const contact = await findOrCreateContact(fromPhone);
-  const normalizedText = (text || "").trim();
+  const keywordTextTypes = ["text", "button", "list"];
+  const incomingTextValue = text || "";
+  const normalizedText =
+    keywordTextTypes.includes(type) && text
+      ? text.trim()
+      : "";
 
   if (normalizedText.startsWith("/")) {
     return handleSystemCommand({ contact, command: normalizedText });
@@ -46,9 +54,10 @@ export async function handleIncomingMessage(args) {
       return continueCampaignSession({
         contact,
         session: activeForCampaign,
-        incomingText: normalizedText,
+        incomingText: incomingTextValue,
         type,
         payload,
+        enginePayload,
       });
     }
 
@@ -72,9 +81,10 @@ export async function handleIncomingMessage(args) {
       const result = await continueCampaignSession({
         contact,
         session: revived,
-        incomingText: normalizedText,
+        incomingText: incomingTextValue,
         type,
         payload,
+        enginePayload,
       });
 
       return { outbound: [resumeNotice, ...(result?.outbound || [])] };
@@ -94,10 +104,37 @@ export async function handleIncomingMessage(args) {
     return continueCampaignSession({
       contact,
       session,
-      incomingText: normalizedText,
+      incomingText: incomingTextValue,
       type,
       payload,
+      enginePayload,
     });
+  }
+
+  // If there is an expired session, revive it and continue from last checkpoint.
+  const expiredSession = await findExpiredSession(contact.contact_id);
+  if (expiredSession) {
+    const revived = await prisma.campaign_session.update({
+      where: { campaign_session_id: expiredSession.campaign_session_id },
+      data: { session_status: "ACTIVE", last_active_at: new Date() },
+      include: { campaign: true },
+    });
+
+    const resumeNotice = {
+      to: contact.phone_num,
+      content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
+    };
+
+    const result = await continueCampaignSession({
+      contact,
+      session: revived,
+      incomingText: incomingTextValue,
+      type,
+      payload,
+      enginePayload,
+    });
+
+    return { outbound: [resumeNotice, ...(result?.outbound || [])] };
   }
 
   return showMainMenuWithUnknownKeyword(contact, normalizedText);
@@ -285,6 +322,7 @@ async function continueCampaignSession({
   incomingText,
   type,
   payload,
+  enginePayload,
 }) {
   let stepId = session.current_step_id;
 
@@ -353,9 +391,14 @@ async function continueCampaignSession({
     case "choice":
       return runChoiceStep({ contact, session, step, incomingText, type, payload });
     case "input":
-      return runInputStep({ contact, session, step, incomingText });
+      return runInputStep({ contact, session, step, incomingText, type, payload });
     case "api": {
-      const apiResult = await runApiStep({ contact, session, step });
+      const apiResult = await runApiStep({
+        contact,
+        session,
+        step,
+        lastAnswer: null,
+      });
       if (!apiResult.nextStepId) {
         await prisma.campaign_session.update({
           where: { campaign_session_id: session.campaign_session_id },
@@ -479,8 +522,8 @@ async function runChoiceStep({
   return runStepAndReturnMessages({ contact, session, step: nextStep });
 }
 
-async function runInputStep({ contact, session, step, incomingText }) {
-  const value = incomingText.trim();
+async function runInputStep({ contact, session, step, incomingText, type, payload }) {
+  let value = (incomingText || "").trim();
   let isValid = true;
 
   switch (step.expected_input) {
@@ -490,6 +533,20 @@ async function runInputStep({ contact, session, step, incomingText }) {
     case "email":
       isValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
       break;
+    case "location": {
+      const loc = extractLocationFromPayload(payload);
+      if (loc) {
+        // Store as JSON so integrationService can parse and use it
+        value = JSON.stringify({
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+        });
+        isValid = true;
+      } else {
+        isValid = false;
+      }
+      break;
+    }
     case "text":
     default:
       // Require non-empty and not purely numeric for "text" input
@@ -509,7 +566,9 @@ async function runInputStep({ contact, session, step, incomingText }) {
   });
 
   if (!isValid) {
-    const errorText = step.error_message || "Invalid input. Please try again.";
+    const errorText =
+      step.error_message ||
+      "Invalid input. Please try again.";
     await prisma.campaign_session.update({
       where: { campaign_session_id: session.campaign_session_id },
       data: { current_step_id: step.step_id, last_active_at: new Date() },
@@ -534,7 +593,11 @@ async function runInputStep({ contact, session, step, incomingText }) {
   if (!nextStepId || step.is_end_step) {
     await prisma.campaign_session.update({
       where: { campaign_session_id: session.campaign_session_id },
-      data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
+      data: {
+        session_status: "COMPLETED",
+        current_step_id: null,
+        last_active_at: new Date(),
+      },
     });
     return {
       outbound: [
@@ -563,30 +626,73 @@ async function runInputStep({ contact, session, step, incomingText }) {
   return runStepAndReturnMessages({ contact, session, step: nextStep });
 }
 
-async function runApiStep({ contact, session, step }) {
+async function runApiStep({ contact, session, step, lastAnswer }) {
   if (!step.api_id) {
+    console.warn("[flowEngine] API step has no api_id", { stepId: step.step_id });
     return { outbound: [], nextStepId: step.next_step_id };
   }
 
-  const api = await prisma.api.findUnique({
-    where: { api_id: step.api_id },
-  });
-  const params = await prisma.api_parameter.findMany({
-    where: { api_id: step.api_id },
-  });
-
-  if (!api) {
-    return { outbound: [], nextStepId: step.next_step_id };
+  // If lastAnswer is not provided, look up the last valid response in this session
+  let effectiveLastAnswer = lastAnswer || null;
+  if (!effectiveLastAnswer && session?.campaign_session_id) {
+    effectiveLastAnswer = await prisma.campaign_response.findFirst({
+      where: {
+        session_id: session.campaign_session_id,
+        is_valid: true,
+      },
+      orderBy: { created_at: "desc" },
+    });
   }
 
-  // TODO: build URL, headers, body from api + params + contact/campaign/session context
-  // TODO: perform HTTP request (using fetch/axios) and log into api_log
-  // For now, simulate success:
-  const isSuccess = true;
+  const vars = {
+    contact,
+    campaign: session?.campaign || { campaign_id: session.campaign_id },
+    session,
+    lastAnswer: effectiveLastAnswer,
+  };
 
-  const targetStepId = isSuccess ? step.next_step_id : step.failure_step_id;
+  let result = null;
+  let ok = false;
+  let status = 500;
+  let apiPayload;
+  let apiError;
+
+  try {
+    // Note: we tag the source so integrationService can log into api_log
+    result = await dispatchEndpoint(step.api_id, vars, {
+      source: "campaign_step",
+    });
+    ok = !!result?.ok;
+    status = result?.status ?? status;
+    apiPayload = result?.payload;
+  } catch (err) {
+    apiError = err?.message || "API call failed";
+    console.error("[flowEngine] API step failed", {
+      stepId: step.step_id,
+      apiId: step.api_id,
+      error: apiError,
+    });
+  }
+
   const outbound = [];
   if (step.prompt_text || step.media_url) {
+
+  // Decide the MAIN message text:
+  // 1) use payload.formattedText if provided by integration
+  // 2) else use step.prompt_text (e.g. admin override)
+  // 3) else simple generic fallback
+  const formattedText =
+    (apiPayload && typeof apiPayload.formattedText === "string"
+      ? apiPayload.formattedText
+      : null) || null;
+
+  const baseText =
+    formattedText ||
+    step.prompt_text ||
+    "Done.";
+
+  if (baseText || step.media_url) {
+    const msg = { to: contact.phone_num, content: baseText };
     const mediaPayload = buildMediaWaPayload(step);
     const msg = withStepContext({
       base: {
@@ -600,7 +706,39 @@ async function runApiStep({ contact, session, step }) {
     });
     outbound.push(msg);
   }
-  return { outbound, nextStepId: targetStepId };
+
+  // Decide next step:
+  // - on success: next_step_id
+  // - on failure: failure_step_id if set, otherwise null (end)
+  const hasFailureStep = !!step.failure_step_id;
+  const targetStepId = ok
+    ? step.next_step_id
+    : hasFailureStep
+      ? step.failure_step_id
+      : null;
+
+  // If no branch AND the call failed AND we have an error_message,
+  // send that as a follow-up clarification.
+  if (!ok && !hasFailureStep && step.error_message) {
+    outbound.push({
+      to: contact.phone_num,
+      content: step.error_message,
+    });
+  }
+
+  return {
+    outbound,
+    nextStepId: targetStepId,
+    integration: {
+      lastApi: {
+        apiId: step.api_id,
+        ok,
+        status,
+        ...(apiPayload !== undefined ? { payload: apiPayload } : {}),
+        ...(apiError ? { error: apiError } : {}),
+      },
+    },
+  };
 }
 
 async function runEndStep({ contact, session, step }) {
@@ -631,7 +769,12 @@ async function runStepAndReturnMessages({ contact, session, step }) {
     const isEnd = current.is_end_step || current.next_step_id == null;
 
     if (current.action_type === "api") {
-      const apiResult = await runApiStep({ contact, session, step: current });
+      const apiResult = await runApiStep({
+        contact,
+        session,
+        step: current,
+        lastAnswer: null,
+      });
       outbound.push(...apiResult.outbound);
 
       if (!apiResult.nextStepId) {
@@ -913,6 +1056,22 @@ function extractChoiceCodeFromPayload(payload) {
     return null;
   } catch (e) {
     console.error("[ENGINE] extractChoiceCodeFromPayload error", e);
+    return null;
+  }
+}
+
+function extractLocationFromPayload(payload) {
+  try {
+    const entry = payload?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const msg = value?.messages?.[0];
+    if (!msg || msg.type !== "location" || !msg.location) return null;
+    const { latitude, longitude } = msg.location;
+    if (typeof latitude !== "number" || typeof longitude !== "number") return null;
+    return { latitude, longitude };
+  } catch (e) {
+    console.error("[ENGINE] extractLocationFromPayload error", e);
     return null;
   }
 }

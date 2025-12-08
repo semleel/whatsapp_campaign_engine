@@ -70,6 +70,16 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function updateApiTemplateRequest(
+  apiId: number | string,
+  payload: { response_template: string }
+) {
+  return http<{ ok: boolean; api: any }>(`/api/integration/apis/${apiId}/template`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 // ------------------------------------------------------------------
 // Types
 // ------------------------------------------------------------------
@@ -176,6 +186,15 @@ export const Api = {
     }),
 
   listApis: () => http<ApiListItem[]>(`/api/integration/apis`),
+
+  // =========================================================
+  // Integration → update API response_template
+  // =========================================================
+  updateApiTemplate: (apiId: number | string, payload: { response_template: string }) =>
+    updateApiTemplateRequest(apiId, payload),
+
+  updateResponseTemplate: (apiId: number | string, response_template: string) =>
+    updateApiTemplateRequest(apiId, { response_template }),
 
   getCampaignWithSteps: (id: number | string) =>
     http<CampaignWithStepsResponse>(`/api/campaign/${id}/steps`),

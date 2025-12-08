@@ -56,6 +56,7 @@ function mapApiToEndpointConfig(apiRow, paramRows = []) {
     apiid: apiRow.api_id,
     name: apiRow.name,
     description: apiRow.description,
+    response_template: apiRow.response_template,
     base_url: apiRow.base_url,
     path: apiRow.path,
     method: apiRow.method,
