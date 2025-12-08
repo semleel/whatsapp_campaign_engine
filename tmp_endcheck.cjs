@@ -1,0 +1,1 @@
+const fs=require('fs'); const text=fs.readFileSync('src/services/campaignEngine.js','utf8'); console.log('length', text.length); console.log('endswith brace', text.trim().endsWith('}')); console.log('tail:\n', text.slice(-200));

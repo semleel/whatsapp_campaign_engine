@@ -257,12 +257,21 @@ async function handleSystemCommand({ contact, command }) {
 async function findCampaignByKeyword(text) {
   if (!text) return null;
   const normalized = text.toLowerCase();
+  const now = new Date();
+  const allowedStatuses = ["Active", "On Going"];
 
   return prisma.campaign.findFirst({
     where: {
-      status: { in: ["On Going", "Upcoming"] },
-      is_active: true,
+      // Keep only active/ongoing campaigns (respect status)
+      status: { in: allowedStatuses },
+      // allow null or true; explicitly false means off
+      is_active: { not: false },
       OR: [{ is_deleted: false }, { is_deleted: null }],
+      // Ensure we are within the schedule window if set
+      AND: [
+        { OR: [{ start_at: null }, { start_at: { lte: now } }] },
+        { OR: [{ end_at: null }, { end_at: { gte: now } }] },
+      ],
       campaign_keyword: {
         some: { value: normalized },
       },
@@ -488,9 +497,7 @@ async function runChoiceStep({
     };
   }
 
-  const nextStepId = matchedChoice.next_step_id || step.next_step_id;
-  // For choices we now only respect the specific button's next_step_id
-  // (do not fall back to the step-level next_step_id).
+  // For choices we only respect the specific button's next_step_id
   const targetStepId = matchedChoice.next_step_id;
 
   if (!targetStepId) {
@@ -692,12 +699,11 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
     "Done.";
 
   if (baseText || step.media_url) {
-    const msg = { to: contact.phone_num, content: baseText };
     const mediaPayload = buildMediaWaPayload(step);
     const msg = withStepContext({
       base: {
         to: contact.phone_num,
-        content: step.prompt_text || "",
+        content: baseText || "",
         ...(mediaPayload ? { waPayload: mediaPayload } : {}),
       },
       step,
@@ -739,6 +745,7 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
       },
     },
   };
+}
 }
 
 async function runEndStep({ contact, session, step }) {

@@ -273,13 +273,13 @@ export type CampaignUpdatePayload = {
 
 // Campaign engine enums/types
 export type ActionType = "message" | "choice" | "input" | "api" | "end";
-export type JumpMode = "next" | "custom";
 export type ExpectedInput = "none" | "choice" | "text" | "number" | "email" | "location";
 export type InputType = "text" | "number" | "email" | "location";
 export type ValidationMode = "none" | "numeric" | "email";
 
 export type CampaignStep = {
     step_id: number;
+    client_id?: number;
     campaign_id: number;
     step_number: number;
     step_code: string | null;
@@ -289,9 +289,7 @@ export type CampaignStep = {
     action_type: ActionType;
     api_id: number | null;
     next_step_id: number | null;
-    next_step_number?: number | null;
     failure_step_id: number | null;
-    failure_step_number?: number | null;
     is_end_step: boolean;
     media_url?: string | null;
     template_source_id?: number | null;
@@ -310,11 +308,7 @@ export type CampaignStepChoice = {
 
 export type CampaignStepWithChoices = CampaignStep & {
     input_type?: InputType | null;
-    // Optional UI-only jump mode: "next" = natural next, "custom" = jump to specific step number
-    jump_mode?: JumpMode;
     template?: TemplateDetail | null;
-    next_step_number?: number | null;
-    failure_step_number?: number | null;
     validation_mode?: ValidationMode;
     campaign_step_choice: CampaignStepChoice[];
 };

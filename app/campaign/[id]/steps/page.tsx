@@ -52,6 +52,7 @@ type TemplateListItem = {
 type StepFormState = CampaignStepWithChoices & {
   message_mode?: "custom" | "template";
   local_id: string;
+  client_id: number;
 };
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
@@ -84,6 +85,7 @@ const resolveMessageMode = (step: StepFormState) =>
 
 const newStep = (campaignId: number, order: number): StepFormState => ({
   local_id: generateLocalId(),
+  client_id: -Math.floor(Date.now() + Math.random() * 100000),
   step_id: 0,
   campaign_id: campaignId,
   step_number: order,
@@ -96,8 +98,7 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
   api_id: null,
   next_step_id: null,
   failure_step_id: null,
-  is_end_step: false,
-  jump_mode: "next",
+  is_end_step: true,
   media_url: null,
   template_source_id: null,
   message_mode: "custom",
@@ -189,9 +190,6 @@ export default function CampaignStepsPage() {
 
   const mapStepsForUi = (apiSteps: CampaignStepWithChoices[]): StepFormState[] => {
     const rawSteps = [...(apiSteps || [])].sort((a, b) => a.step_number - b.step_number);
-    const idToStepNumber = new Map(
-      rawSteps.map((st, index) => [st.step_id, index + 1])
-    );
 
     return rawSteps.map((step, index) => {
       let inputType: InputType | null = null;
@@ -209,37 +207,14 @@ export default function CampaignStepsPage() {
         expected = "none";
       }
 
-      const nextNumber =
-        step.next_step_id && idToStepNumber.has(step.next_step_id)
-          ? idToStepNumber.get(step.next_step_id)!
-          : null;
-      const failureNumber =
-        step.failure_step_id && idToStepNumber.has(step.failure_step_id)
-          ? idToStepNumber.get(step.failure_step_id)!
-          : null;
-      const mappedChoices = (step.campaign_step_choice || []).map((c) => ({
-        ...c,
-        next_step_id:
-          c.next_step_id && idToStepNumber.has(c.next_step_id)
-            ? idToStepNumber.get(c.next_step_id)!
-            : null,
-      }));
-
-      const jump_mode =
-        (step as any).jump_mode ??
-        (step as any).jumpMode ??
-        (step.next_step_id ? "custom" : "next");
-
       return {
         ...step,
         local_id: step.step_id ? `step-${step.step_id}` : generateLocalId(),
+        client_id: ((step as any).client_id ?? step.step_id) ?? -(index + 1),
         step_number: index + 1,
-        next_step_id: nextNumber,
-        failure_step_id: failureNumber,
-        campaign_step_choice: mappedChoices,
+        campaign_step_choice: step.campaign_step_choice || [],
         input_type: inputType,
         expected_input: expected,
-        jump_mode,
         template: (step as any).template ?? null,
         template_source_id: (step as any).template_source_id ?? null,
         message_mode:
@@ -283,6 +258,15 @@ export default function CampaignStepsPage() {
     return step.campaign_step_choice
       .map((c) => `${c.choice_code || ""}${c.label ? ` (${c.label})` : ""}`)
       .join(", ");
+  };
+
+  const findStepByRef = (ref?: number | null) =>
+    ref == null ? null : steps.find((s) => (s.step_id || s.client_id) === ref) || null;
+
+  const formatStepLabel = (step?: StepFormState | null) => {
+    if (!step) return null;
+    const labelText = step.prompt_text?.trim() || step.step_code || "Step";
+    return `Step ${step.step_number}${labelText ? ` – ${labelText}` : ""}`;
   };
 
   const updateStep = (index: number, patch: Partial<StepFormState>) => {
@@ -337,7 +321,7 @@ export default function CampaignStepsPage() {
   };
 
   const handleRemoveStep = (index: number) => {
-    setSteps((prev) => prev.filter((_, i) => i !== index));
+    setSteps((prev) => prev.filter((_, i) => i !== index).map((s, idx) => ({ ...s, step_number: idx + 1 })));
     setExpandedIndex(null);
   };
 
@@ -350,31 +334,10 @@ export default function CampaignStepsPage() {
       const newIndex = prev.findIndex((s) => s.local_id === over.id);
       if (oldIndex < 0 || newIndex < 0) return prev;
 
-      const oldNumberToLocal = new Map(
-        prev.map((step, idx) => [(step.step_number ?? idx + 1) as number, step.local_id])
-      );
-
       const reordered = arrayMove(prev, oldIndex, newIndex);
-      const newNumberByLocal = new Map(
-        reordered.map((step, idx) => [step.local_id, idx + 1])
-      );
-
-      const remapNumber = (value: number | null | undefined) => {
-        if (value === null || typeof value === "undefined") return null;
-        const targetLocal = oldNumberToLocal.get(Number(value));
-        if (!targetLocal) return value;
-        return newNumberByLocal.get(targetLocal) ?? value;
-      };
-
       const updated = reordered.map((step, idx) => ({
         ...step,
         step_number: idx + 1,
-        next_step_id: remapNumber(step.next_step_id),
-        failure_step_id: remapNumber(step.failure_step_id),
-        campaign_step_choice: (step.campaign_step_choice || []).map((c) => ({
-          ...c,
-          next_step_id: remapNumber(c.next_step_id),
-        })),
       }));
 
       const activeLocal = expandedIndex !== null ? prev[expandedIndex]?.local_id : null;
@@ -522,7 +485,9 @@ export default function CampaignStepsPage() {
       await showCenteredAlert("You do not have permission to update campaigns.");
       return;
     }
-    // Validate unique step_code
+    const idSet = new Set(steps.map((s) => s.step_id || s.client_id));
+
+    // Validate routing + unique step_code
     const seen = new Set<string>();
     for (let i = 0; i < steps.length; i += 1) {
       const code = (steps[i].step_code || `STEP_${i + 1}`).trim().toLowerCase();
@@ -532,6 +497,30 @@ export default function CampaignStepsPage() {
         return;
       }
       seen.add(code);
+
+      const step = steps[i];
+      if (step.action_type !== "choice") {
+        if (step.is_end_step) {
+          continue;
+        }
+        if (!step.next_step_id || !idSet.has(step.next_step_id)) {
+          setValidationError("Each non-choice step must either jump to a valid step or end the campaign.");
+          return;
+        }
+      }
+      if (step.action_type === "api" && step.failure_step_id && !idSet.has(step.failure_step_id)) {
+        setValidationError("API failure routing must point to a valid step.");
+        return;
+      }
+      if (step.action_type === "choice") {
+        const badChoice = (step.campaign_step_choice || []).find(
+          (c) => c.next_step_id && !idSet.has(c.next_step_id)
+        );
+        if (badChoice) {
+          setValidationError("Each choice must jump to a valid step or be left blank.");
+          return;
+        }
+      }
     }
     setValidationError(null);
     setSaving(true);
@@ -541,6 +530,9 @@ export default function CampaignStepsPage() {
         const mode = resolveMessageMode(s);
         return {
           ...rest,
+          next_step_id: s.action_type === "choice" ? null : s.is_end_step ? null : s.next_step_id ?? null,
+          failure_step_id: s.action_type === "api" ? s.failure_step_id ?? null : null,
+          is_end_step: !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
@@ -565,20 +557,21 @@ export default function CampaignStepsPage() {
     expandedIndex !== null && expandedIndex >= 0 && expandedIndex < steps.length
       ? steps[expandedIndex]
       : steps[0] || null;
-  const activeStepNumber = activeStep ? steps.indexOf(activeStep) + 1 : null;
+  const activeStepNumber = activeStep?.step_number ?? null;
   const nextLabel = (() => {
     if (!activeStep) return "";
     if (activeStep.action_type === "choice") return "Per choice";
-    if (activeStep.is_end_step) return "End";
-    if (activeStep.next_step_id) return `Step ${activeStep.next_step_id}`;
-    if (activeStepNumber && activeStepNumber < steps.length) return `Step ${activeStepNumber + 1}`;
-    return "End";
+    if (activeStep.is_end_step) return "END";
+    const target = findStepByRef(activeStep.next_step_id);
+    return formatStepLabel(target) ?? "Jump (missing target)";
   })();
   const failureLabel =
     activeStep?.action_type === "api"
-      ? activeStep.failure_step_id
-        ? `Step ${activeStep.failure_step_id}`
-        : "None"
+      ? (() => {
+          const target = findStepByRef(activeStep.failure_step_id);
+          if (activeStep.failure_step_id && !target) return "Missing target";
+          return formatStepLabel(target) ?? "None";
+        })()
       : "-";
 
   if (!privLoading && !canView) {
@@ -699,7 +692,6 @@ export default function CampaignStepsPage() {
                                                                       if (nextAction === "choice") {
                                                                         extra.next_step_id = null;
                                                                         extra.is_end_step = false;
-                                                                        extra.jump_mode = "next";
                                                                       }
                                                                       updateStep(idx, {
                                                                         action_type: nextAction,
@@ -735,78 +727,80 @@ export default function CampaignStepsPage() {
                                 
                                                                 {/* Step-level jump configuration (NOT for choice steps) */}
                                                                 {s.action_type !== "choice" && (
-                                                                  <label className="space-y-1 text-sm font-medium md:col-span-2">
-                                                                    <span>On success (jump)</span>
-                                                                      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-                                                                      <div className="flex items-center gap-2">
+                                                                  <div className="space-y-2 text-sm font-medium md:col-span-2">
+                                                                    <span>On success</span>
+                                                                    <div className="space-y-2 text-sm font-normal text-muted-foreground">
+                                                                      <label className="inline-flex items-center gap-2">
                                                                         <input
                                                                           type="radio"
                                                                           name={`jump-mode-${idx}`}
-                                                                          checked={s.jump_mode !== "custom" && !s.is_end_step}
+                                                                          className="h-3 w-3"
+                                                                          checked={!s.is_end_step}
                                                                           onChange={() => {
-                                                                            // Next step in natural order: treat as no explicit jump
+                                                                            const firstTarget = steps.find(
+                                                                              (_step, sIdx) => sIdx !== idx
+                                                                            );
                                                                             updateStep(idx, {
-                                                                              next_step_id: null,
                                                                               is_end_step: false,
-                                                                              jump_mode: "next",
+                                                                              next_step_id:
+                                                                                s.next_step_id ??
+                                                                                (firstTarget
+                                                                                  ? firstTarget.step_id || firstTarget.client_id
+                                                                                  : null),
                                                                             });
                                                                           }}
-                                                                          className="h-3 w-3"
                                                                         />
-                                                                        <span>Next step in order</span>
-                                                                      </div>
-                                                                      <div className="flex items-center gap-2">
-                                                                        <input
-                                                                          type="radio"
-                                                                          name={`jump-mode-${idx}`}
-                                                                          checked={s.jump_mode === "custom" && !!s.next_step_id && !s.is_end_step}
-                                                                          onChange={() => {
-                                                                            const defaultJump = idx + 2 <= steps.length ? idx + 2 : null;
-                                                                            updateStep(idx, {
-                                                                              next_step_id: defaultJump,
-                                                                              is_end_step: false,
-                                                                              jump_mode: "custom",
-                                                                            });
-                                                                          }}
-                                                                          className="h-3 w-3"
-                                                                        />
-                                                                        <span>Jump to step number:</span>
-                                                                        <input
-                                                                          type="number"
-                                                                          className="w-20 rounded border px-2 py-1"
+                                                                        <span>Jump to step</span>
+                                                                      </label>
+                                                                      {!s.is_end_step ? (
+                                                                        <select
+                                                                          className="w-full rounded border px-3 py-2"
                                                                           value={s.next_step_id ?? ""}
                                                                           onChange={(e) => {
                                                                             const val = e.target.value ? Number(e.target.value) : null;
                                                                             updateStep(idx, {
                                                                               next_step_id: val,
                                                                               is_end_step: false,
-                                                                              jump_mode: val ? "custom" : "next",
                                                                             });
                                                                           }}
-                                                                          disabled={!s.next_step_id}
-                                                                        />
-                                                                      </div>
-                                                                      <div className="flex items-center gap-2 mt-1">
+                                                                        >
+                                                                          <option value="">Select a target step</option>
+                                                                          {steps
+                                                                            .filter((st) => st.local_id !== s.local_id)
+                                                                            .map((st) => {
+                                                                              const value = st.step_id || st.client_id;
+                                                                              const labelText =
+                                                                                st.prompt_text?.trim() ||
+                                                                                st.step_code ||
+                                                                                "Untitled step";
+                                                                              return (
+                                                                                <option
+                                                                                  key={`${st.local_id}-target`}
+                                                                                  value={value}
+                                                                                >
+                                                                                  {`Step ${st.step_number} – ${labelText}`}
+                                                                                </option>
+                                                                              );
+                                                                            })}
+                                                                        </select>
+                                                                      ) : null}
+                                                                      <label className="inline-flex items-center gap-2">
                                                                         <input
-                                                                          type="checkbox"
+                                                                          type="radio"
+                                                                          name={`jump-mode-${idx}`}
                                                                           className="h-3 w-3"
                                                                           checked={!!s.is_end_step}
-                                                                          onChange={(e) => {
-                                                                            if (e.target.checked) {
-                                                                              updateStep(idx, {
-                                                                                is_end_step: true,
-                                                                                next_step_id: null,
-                                                                                jump_mode: "next",
-                                                                              });
-                                                                            } else {
-                                                                              updateStep(idx, { is_end_step: false });
-                                                                            }
-                                                                          }}
+                                                                          onChange={() =>
+                                                                            updateStep(idx, {
+                                                                              is_end_step: true,
+                                                                              next_step_id: null,
+                                                                            })
+                                                                          }
                                                                         />
-                                                                        <span>This is the last step (end campaign)</span>
-                                                                      </div>
+                                                                        <span>End campaign</span>
+                                                                      </label>
                                                                     </div>
-                                                                  </label>
+                                                                  </div>
                                                                 )}
                                                               </div>
                                 
@@ -996,14 +990,17 @@ export default function CampaignStepsPage() {
                                                                       }
                                                                     >
                                                                       <option value="">None</option>
-                                                                      {steps.map((st, si) => (
-                                                                        <option
-                                                                          key={`fail-${st.step_id ?? `idx-${si}`}`}
-                                                                          value={st.step_number || si + 1}
-                                                                        >
-                                                                          {si + 1} - {st.step_code || st.prompt_text || "Step"}
-                                                                        </option>
-                                                                      ))}
+                                                                      {steps.map((st, si) => {
+                                                                        const value = st.step_id || st.client_id;
+                                                                        return (
+                                                                          <option
+                                                                            key={`fail-${st.local_id}`}
+                                                                            value={value}
+                                                                          >
+                                                                            {`Step ${st.step_number} – ${st.step_code || st.prompt_text || "Step"}`}
+                                                                          </option>
+                                                                        );
+                                                                      })}
                                                                     </select>
                                                                   </label>
                                                                 </div>
@@ -1063,18 +1060,32 @@ export default function CampaignStepsPage() {
                                                                           </div>
                                                                           <div className="grid gap-2 md:grid-cols-2 items-center">
                                                                             <label className="text-sm font-medium space-y-1">
-                                                                              <span>Next step number (jump to within this campaign)</span>
-                                                                              <input
-                                                                                type="number"
+                                                                              <span>Next step (within this campaign)</span>
+                                                                              <select
+                                                                                className="w-full rounded border px-3 py-2"
                                                                                 value={choice.next_step_id ?? ""}
                                                                                 onChange={(e) =>
                                                                                   updateChoice(idx, cidx, {
                                                                                     next_step_id: e.target.value ? Number(e.target.value) : null,
                                                                                   })
                                                                                 }
-                                                                                className="w-full rounded border px-3 py-2"
-                                                                                placeholder="e.g. 4 (next step in this campaign)"
-                                                                              />
+                                                                              >
+                                                                                <option value="">Select a target step</option>
+                                                                                {steps
+                                                                                  .filter((st) => st.local_id !== s.local_id)
+                                                                                  .map((st) => {
+                                                                                    const value = st.step_id || st.client_id;
+                                                                                    const labelText =
+                                                                                      st.prompt_text?.trim() ||
+                                                                                      st.step_code ||
+                                                                                      "Untitled step";
+                                                                                    return (
+                                                                                      <option key={`${st.local_id}-choice-target`} value={value}>
+                                                                                        {`Step ${st.step_number} – ${labelText}`}
+                                                                                      </option>
+                                                                                    );
+                                                                                  })}
+                                                                              </select>
                                                                             </label>
                                                                             <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
                                                                               <input
@@ -1134,12 +1145,21 @@ export default function CampaignStepsPage() {
                                                         <td className="px-3 py-2 text-muted-foreground">
                                                           {s.action_type === "choice"
                                                             ? "Per choice"
-                                                            : idx === steps.length - 1
+                                                            : s.is_end_step
                                                             ? "END"
-                                                            : `Next (step ${idx + 2})`}
+                                                            : (() => {
+                                                                const target = findStepByRef(s.next_step_id);
+                                                                const label = formatStepLabel(target);
+                                                                return label ? `Jump (${label})` : "Jump (missing target)";
+                                                              })()}
                                                         </td>
                                                         <td className="px-3 py-2 text-muted-foreground">
-                              {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
+                              {(() => {
+                                if (s.action_type !== "api") return "-";
+                                if (!s.failure_step_id) return "None";
+                                const target = findStepByRef(s.failure_step_id);
+                                return formatStepLabel(target) ?? "Missing target";
+                              })()}
                             </td>
                           
                             </>
