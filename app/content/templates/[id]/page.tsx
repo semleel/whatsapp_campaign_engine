@@ -44,6 +44,7 @@ type TemplateData = {
   expiresat?: string | null;
   placeholders?: Record<string, unknown> | null;
   buttons: ButtonItem[];
+  footerText?: string | null;
   headerType?: "none" | "text" | "media";
   headerText?: string | null;
   headerMediaType?: "image" | "video" | "document";

@@ -2,9 +2,26 @@
 
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Api } from "@/lib/client";
 import type {
   ActionType,
@@ -34,9 +51,12 @@ type TemplateListItem = {
 
 type StepFormState = CampaignStepWithChoices & {
   message_mode?: "custom" | "template";
+  local_id: string;
 };
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
+
+const generateLocalId = () => `step-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const looksLikeImage = (url?: string | null) =>
   !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
@@ -63,6 +83,7 @@ const resolveMessageMode = (step: StepFormState) =>
   (step.message_mode ?? (step.template_source_id ? "template" : "custom")) as "custom" | "template";
 
 const newStep = (campaignId: number, order: number): StepFormState => ({
+  local_id: generateLocalId(),
   step_id: 0,
   campaign_id: campaignId,
   step_number: order,
@@ -83,6 +104,72 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
   campaign_step_choice: [],
 });
 
+type SortableStepRowProps = {
+  step: StepFormState;
+  index: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+  detailContent: React.ReactNode;
+  children: React.ReactNode;
+};
+
+function SortableStepRow({
+  step,
+  index,
+  isExpanded,
+  onToggle,
+  detailContent,
+  children,
+}: SortableStepRowProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: step.local_id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <Fragment>
+      <tr
+        ref={setNodeRef}
+        style={style}
+        className={`border-t cursor-pointer hover:bg-muted/40 ${
+          isExpanded ? "bg-muted/40" : ""
+        } ${isDragging ? "bg-emerald-50 shadow-sm" : ""}`}
+        onClick={onToggle}
+      >
+        <td className="px-2 py-2 align-middle">
+          <button
+            type="button"
+            ref={setActivatorNodeRef}
+            {...attributes}
+            {...listeners}
+            onClick={(e) => e.stopPropagation()}
+            className="flex h-8 w-8 items-center justify-center rounded border bg-white text-lg leading-none text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+            aria-label={`Reorder step ${index + 1}`}
+          >
+            ⋮⋮
+          </button>
+        </td>
+        {children}
+      </tr>
+      {isExpanded ? (
+        <tr className="border-t bg-muted/40">
+          <td colSpan={8}>{detailContent}</td>
+        </tr>
+      ) : null}
+    </Fragment>
+  );
+}
+
 export default function CampaignStepsPage() {
   const { id } = useParams<{ id: string }>();
   const { loading: privLoading, canView, canUpdate } = usePrivilege("campaigns");
@@ -95,12 +182,18 @@ export default function CampaignStepsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const mapStepsForUi = (apiSteps: CampaignStepWithChoices[]): StepFormState[] => {
     const rawSteps = [...(apiSteps || [])].sort((a, b) => a.step_number - b.step_number);
-    const idToStepNumber = new Map(rawSteps.map((st) => [st.step_id, st.step_number]));
+    const idToStepNumber = new Map(
+      rawSteps.map((st, index) => [st.step_id, index + 1])
+    );
 
-    return rawSteps.map((step) => {
+    return rawSteps.map((step, index) => {
       let inputType: InputType | null = null;
       let expected = step.expected_input;
       if (step.action_type === "input") {
@@ -139,6 +232,8 @@ export default function CampaignStepsPage() {
 
       return {
         ...step,
+        local_id: step.step_id ? `step-${step.step_id}` : generateLocalId(),
+        step_number: index + 1,
         next_step_id: nextNumber,
         failure_step_id: failureNumber,
         campaign_step_choice: mappedChoices,
@@ -244,6 +339,52 @@ export default function CampaignStepsPage() {
   const handleRemoveStep = (index: number) => {
     setSteps((prev) => prev.filter((_, i) => i !== index));
     setExpandedIndex(null);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setSteps((prev) => {
+      const oldIndex = prev.findIndex((s) => s.local_id === active.id);
+      const newIndex = prev.findIndex((s) => s.local_id === over.id);
+      if (oldIndex < 0 || newIndex < 0) return prev;
+
+      const oldNumberToLocal = new Map(
+        prev.map((step, idx) => [(step.step_number ?? idx + 1) as number, step.local_id])
+      );
+
+      const reordered = arrayMove(prev, oldIndex, newIndex);
+      const newNumberByLocal = new Map(
+        reordered.map((step, idx) => [step.local_id, idx + 1])
+      );
+
+      const remapNumber = (value: number | null | undefined) => {
+        if (value === null || typeof value === "undefined") return null;
+        const targetLocal = oldNumberToLocal.get(Number(value));
+        if (!targetLocal) return value;
+        return newNumberByLocal.get(targetLocal) ?? value;
+      };
+
+      const updated = reordered.map((step, idx) => ({
+        ...step,
+        step_number: idx + 1,
+        next_step_id: remapNumber(step.next_step_id),
+        failure_step_id: remapNumber(step.failure_step_id),
+        campaign_step_choice: (step.campaign_step_choice || []).map((c) => ({
+          ...c,
+          next_step_id: remapNumber(c.next_step_id),
+        })),
+      }));
+
+      const activeLocal = expandedIndex !== null ? prev[expandedIndex]?.local_id : null;
+      if (activeLocal) {
+        const nextIndex = updated.findIndex((s) => s.local_id === activeLocal);
+        setExpandedIndex(nextIndex >= 0 ? nextIndex : null);
+      }
+
+      return updated;
+    });
   };
 
   // Apply template: copy message/media and store source id
@@ -396,7 +537,7 @@ export default function CampaignStepsPage() {
     setSaving(true);
     try {
       const payload = steps.map((s, idx) => {
-        const { message_mode, template, ...rest } = s as StepFormState & { template?: any };
+        const { message_mode, template, local_id, ...rest } = s as StepFormState & { template?: any };
         const mode = resolveMessageMode(s);
         return {
           ...rest,
@@ -484,530 +625,542 @@ export default function CampaignStepsPage() {
             Step-by-step table
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr className="text-xs text-muted-foreground">
-                  <th className="px-3 py-2 text-left font-semibold">Step #</th>
-                  <th className="px-3 py-2 text-left font-semibold">Prompt message</th>
-                  <th className="px-3 py-2 text-left font-semibold">Input type</th>
-                  <th className="px-3 py-2 text-left font-semibold">Action type</th>
-                  <th className="px-3 py-2 text-left font-semibold">Guide / Choices</th>
-                  <th className="px-3 py-2 text-left font-semibold">On success</th>
-                  <th className="px-3 py-2 text-left font-semibold">On failure</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-3 text-muted-foreground">
-                      Loading...
-                    </td>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40">
+                  <tr className="text-xs text-muted-foreground">
+                    <th className="px-2 py-2 text-left font-semibold w-12">Move</th>
+                    <th className="px-3 py-2 text-left font-semibold">Step #</th>
+                    <th className="px-3 py-2 text-left font-semibold">Prompt message</th>
+                    <th className="px-3 py-2 text-left font-semibold">Input type</th>
+                    <th className="px-3 py-2 text-left font-semibold">Action type</th>
+                    <th className="px-3 py-2 text-left font-semibold">Guide / Choices</th>
+                    <th className="px-3 py-2 text-left font-semibold">On success</th>
+                    <th className="px-3 py-2 text-left font-semibold">On failure</th>
                   </tr>
-                ) : (
-                  steps.map((s, idx) => {
-                    const messageMode = resolveMessageMode(s);
-                    const stepTemplateId = s.template_source_id ?? null;
-                    const selectedTemplate = activeTemplates.find(
-                      (t) => getTemplateId(t) === stepTemplateId
-                    );
-                    const showInactiveTemplateOption =
-                      messageMode === "template" && stepTemplateId && !selectedTemplate;
+                </thead>
+                <SortableContext
+                  items={steps.map((step) => step.local_id)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <tbody>
+                    {loading ? (
+                      <tr>
+                        <td colSpan={8} className="px-3 py-3 text-muted-foreground">
+                          Loading...
+                        </td>
+                      </tr>
+                    ) : null}
+                    {!loading &&
+                      steps.map((s, idx) => {
+                        const messageMode = resolveMessageMode(s);
+                        const stepTemplateId = s.template_source_id ?? null;
+                        const selectedTemplate = activeTemplates.find(
+                          (t) => getTemplateId(t) === stepTemplateId
+                        );
+                        const showInactiveTemplateOption =
+                          messageMode === "template" && stepTemplateId && !selectedTemplate;
 
-                    return (
-                      <Fragment key={`step-${s.step_id ?? "new"}-${idx}`}>
-                        <tr
-                          className={`border-t cursor-pointer hover:bg-muted/40 ${
-                            expandedIndex === idx ? "bg-muted/40" : ""
-                          }`}
-                          onClick={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
+                        return (
+                          <SortableStepRow
+                            key={s.local_id}
+                            step={s}
+                            index={idx}
+                            isExpanded={expandedIndex === idx}
+                            onToggle={() => setExpandedIndex(expandedIndex === idx ? null : idx)}
+                            detailContent={
+                              expandedIndex === idx ? (
+                                <div className="space-y-4">
+                                                                <div className="flex justify-end">
+                                                                  <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveStep(idx)}
+                                                                    className="text-xs text-rose-600 hover:text-rose-700"
+                                                                  >
+                                                                    Remove step
+                                                                  </button>
+                                                                </div>
+                                                                <div className="grid gap-3 md:grid-cols-2">
+                                                                <label className="space-y-1 text-sm font-medium">
+                                                                  <span>Action type</span>
+                                                                  <select
+                                                                    className="w-full rounded border px-3 py-2"
+                                                                    value={s.action_type}
+                                                                    onChange={(e) => {
+                                                                      const nextAction = e.target.value as ActionType;
+                                                                      const nextInputType =
+                                                                        nextAction === "input" ? s.input_type || "text" : null;
+                                                                      // When switching TO a choice step, clear step-level next_step_id
+                                                                      const extra: Partial<CampaignStepWithChoices> = {};
+                                                                      if (nextAction === "choice") {
+                                                                        extra.next_step_id = null;
+                                                                        extra.is_end_step = false;
+                                                                        extra.jump_mode = "next";
+                                                                      }
+                                                                      updateStep(idx, {
+                                                                        action_type: nextAction,
+                                                                        input_type: nextInputType,
+                                                                        expected_input:
+                                                                          nextAction === "choice"
+                                                                            ? "choice"
+                                                                            : nextAction === "input"
+                                                                            ? (nextInputType as any)
+                                                                            : "none",
+                                                                        ...extra,
+                                                                      });
+                                                                    }}
+                                                                  >
+                                                                    {ACTION_OPTIONS.map((opt) => (
+                                                                      <option key={opt} value={opt}>
+                                                                        {opt}
+                                                                      </option>
+                                                                    ))}
+                                                                  </select>
+                                                                </label>
+                                
+                                                                <label className="space-y-1 text-sm font-medium">
+                                                                  <span>Step code</span>
+                                                                  <input
+                                                                    type="text"
+                                                                    className="w-full rounded border px-3 py-2"
+                                                                    value={s.step_code || ""}
+                                                                    onChange={(e) => updateStep(idx, { step_code: e.target.value })}
+                                                                    placeholder="e.g. WELCOME"
+                                                                  />
+                                                                </label>
+                                
+                                                                {/* Step-level jump configuration (NOT for choice steps) */}
+                                                                {s.action_type !== "choice" && (
+                                                                  <label className="space-y-1 text-sm font-medium md:col-span-2">
+                                                                    <span>On success (jump)</span>
+                                                                      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                                                                      <div className="flex items-center gap-2">
+                                                                        <input
+                                                                          type="radio"
+                                                                          name={`jump-mode-${idx}`}
+                                                                          checked={s.jump_mode !== "custom" && !s.is_end_step}
+                                                                          onChange={() => {
+                                                                            // Next step in natural order: treat as no explicit jump
+                                                                            updateStep(idx, {
+                                                                              next_step_id: null,
+                                                                              is_end_step: false,
+                                                                              jump_mode: "next",
+                                                                            });
+                                                                          }}
+                                                                          className="h-3 w-3"
+                                                                        />
+                                                                        <span>Next step in order</span>
+                                                                      </div>
+                                                                      <div className="flex items-center gap-2">
+                                                                        <input
+                                                                          type="radio"
+                                                                          name={`jump-mode-${idx}`}
+                                                                          checked={s.jump_mode === "custom" && !!s.next_step_id && !s.is_end_step}
+                                                                          onChange={() => {
+                                                                            const defaultJump = idx + 2 <= steps.length ? idx + 2 : null;
+                                                                            updateStep(idx, {
+                                                                              next_step_id: defaultJump,
+                                                                              is_end_step: false,
+                                                                              jump_mode: "custom",
+                                                                            });
+                                                                          }}
+                                                                          className="h-3 w-3"
+                                                                        />
+                                                                        <span>Jump to step number:</span>
+                                                                        <input
+                                                                          type="number"
+                                                                          className="w-20 rounded border px-2 py-1"
+                                                                          value={s.next_step_id ?? ""}
+                                                                          onChange={(e) => {
+                                                                            const val = e.target.value ? Number(e.target.value) : null;
+                                                                            updateStep(idx, {
+                                                                              next_step_id: val,
+                                                                              is_end_step: false,
+                                                                              jump_mode: val ? "custom" : "next",
+                                                                            });
+                                                                          }}
+                                                                          disabled={!s.next_step_id}
+                                                                        />
+                                                                      </div>
+                                                                      <div className="flex items-center gap-2 mt-1">
+                                                                        <input
+                                                                          type="checkbox"
+                                                                          className="h-3 w-3"
+                                                                          checked={!!s.is_end_step}
+                                                                          onChange={(e) => {
+                                                                            if (e.target.checked) {
+                                                                              updateStep(idx, {
+                                                                                is_end_step: true,
+                                                                                next_step_id: null,
+                                                                                jump_mode: "next",
+                                                                              });
+                                                                            } else {
+                                                                              updateStep(idx, { is_end_step: false });
+                                                                            }
+                                                                          }}
+                                                                        />
+                                                                        <span>This is the last step (end campaign)</span>
+                                                                      </div>
+                                                                    </div>
+                                                                  </label>
+                                                                )}
+                                                              </div>
+                                
+                                                              <div className="space-y-2 rounded-md border px-3 py-2">
+                                                                <p className="text-sm font-semibold">Message source</p>
+                                                                <div className="flex flex-wrap gap-4 text-sm">
+                                                                  <label className="inline-flex items-center gap-2">
+                                                                    <input
+                                                                      type="radio"
+                                                                      name={`message-mode-${idx}`}
+                                                                      className="h-3 w-3"
+                                                                      checked={messageMode === "custom"}
+                                                                      onChange={() =>
+                                                                        updateStep(idx, { message_mode: "custom", template_source_id: null })
+                                                                      }
+                                                                    />
+                                                                    <span>Custom message</span>
+                                                                  </label>
+                                                                  <label className="inline-flex items-center gap-2">
+                                                                    <input
+                                                                      type="radio"
+                                                                      name={`message-mode-${idx}`}
+                                                                      className="h-3 w-3"
+                                                                      checked={messageMode === "template"}
+                                                                      onChange={() => updateStep(idx, { message_mode: "template" })}
+                                                                    />
+                                                                    <span>Use template</span>
+                                                                  </label>
+                                                                </div>
+                                
+                                                                {messageMode === "template" ? (
+                                                                  <div className="space-y-2">
+                                                                    <select
+                                                                      className="w-full rounded border px-3 py-2"
+                                                                      value={stepTemplateId ?? ""}
+                                                                      onChange={async (e) => {
+                                                                        const val = e.target.value;
+                                                                        if (!val) {
+                                                                          updateStep(idx, {
+                                                                            template_source_id: null,
+                                                                            message_mode: "custom",
+                                                                            prompt_text: "",
+                                                                            media_url: null,
+                                                                            error_message: null,
+                                                                          });
+                                                                          return;
+                                                                        }
+                                                                        const templateId = Number(val);
+                                                                        if (Number.isNaN(templateId)) return;
+                                                                        await handleApplyTemplateToStep(idx, templateId);
+                                                                      }}
+                                                                    >
+                                                                      <option value="">
+                                                                        {activeTemplates.length ? "Select a template" : "No active templates found"}
+                                                                      </option>
+                                                                      {showInactiveTemplateOption && stepTemplateId ? (
+                                                                        <option value={stepTemplateId}>
+                                                                          Template #{stepTemplateId} (inactive)
+                                                                        </option>
+                                                                      ) : null}
+                                                                      {activeTemplates.map((t) => {
+                                                                        const tid = getTemplateId(t);
+                                                                        return (
+                                                                          <option key={tid ?? t.title} value={tid ?? ""}>
+                                                                            {t.title} {tid ? `(ID ${tid})` : ""}
+                                                                          </option>
+                                                                        );
+                                                                      })}
+                                                                    </select>
+                                                                    <p className="text-xs text-muted-foreground">
+                                                                      Selecting a template copies its body and media into this step. You can
+                                                                      still edit them for this campaign without affecting the original.
+                                                                    </p>
+                                                                  </div>
+                                                                ) : (
+                                                                  <p className="text-xs text-muted-foreground">
+                                                                    Write a custom message for this step. Switching modes keeps your current text
+                                                                    and media.
+                                                                  </p>
+                                                                )}
+                                                              </div>
+                                
+                                                              <label className="space-y-1 text-sm font-medium">
+                                                                <span>Prompt text</span>
+                                                                <textarea
+                                                                  className="w-full rounded border px-3 py-2 min-h-[120px]"
+                                                                  value={s.prompt_text || ""}
+                                                                  onChange={(e) => updateStep(idx, { prompt_text: e.target.value })}
+                                                                  placeholder="What should be sent to the user at this step?"
+                                                                />
+                                                              </label>
+                                
+                                                              {/* Media URL (optional, one per step) */}
+                                                              {(s.action_type === "message" ||
+                                                                s.action_type === "choice" ||
+                                                                s.action_type === "input") && (
+                                                                <div className="grid gap-3 md:grid-cols-1">
+                                                                  <label className="space-y-1 text-sm font-medium">
+                                                                    <span>Media URL (optional)</span>
+                                                                    <input
+                                                                      type="text"
+                                                                      className="w-full rounded border px-3 py-2"
+                                                                      value={s.media_url || ""}
+                                                                      onChange={(e) =>
+                                                                        updateStep(idx, {
+                                                                          media_url: e.target.value,
+                                                                        })
+                                                                      }
+                                                                      placeholder="https://... (public URL in your storage)"
+                                                                    />
+                                                                  </label>
+                                                                </div>
+                                                              )}
+                                
+                                                              {(s.action_type === "choice" || s.action_type === "input") && (
+                                                                <label className="space-y-1 text-sm font-medium">
+                                                                  <span>
+                                                                    {s.action_type === "choice"
+                                                                      ? "Fallback message (when reply does not match any option)"
+                                                                      : "Error message (when input is invalid)"}
+                                                                  </span>
+                                                                  <textarea
+                                                                    className="w-full rounded border px-3 py-2 min-h-[80px]"
+                                                                    value={s.error_message || ""}
+                                                                    onChange={(e) => updateStep(idx, { error_message: e.target.value })}
+                                                                    placeholder={
+                                                                      s.action_type === "choice"
+                                                                        ? "e.g. Sorry, I didn't get that. Please choose one of the options below."
+                                                                        : "e.g. Please enter a valid value."
+                                                                    }
+                                                                  />
+                                                                </label>
+                                                              )}
+                                
+                                                              {s.action_type === "input" && (
+                                                                <label className="space-y-1 text-sm font-medium">
+                                                                  <span>Allow input type</span>
+                                                                  <select
+                                                                    className="w-full rounded border px-3 py-2"
+                                                                    value={s.input_type || "text"}
+                                                                    onChange={(e) =>
+                                                                      updateStep(idx, {
+                                                                        input_type: e.target.value as InputType,
+                                                                        expected_input: e.target.value as InputType,
+                                                                      })
+                                                                    }
+                                                                  >
+                                                                    <option value="text">Text</option>
+                                                                    <option value="number">Number</option>
+                                                                    <option value="email">Email</option>
+                                                                  </select>
+                                                                </label>
+                                                              )}
+                                
+                                                              {s.action_type === "api" && (
+                                                                <div className="grid gap-3 md:grid-cols-2">
+                                                                  <label className="space-y-1 text-sm font-medium">
+                                                                    <span>API</span>
+                                                                    <select
+                                                                      className="w-full rounded border px-3 py-2"
+                                                                      value={s.api_id ?? ""}
+                                                                      onChange={(e) =>
+                                                                        updateStep(idx, {
+                                                                          api_id: e.target.value ? Number(e.target.value) : null,
+                                                                        })
+                                                                      }
+                                                                    >
+                                                                      <option value="">Select API</option>
+                                                                      {apis
+                                                                        .filter((api) => api.is_active !== false)
+                                                                        .map((api) => (
+                                                                          <option key={api.api_id} value={api.api_id}>
+                                                                            {api.name}
+                                                                          </option>
+                                                                        ))}
+                                                                    </select>
+                                                                  </label>
+                                                                  <label className="space-y-1 text-sm font-medium">
+                                                                    <span>Failure step</span>
+                                                                    <select
+                                                                      className="w-full rounded border px-3 py-2"
+                                                                      value={s.failure_step_id ?? ""}
+                                                                      onChange={(e) =>
+                                                                        updateStep(idx, {
+                                                                          failure_step_id: e.target.value ? Number(e.target.value) : null,
+                                                                        })
+                                                                      }
+                                                                    >
+                                                                      <option value="">None</option>
+                                                                      {steps.map((st, si) => (
+                                                                        <option
+                                                                          key={`fail-${st.step_id ?? `idx-${si}`}`}
+                                                                          value={st.step_number || si + 1}
+                                                                        >
+                                                                          {si + 1} - {st.step_code || st.prompt_text || "Step"}
+                                                                        </option>
+                                                                      ))}
+                                                                    </select>
+                                                                  </label>
+                                                                </div>
+                                                              )}
+                                
+                                                              {s.action_type === "choice" && (
+                                                                <div className="space-y-3 border-t pt-3">
+                                                                  <div className="flex items-center justify-between">
+                                                                    <h4 className="text-sm font-semibold">Choices</h4>
+                                                                    <button
+                                                                      type="button"
+                                                                      onClick={() => addChoice(idx)}
+                                                                      className="text-xs rounded border px-2 py-1 hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                      disabled={(s.campaign_step_choice?.length ?? 0) >= 3}
+                                                                    >
+                                                                      Add choice
+                                                                    </button>
+                                                                  </div>
+                                                                  <div className="space-y-3">
+                                                                    {s.campaign_step_choice?.length ? (
+                                                                      s.campaign_step_choice.map((choice, cidx) => (
+                                                                        <div key={choice.choice_id || cidx} className="rounded border p-3 space-y-2">
+                                                                          <div className="flex justify-end">
+                                                                            <button
+                                                                              type="button"
+                                                                              onClick={() => removeChoice(idx, cidx)}
+                                                                              className="text-xs text-rose-600 hover:text-rose-700"
+                                                                            >
+                                                                              Remove
+                                                                            </button>
+                                                                          </div>
+                                                                          <div className="grid gap-2 md:grid-cols-2">
+                                                                            <label className="text-sm font-medium space-y-1">
+                                                                              <span>Code</span>
+                                                                              <input
+                                                                                type="text"
+                                                                                value={choice.choice_code || ""}
+                                                                                onChange={(e) =>
+                                                                                  updateChoice(idx, cidx, { choice_code: e.target.value })
+                                                                                }
+                                                                                className="w-full rounded border px-3 py-2"
+                                                                                placeholder="e.g. YES"
+                                                                              />
+                                                                            </label>
+                                                                          <label className="text-sm font-medium space-y-1">
+                                                                            <span>Label</span>
+                                                                            <input
+                                                                              type="text"
+                                                                              value={choice.label || ""}
+                                                                                onChange={(e) =>
+                                                                                  updateChoice(idx, cidx, { label: e.target.value })
+                                                                                }
+                                                                                className="w-full rounded border px-3 py-2"
+                                                                                placeholder="Displayed to user"
+                                                                              />
+                                                                            </label>
+                                                                          </div>
+                                                                          <div className="grid gap-2 md:grid-cols-2 items-center">
+                                                                            <label className="text-sm font-medium space-y-1">
+                                                                              <span>Next step number (jump to within this campaign)</span>
+                                                                              <input
+                                                                                type="number"
+                                                                                value={choice.next_step_id ?? ""}
+                                                                                onChange={(e) =>
+                                                                                  updateChoice(idx, cidx, {
+                                                                                    next_step_id: e.target.value ? Number(e.target.value) : null,
+                                                                                  })
+                                                                                }
+                                                                                className="w-full rounded border px-3 py-2"
+                                                                                placeholder="e.g. 4 (next step in this campaign)"
+                                                                              />
+                                                                            </label>
+                                                                            <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
+                                                                              <input
+                                                                                type="checkbox"
+                                                                                checked={!!choice.is_correct}
+                                                                                onChange={(e) =>
+                                                                                  updateChoice(idx, cidx, { is_correct: e.target.checked })
+                                                                                }
+                                                                                className="h-4 w-4"
+                                                                              />
+                                                                              Mark as correct
+                                                                            </label>
+                                                                          </div>
+                                                                        </div>
+                                                                      ))
+                                                                    ) : (
+                                                                      <p className="text-xs text-muted-foreground">No choices yet.</p>
+                                                                    )}
+                                                                  </div>
+                                                                </div>
+                                                              )}
+                                
+                                                            </div>
+                              ) : null
+                            }
+                          >
+                            <>
+                              <td className="px-3 py-2 font-semibold">{idx + 1}</td>
+                                                        <td className="px-3 py-2 max-w-[240px]">
+                                                          <div className="font-medium truncate">{s.prompt_text || "-"}</div>
+                                                          <div className="text-xs text-muted-foreground truncate">
+                                                            {s.step_code || "No code"}
+                                                          </div>
+                                                          <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                                            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
+                                                              {s.template_source_id
+                                                                ? `From template (ID ${s.template_source_id}${
+                                                                    s.template?.title ? ` - ${s.template.title}` : ""
+                                                                  })`
+                                                                : "Custom"}
+                                                            </span>
+                                                          </div>
+                                                        </td>
+                                                        <td className="px-3 py-2 text-muted-foreground">
+                                                          {s.action_type === "input"
+                                                            ? s.input_type || "text"
+                                                            : s.action_type === "choice"
+                                                            ? "choice"
+                                                            : "none"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-muted-foreground">
+                                                          {s.action_type || "message"}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-muted-foreground">
+                                                          {summarizeChoices(s)}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-muted-foreground">
+                                                          {s.action_type === "choice"
+                                                            ? "Per choice"
+                                                            : idx === steps.length - 1
+                                                            ? "END"
+                                                            : `Next (step ${idx + 2})`}
+                                                        </td>
+                                                        <td className="px-3 py-2 text-muted-foreground">
+                              {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
+                            </td>
+                          
+                            </>
+                          </SortableStepRow>
+                        );
+                      })}
+                    <tr className="border-t">
+                      <td colSpan={8} className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={handleAddStep}
+                          className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
                         >
-                          <td className="px-3 py-2 font-semibold">{idx + 1}</td>
-                          <td className="px-3 py-2 max-w-[240px]">
-                            <div className="font-medium truncate">{s.prompt_text || "-"}</div>
-                            <div className="text-xs text-muted-foreground truncate">
-                              {s.step_code || "No code"}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
-                                {s.template_source_id
-                                  ? `From template (ID ${s.template_source_id}${
-                                      s.template?.title ? ` - ${s.template.title}` : ""
-                                    })`
-                                  : "Custom"}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {s.action_type === "input"
-                              ? s.input_type || "text"
-                              : s.action_type === "choice"
-                              ? "choice"
-                              : "none"}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {s.action_type || "message"}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {summarizeChoices(s)}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {s.action_type === "choice"
-                              ? "Per choice"
-                              : idx === steps.length - 1
-                              ? "END"
-                              : `Next (step ${idx + 2})`}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {s.failure_step_id ?? (s.action_type === "api" ? "-" : "")}
-                          </td>
-                        </tr>
-                        {expandedIndex === idx ? (
-                          <tr className="bg-muted/30 border-t">
-                            <td colSpan={7} className="px-4 py-4">
-                              <div className="space-y-4">
-                                <div className="flex justify-end">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveStep(idx)}
-                                    className="text-xs text-rose-600 hover:text-rose-700"
-                                  >
-                                    Remove step
-                                  </button>
-                                </div>
-                                <div className="grid gap-3 md:grid-cols-2">
-                                <label className="space-y-1 text-sm font-medium">
-                                  <span>Action type</span>
-                                  <select
-                                    className="w-full rounded border px-3 py-2"
-                                    value={s.action_type}
-                                    onChange={(e) => {
-                                      const nextAction = e.target.value as ActionType;
-                                      const nextInputType =
-                                        nextAction === "input" ? s.input_type || "text" : null;
-                                      // When switching TO a choice step, clear step-level next_step_id
-                                      const extra: Partial<CampaignStepWithChoices> = {};
-                                      if (nextAction === "choice") {
-                                        extra.next_step_id = null;
-                                        extra.is_end_step = false;
-                                        extra.jump_mode = "next";
-                                      }
-                                      updateStep(idx, {
-                                        action_type: nextAction,
-                                        input_type: nextInputType,
-                                        expected_input:
-                                          nextAction === "choice"
-                                            ? "choice"
-                                            : nextAction === "input"
-                                            ? (nextInputType as any)
-                                            : "none",
-                                        ...extra,
-                                      });
-                                    }}
-                                  >
-                                    {ACTION_OPTIONS.map((opt) => (
-                                      <option key={opt} value={opt}>
-                                        {opt}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </label>
-
-                                <label className="space-y-1 text-sm font-medium">
-                                  <span>Step code</span>
-                                  <input
-                                    type="text"
-                                    className="w-full rounded border px-3 py-2"
-                                    value={s.step_code || ""}
-                                    onChange={(e) => updateStep(idx, { step_code: e.target.value })}
-                                    placeholder="e.g. WELCOME"
-                                  />
-                                </label>
-
-                                {/* Step-level jump configuration (NOT for choice steps) */}
-                                {s.action_type !== "choice" && (
-                                  <label className="space-y-1 text-sm font-medium md:col-span-2">
-                                    <span>On success (jump)</span>
-                                      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="radio"
-                                          name={`jump-mode-${idx}`}
-                                          checked={s.jump_mode !== "custom" && !s.is_end_step}
-                                          onChange={() => {
-                                            // Next step in natural order: treat as no explicit jump
-                                            updateStep(idx, {
-                                              next_step_id: null,
-                                              is_end_step: false,
-                                              jump_mode: "next",
-                                            });
-                                          }}
-                                          className="h-3 w-3"
-                                        />
-                                        <span>Next step in order</span>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <input
-                                          type="radio"
-                                          name={`jump-mode-${idx}`}
-                                          checked={s.jump_mode === "custom" && !!s.next_step_id && !s.is_end_step}
-                                          onChange={() => {
-                                            const defaultJump = idx + 2 <= steps.length ? idx + 2 : null;
-                                            updateStep(idx, {
-                                              next_step_id: defaultJump,
-                                              is_end_step: false,
-                                              jump_mode: "custom",
-                                            });
-                                          }}
-                                          className="h-3 w-3"
-                                        />
-                                        <span>Jump to step number:</span>
-                                        <input
-                                          type="number"
-                                          className="w-20 rounded border px-2 py-1"
-                                          value={s.next_step_id ?? ""}
-                                          onChange={(e) => {
-                                            const val = e.target.value ? Number(e.target.value) : null;
-                                            updateStep(idx, {
-                                              next_step_id: val,
-                                              is_end_step: false,
-                                              jump_mode: val ? "custom" : "next",
-                                            });
-                                          }}
-                                          disabled={!s.next_step_id}
-                                        />
-                                      </div>
-                                      <div className="flex items-center gap-2 mt-1">
-                                        <input
-                                          type="checkbox"
-                                          className="h-3 w-3"
-                                          checked={!!s.is_end_step}
-                                          onChange={(e) => {
-                                            if (e.target.checked) {
-                                              updateStep(idx, {
-                                                is_end_step: true,
-                                                next_step_id: null,
-                                                jump_mode: "next",
-                                              });
-                                            } else {
-                                              updateStep(idx, { is_end_step: false });
-                                            }
-                                          }}
-                                        />
-                                        <span>This is the last step (end campaign)</span>
-                                      </div>
-                                    </div>
-                                  </label>
-                                )}
-                              </div>
-
-                              <div className="space-y-2 rounded-md border px-3 py-2">
-                                <p className="text-sm font-semibold">Message source</p>
-                                <div className="flex flex-wrap gap-4 text-sm">
-                                  <label className="inline-flex items-center gap-2">
-                                    <input
-                                      type="radio"
-                                      name={`message-mode-${idx}`}
-                                      className="h-3 w-3"
-                                      checked={messageMode === "custom"}
-                                      onChange={() =>
-                                        updateStep(idx, { message_mode: "custom", template_source_id: null })
-                                      }
-                                    />
-                                    <span>Custom message</span>
-                                  </label>
-                                  <label className="inline-flex items-center gap-2">
-                                    <input
-                                      type="radio"
-                                      name={`message-mode-${idx}`}
-                                      className="h-3 w-3"
-                                      checked={messageMode === "template"}
-                                      onChange={() => updateStep(idx, { message_mode: "template" })}
-                                    />
-                                    <span>Use template</span>
-                                  </label>
-                                </div>
-
-                                {messageMode === "template" ? (
-                                  <div className="space-y-2">
-                                    <select
-                                      className="w-full rounded border px-3 py-2"
-                                      value={stepTemplateId ?? ""}
-                                      onChange={async (e) => {
-                                        const val = e.target.value;
-                                        if (!val) {
-                                          updateStep(idx, {
-                                            template_source_id: null,
-                                            message_mode: "custom",
-                                            prompt_text: "",
-                                            media_url: null,
-                                            error_message: null,
-                                          });
-                                          return;
-                                        }
-                                        const templateId = Number(val);
-                                        if (Number.isNaN(templateId)) return;
-                                        await handleApplyTemplateToStep(idx, templateId);
-                                      }}
-                                    >
-                                      <option value="">
-                                        {activeTemplates.length ? "Select a template" : "No active templates found"}
-                                      </option>
-                                      {showInactiveTemplateOption && stepTemplateId ? (
-                                        <option value={stepTemplateId}>
-                                          Template #{stepTemplateId} (inactive)
-                                        </option>
-                                      ) : null}
-                                      {activeTemplates.map((t) => {
-                                        const tid = getTemplateId(t);
-                                        return (
-                                          <option key={tid ?? t.title} value={tid ?? ""}>
-                                            {t.title} {tid ? `(ID ${tid})` : ""}
-                                          </option>
-                                        );
-                                      })}
-                                    </select>
-                                    <p className="text-xs text-muted-foreground">
-                                      Selecting a template copies its body and media into this step. You can
-                                      still edit them for this campaign without affecting the original.
-                                    </p>
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-muted-foreground">
-                                    Write a custom message for this step. Switching modes keeps your current text
-                                    and media.
-                                  </p>
-                                )}
-                              </div>
-
-                              <label className="space-y-1 text-sm font-medium">
-                                <span>Prompt text</span>
-                                <textarea
-                                  className="w-full rounded border px-3 py-2 min-h-[120px]"
-                                  value={s.prompt_text || ""}
-                                  onChange={(e) => updateStep(idx, { prompt_text: e.target.value })}
-                                  placeholder="What should be sent to the user at this step?"
-                                />
-                              </label>
-
-                              {/* Media URL (optional, one per step) */}
-                              {(s.action_type === "message" ||
-                                s.action_type === "choice" ||
-                                s.action_type === "input") && (
-                                <div className="grid gap-3 md:grid-cols-1">
-                                  <label className="space-y-1 text-sm font-medium">
-                                    <span>Media URL (optional)</span>
-                                    <input
-                                      type="text"
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.media_url || ""}
-                                      onChange={(e) =>
-                                        updateStep(idx, {
-                                          media_url: e.target.value,
-                                        })
-                                      }
-                                      placeholder="https://... (public URL in your storage)"
-                                    />
-                                  </label>
-                                </div>
-                              )}
-
-                              {(s.action_type === "choice" || s.action_type === "input") && (
-                                <label className="space-y-1 text-sm font-medium">
-                                  <span>
-                                    {s.action_type === "choice"
-                                      ? "Fallback message (when reply does not match any option)"
-                                      : "Error message (when input is invalid)"}
-                                  </span>
-                                  <textarea
-                                    className="w-full rounded border px-3 py-2 min-h-[80px]"
-                                    value={s.error_message || ""}
-                                    onChange={(e) => updateStep(idx, { error_message: e.target.value })}
-                                    placeholder={
-                                      s.action_type === "choice"
-                                        ? "e.g. Sorry, I didn't get that. Please choose one of the options below."
-                                        : "e.g. Please enter a valid value."
-                                    }
-                                  />
-                                </label>
-                              )}
-
-                              {s.action_type === "input" && (
-                                <label className="space-y-1 text-sm font-medium">
-                                  <span>Allow input type</span>
-                                  <select
-                                    className="w-full rounded border px-3 py-2"
-                                    value={s.input_type || "text"}
-                                    onChange={(e) =>
-                                      updateStep(idx, {
-                                        input_type: e.target.value as InputType,
-                                        expected_input: e.target.value as InputType,
-                                      })
-                                    }
-                                  >
-                                    <option value="text">Text</option>
-                                    <option value="number">Number</option>
-                                    <option value="email">Email</option>
-                                  </select>
-                                </label>
-                              )}
-
-                              {s.action_type === "api" && (
-                                <div className="grid gap-3 md:grid-cols-2">
-                                  <label className="space-y-1 text-sm font-medium">
-                                    <span>API</span>
-                                    <select
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.api_id ?? ""}
-                                      onChange={(e) =>
-                                        updateStep(idx, {
-                                          api_id: e.target.value ? Number(e.target.value) : null,
-                                        })
-                                      }
-                                    >
-                                      <option value="">Select API</option>
-                                      {apis
-                                        .filter((api) => api.is_active !== false)
-                                        .map((api) => (
-                                          <option key={api.api_id} value={api.api_id}>
-                                            {api.name}
-                                          </option>
-                                        ))}
-                                    </select>
-                                  </label>
-                                  <label className="space-y-1 text-sm font-medium">
-                                    <span>Failure step</span>
-                                    <select
-                                      className="w-full rounded border px-3 py-2"
-                                      value={s.failure_step_id ?? ""}
-                                      onChange={(e) =>
-                                        updateStep(idx, {
-                                          failure_step_id: e.target.value ? Number(e.target.value) : null,
-                                        })
-                                      }
-                                    >
-                                      <option value="">None</option>
-                                      {steps.map((st, si) => (
-                                        <option
-                                          key={`fail-${st.step_id ?? `idx-${si}`}`}
-                                          value={st.step_number || si + 1}
-                                        >
-                                          {si + 1} - {st.step_code || st.prompt_text || "Step"}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </label>
-                                </div>
-                              )}
-
-                              {s.action_type === "choice" && (
-                                <div className="space-y-3 border-t pt-3">
-                                  <div className="flex items-center justify-between">
-                                    <h4 className="text-sm font-semibold">Choices</h4>
-                                    <button
-                                      type="button"
-                                      onClick={() => addChoice(idx)}
-                                      className="text-xs rounded border px-2 py-1 hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
-                                      disabled={(s.campaign_step_choice?.length ?? 0) >= 3}
-                                    >
-                                      Add choice
-                                    </button>
-                                  </div>
-                                  <div className="space-y-3">
-                                    {s.campaign_step_choice?.length ? (
-                                      s.campaign_step_choice.map((choice, cidx) => (
-                                        <div key={choice.choice_id || cidx} className="rounded border p-3 space-y-2">
-                                          <div className="flex justify-end">
-                                            <button
-                                              type="button"
-                                              onClick={() => removeChoice(idx, cidx)}
-                                              className="text-xs text-rose-600 hover:text-rose-700"
-                                            >
-                                              Remove
-                                            </button>
-                                          </div>
-                                          <div className="grid gap-2 md:grid-cols-2">
-                                            <label className="text-sm font-medium space-y-1">
-                                              <span>Code</span>
-                                              <input
-                                                type="text"
-                                                value={choice.choice_code || ""}
-                                                onChange={(e) =>
-                                                  updateChoice(idx, cidx, { choice_code: e.target.value })
-                                                }
-                                                className="w-full rounded border px-3 py-2"
-                                                placeholder="e.g. YES"
-                                              />
-                                            </label>
-                                          <label className="text-sm font-medium space-y-1">
-                                            <span>Label</span>
-                                            <input
-                                              type="text"
-                                              value={choice.label || ""}
-                                                onChange={(e) =>
-                                                  updateChoice(idx, cidx, { label: e.target.value })
-                                                }
-                                                className="w-full rounded border px-3 py-2"
-                                                placeholder="Displayed to user"
-                                              />
-                                            </label>
-                                          </div>
-                                          <div className="grid gap-2 md:grid-cols-2 items-center">
-                                            <label className="text-sm font-medium space-y-1">
-                                              <span>Next step number (jump to within this campaign)</span>
-                                              <input
-                                                type="number"
-                                                value={choice.next_step_id ?? ""}
-                                                onChange={(e) =>
-                                                  updateChoice(idx, cidx, {
-                                                    next_step_id: e.target.value ? Number(e.target.value) : null,
-                                                  })
-                                                }
-                                                className="w-full rounded border px-3 py-2"
-                                                placeholder="e.g. 4 (next step in this campaign)"
-                                              />
-                                            </label>
-                                            <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
-                                              <input
-                                                type="checkbox"
-                                                checked={!!choice.is_correct}
-                                                onChange={(e) =>
-                                                  updateChoice(idx, cidx, { is_correct: e.target.checked })
-                                                }
-                                                className="h-4 w-4"
-                                              />
-                                              Mark as correct
-                                            </label>
-                                          </div>
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <p className="text-xs text-muted-foreground">No choices yet.</p>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-
-                            </div>
-                          </td>
-                        </tr>
-                      ) : null}
-                    </Fragment>
-                  )
-                })
-                )}
-                <tr className="border-t">
-                  <td colSpan={7} className="px-3 py-3">
-                    <button
-                      type="button"
-                      onClick={handleAddStep}
-                      className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
-                    >
-                      Add step
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+                          Add step
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </SortableContext>
+              </table>
+            </DndContext>
           </div>
         </div>
 

@@ -268,6 +268,7 @@ export type CampaignUpdatePayload = {
     status?: string | null;
     startAt?: string | null;
     endAt?: string | null;
+    is_active?: boolean | null;
 };
 
 // Campaign engine enums/types
