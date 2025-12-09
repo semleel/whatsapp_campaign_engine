@@ -5,6 +5,7 @@
 import type React from "react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
@@ -13,6 +14,7 @@ import type { TemplateDetail, TemplateListItem } from "@/lib/types";
 
 type TemplateSummary = TemplateListItem & {
   lang?: string | null;
+  content_key?: string | null;
   createdat?: string | null;
   expiresat?: string | null;
   mediaurl?: string | null;
@@ -59,6 +61,7 @@ type TemplateMenu = {
 
 const STATUS_OPTIONS = ["All", "Active", "Archived"];
 const TYPE_OPTIONS = ["All", "message", "choice", "api", "input"];
+const LANG_OPTIONS = ["All", "EN", "MY", "CN"];
 const PAGE_SIZE_OPTIONS = [8, 12, 20];
 
 const INLINE_FORMATTERS = [
@@ -180,9 +183,15 @@ function renderFormattedLines(text: string, placeholder: string) {
   });
 }
 
-const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
+const looksLikeImage = (url?: string | null) =>
+  !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url || "");
+const looksLikeVideo = (url?: string | null) =>
+  !!url && /\.(mp4|mov|avi|mkv|webm)(\?.*)?$/i.test(url || "");
+const looksLikeDocument = (url?: string | null) =>
+  !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)(\?.*)?$/i.test(url || "");
 
 export default function TemplateLibraryPage() {
+  const router = useRouter();
   const [items, setItems] = useState<TemplateWithPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +199,7 @@ export default function TemplateLibraryPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [typeFilter, setTypeFilter] = useState<string>("All");
+  const [langFilter, setLangFilter] = useState<string>("All");
   const [archivingId, setArchivingId] = useState<number | null>(null);
 
   // pagination
@@ -216,11 +226,13 @@ export default function TemplateLibraryPage() {
 
         const summaries = rawSummaries.map((item) => ({
           contentid: item.contentid,
+          content_key: (item as any).content_key ?? (item as any).contentkey ?? null,
           title: item.title || `Template ${item.contentid}`,
           type: item.type || "message",
           status: normalizeStatus(item.status),
           category: item.category ?? null,
-          lang: item.lang ?? item.defaultlang ?? "",
+          lang:
+            ((item.lang ?? item.defaultlang ?? "") as string).toUpperCase() || "",
           defaultlang: item.defaultlang ?? "",
           currentversion: item.currentversion ?? null,
           updatedat: item.updatedat ?? (item as any).updated_at ?? item.lastupdated ?? null,
@@ -234,7 +246,7 @@ export default function TemplateLibraryPage() {
         const detailed: TemplateWithPreview[] = await Promise.all(
           summaries.map(async (t) => {
             try {
-              const data = await Api.getTemplate(t.contentid, true);
+                const data = await Api.getTemplate(t.contentid, true);
 
               const placeholders =
                 (data.placeholders as Record<string, unknown> | null) || null;
@@ -278,6 +290,11 @@ export default function TemplateLibraryPage() {
 
               return {
                 ...t,
+                content_key:
+                  (data as any).content_key ??
+                  (data as any).contentkey ??
+                  t.content_key ??
+                  null,
                 title: data.title ?? t.title,
                 type: data.type ?? t.type,
                 // show "Archived" in UI if soft-deleted
@@ -285,7 +302,11 @@ export default function TemplateLibraryPage() {
                   ? "Archived"
                   : normalizeStatus(data.status ?? t.status),
                 category: data.category ?? t.category ?? null,
-                lang: data.lang ?? data.defaultlang ?? t.lang ?? "",
+                lang:
+                  ((data.lang ??
+                    data.defaultlang ??
+                    t.lang ??
+                    "") as string).toUpperCase() || "",
                 description: data.description ?? null,
                 body: data.body ?? data.description ?? null,
                 mediaurl: data.mediaurl ?? t.mediaurl ?? null,
@@ -320,6 +341,34 @@ export default function TemplateLibraryPage() {
     load();
   }, [canView, privLoading]);
 
+  const translationsByKey = useMemo(() => {
+    const map = new Map<string, string[]>();
+    items.forEach((tpl) => {
+      const key =
+        (tpl.content_key || (tpl as any).contentkey || "").toString().trim();
+      if (!key) return;
+      const lang = ((tpl.lang || tpl.defaultlang || "") as string).toUpperCase();
+      if (!lang) return;
+      const existing = map.get(key) || [];
+      if (!existing.includes(lang)) {
+        map.set(key, [...existing, lang]);
+      }
+    });
+    return map;
+  }, [items]);
+
+  const buildAddTranslationHref = (tpl: TemplateWithPreview) => {
+    const params = new URLSearchParams();
+    if (tpl.content_key) params.set("contentKey", tpl.content_key);
+    if (tpl.title) params.set("fromTitle", tpl.title);
+    if (tpl.body) params.set("fromBody", tpl.body);
+    if (tpl.lang) params.set("baseLang", tpl.lang);
+    const used = translationsByKey.get(tpl.content_key || "") || [];
+    if (used.length) params.set("usedLangs", used.join(","));
+    const qs = params.toString();
+    return qs ? `/content/templates/create?${qs}` : "/content/templates/create";
+  };
+
   const filteredItems = useMemo(() => {
     return items.filter((t) => {
       const matchesSearch =
@@ -345,15 +394,18 @@ export default function TemplateLibraryPage() {
       const matchesType =
         typeFilter === "All" ||
         (t.type || "").toLowerCase() === typeFilter.toLowerCase();
+      const matchesLang =
+        langFilter === "All" ||
+        (t.lang || "").toUpperCase() === langFilter.toUpperCase();
 
-      return matchesSearch && matchesStatus && matchesCategory && matchesType;
+      return matchesSearch && matchesStatus && matchesCategory && matchesType && matchesLang;
     });
-  }, [items, search, statusFilter, typeFilter]);
+  }, [items, search, statusFilter, typeFilter, langFilter]);
 
   // reset page when filter/search/pageSize change
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, pageSize, typeFilter]);
+  }, [search, statusFilter, pageSize, typeFilter, langFilter]);
 
   const totalItems = filteredItems.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -500,6 +552,18 @@ export default function TemplateLibraryPage() {
 
           <select
             className="rounded-md border px-3 py-2 text-sm"
+            value={langFilter}
+            onChange={(e) => setLangFilter(e.target.value)}
+          >
+            {LANG_OPTIONS.map((lang) => (
+              <option key={lang} value={lang}>
+                Language: {lang}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="rounded-md border px-3 py-2 text-sm"
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
           >
@@ -579,9 +643,30 @@ export default function TemplateLibraryPage() {
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           {renderStatusPill(t)}
-                          <span className="text-[10px]">
-                            {(t.lang || "-").toString().toUpperCase()} | {t.type || ""}
-                          </span>
+                          <div className="flex flex-wrap items-center justify-end gap-2 text-[10px]">
+                            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
+                              {(t.lang || "-").toString().toUpperCase()}
+                            </span>
+                            {t.content_key ? (
+                              <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">
+                                #{t.content_key}
+                              </span>
+                            ) : null}
+                            <span className="text-[10px] text-muted-foreground">
+                              {t.type || ""}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              router.push(buildAddTranslationHref(t));
+                            }}
+                            className="text-[11px] text-primary hover:underline text-left"
+                          >
+                            Add translation
+                          </button>
                           {canArchive && !t.isdeleted && (
                             <button
                               type="button"
@@ -601,34 +686,73 @@ export default function TemplateLibraryPage() {
 
                       {/* WhatsApp-style preview */}
                       <div className="flex-1 rounded-xl border bg-muted/40 p-3">
-                        {t.mediaurl && (
-                          <div className="mb-2 overflow-hidden rounded-md bg-background">
-                            {looksLikeVideo(t.mediaurl) ? (
-                              <video
-                                src={t.mediaurl}
-                                className="block w-full max-h-32 object-cover"
-                                muted
-                                playsInline
-                                preload="metadata"
-                                controls={false}
-                                onLoadedMetadata={(e) => {
-                                  try {
-                                    (e.currentTarget as HTMLVideoElement).currentTime = 0;
-                                  } catch {
-                                    // ignore seek errors
-                                  }
-                                }}
-                              />
-                            ) : (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={t.mediaurl}
-                                alt="Header"
-                                className="block w-full max-h-32 object-cover"
-                              />
-                            )}
-                          </div>
-                        )}
+                        {t.mediaurl ? (() => {
+                          const mediaUrl = t.mediaurl || "";
+                          const isImage = looksLikeImage(mediaUrl);
+                          const isVideo = looksLikeVideo(mediaUrl);
+                          const isDoc = looksLikeDocument(mediaUrl);
+                          const openAttachment = (e: React.MouseEvent) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (typeof window !== "undefined") {
+                              window.open(mediaUrl, "_blank", "noreferrer");
+                            }
+                          };
+                          return (
+                            <div className="mb-2 overflow-hidden rounded-md bg-background">
+                              {isVideo ? (
+                                <video
+                                  src={mediaUrl}
+                                  className="block w-full max-h-40 object-contain bg-black"
+                                  muted
+                                  playsInline
+                                  preload="metadata"
+                                  controls
+                                />
+                              ) : isDoc ? (
+                                <div className="p-3 text-xs text-muted-foreground space-y-1">
+                                  <div className="font-semibold">Document</div>
+                                  <button
+                                    type="button"
+                                    onClick={openAttachment}
+                                    className="block w-full truncate text-left text-primary hover:underline"
+                                  >
+                                    {mediaUrl}
+                                  </button>
+                                  <div className="text-[11px]">Preview shown as a link (non-media file).</div>
+                                </div>
+                              ) : (
+                                <>
+                                  {/* Try to show as image by default; fallback to link if it fails */}
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={mediaUrl}
+                                    alt="Header"
+                                    className="block w-full max-h-48 object-cover"
+                                    onError={(e) => {
+                                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                                      const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                                      if (fallback) fallback.style.display = "block";
+                                    }}
+                                  />
+                                  <div className="p-3 text-xs text-muted-foreground space-y-1 hidden">
+                                    <div className="font-semibold">Attachment</div>
+                                    <button
+                                      type="button"
+                                      onClick={openAttachment}
+                                      className="block w-full truncate text-left text-primary hover:underline"
+                                    >
+                                      {mediaUrl}
+                                    </button>
+                                    <div className="text-[11px]">
+                                      Preview shown as a link (non-media file).
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })() : null}
 
                         {t.headerType === "text" && t.headerText && (
                           <p className="mb-1 text-[11px] font-semibold">
@@ -728,6 +852,7 @@ export default function TemplateLibraryPage() {
                     <th className="px-3 py-2 text-left font-medium">
                       Language
                     </th>
+                    <th className="px-3 py-2 text-left font-medium">Key</th>
                     <th className="px-3 py-2 text-left font-medium">
                       Category
                     </th>
@@ -758,7 +883,12 @@ export default function TemplateLibraryPage() {
                         {renderStatusPill(t)}
                       </td>
                       <td className="px-3 py-2 uppercase">
-                        {t.lang || "-"}
+                        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                          {t.lang || "-"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground text-xs">
+                        {t.content_key || "-"}
                       </td>
                       <td className="px-3 py-2">{t.category || "-"}</td>
                       <td className="px-3 py-2 text-muted-foreground">
@@ -766,6 +896,12 @@ export default function TemplateLibraryPage() {
                       </td>
                       <td className="px-3 py-2 text-sm">
                         <div className="flex items-center gap-3">
+                          <Link
+                            href={buildAddTranslationHref(t)}
+                            className="text-primary hover:underline text-[13px]"
+                          >
+                            Add translation
+                          </Link>
                           {canUpdate ? (
                             <Link
                               href={`/content/templates/${t.contentid}`}

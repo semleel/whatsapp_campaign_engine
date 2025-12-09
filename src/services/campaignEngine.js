@@ -2,12 +2,68 @@
 
 import prisma from "../config/prismaClient.js";
 import { dispatchEndpoint } from "./integrationService.js";
+import { getStepContentForSession } from "./contentLocalizationService.js";
 
 /** @typedef {"text" | "button" | "list" | "location"} EngineMessageType */
 /** @typedef {"message" | "choice" | "input" | "api" | "end"} ActionType */
 /** @typedef {"none" | "choice" | "text" | "number" | "email" | "location"} ExpectedInput */
 
 const SESSION_EXPIRY_MINUTES = 30; // global idle timeout
+const GENERIC_CONTENT_FALLBACK = {
+  contentId: null,
+  lang: "EN",
+  title: "Fallback",
+  body: "Sorry, this content is not available at the moment.",
+  mediaUrl: null,
+};
+const SUPPORTED_LANG_CODES = ["EN", "MY", "CN"];
+
+const ensureSessionStep = async (session, stepId) => {
+  if (!session?.campaign_session_id || session.current_step_id === stepId) return;
+  try {
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: { current_step_id: stepId, last_active_at: new Date() },
+    });
+    session.current_step_id = stepId;
+  } catch (err) {
+    console.error("[ENGINE] Failed to sync current_step_id", err);
+  }
+};
+
+const resolveStepContent = async (session, step) => {
+  if (!step?.template_source_id) return null;
+  if (!session?.campaign_session_id) return null;
+  const localized = await getStepContentForSession(session.campaign_session_id);
+  return localized || GENERIC_CONTENT_FALLBACK;
+};
+
+const isLanguageSelectorStep = (step, choices = []) => {
+  if (!step) return false;
+  const stepCode = (step.step_code || "").toString().toUpperCase();
+  if (stepCode === "LANG_SELECTOR" && step.action_type === "choice") return true;
+
+  if (!choices.length) return false;
+  const codes = choices
+    .map((c) => (c.choice_code || "").trim().toUpperCase())
+    .filter(Boolean);
+  if (!codes.length) return false;
+  const allLangChoices = codes.every((c) => SUPPORTED_LANG_CODES.includes(c));
+  return step.action_type === "choice" && allLangChoices;
+};
+
+const updateContactLanguageForSession = async (sessionId, langCode) => {
+  const code = (langCode || "").trim();
+  if (!sessionId || !code) return;
+  try {
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: sessionId },
+      data: { contact: { update: { lang: code } } },
+    });
+  } catch (err) {
+    console.error("[ENGINE] Failed to update contact language", { sessionId, langCode: code }, err);
+  }
+};
 
 export async function handleIncomingMessage(args) {
   const { fromPhone, text, type, payload, enginePayload } = args;
@@ -402,11 +458,15 @@ async function continueCampaignSession({
     case "input":
       return runInputStep({ contact, session, step, incomingText, type, payload });
     case "api": {
+      const contentContext = step.template_source_id
+        ? await resolveStepContent(session, step)
+        : null;
       const apiResult = await runApiStep({
         contact,
         session,
         step,
         lastAnswer: null,
+        contentContext,
       });
       if (!apiResult.nextStepId) {
         await prisma.campaign_session.update({
@@ -436,6 +496,10 @@ async function runChoiceStep({
   type,
   payload,
 }) {
+  await ensureSessionStep(session, step.step_id);
+  const contentContext = await resolveStepContent(session, step);
+  const promptText = contentContext?.body ?? step.prompt_text;
+
   const choices = await prisma.campaign_step_choice.findMany({
     where: { step_id: step.step_id },
     orderBy: { choice_id: "asc" },
@@ -503,10 +567,11 @@ async function runChoiceStep({
       step.error_message ||
       "Sorry, I didn't get that. Please choose one of the options below.";
     const rePrompt = withStepContext({
-      base: buildChoiceMessage(contact, step.prompt_text, choices),
+      base: buildChoiceMessage(contact, promptText, choices),
       step,
       session,
       contact,
+      contentContext,
     });
     await prisma.campaign_session.update({
       where: { campaign_session_id: session.campaign_session_id },
@@ -519,10 +584,28 @@ async function runChoiceStep({
           step,
           session,
           contact,
+          contentContext,
         }),
         rePrompt,
       ],
     };
+  }
+
+  const isLanguageSelector = isLanguageSelectorStep(step, choices);
+
+  if (isLanguageSelector && matchedChoice) {
+    const langCodeRaw = matchedChoice.choice_code || "";
+    const langCode = langCodeRaw.trim().toUpperCase();
+    const effectiveLangCode = langCode
+      ? SUPPORTED_LANG_CODES.includes(langCode)
+        ? langCode
+        : "EN"
+      : null;
+
+    if (effectiveLangCode) {
+      await updateContactLanguageForSession(session.campaign_session_id, effectiveLangCode);
+      contact.lang = effectiveLangCode;
+    }
   }
 
   // For choices we only respect the specific button's next_step_id
@@ -675,7 +758,8 @@ async function runInputStep({ contact, session, step, incomingText, type, payloa
   return runStepAndReturnMessages({ contact, session, step: nextStep });
 }
 
-async function runApiStep({ contact, session, step, lastAnswer }) {
+async function runApiStep({ contact, session, step, lastAnswer, contentContext = null }) {
+  await ensureSessionStep(session, step.step_id);
   if (!step.api_id) {
     console.warn("[flowEngine] API step has no api_id", { stepId: step.step_id });
     return { outbound: [], nextStepId: step.next_step_id };
@@ -724,12 +808,12 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
   }
 
   const outbound = [];
-  if (step.prompt_text || step.media_url) {
 
   // Decide the MAIN message text:
   // 1) use payload.formattedText if provided by integration
-  // 2) else use step.prompt_text (e.g. admin override)
-  // 3) else simple generic fallback
+  // 2) else use localized template body (if available)
+  // 3) else use step.prompt_text (e.g. admin override)
+  // 4) else simple generic fallback
   const formattedText =
     (apiPayload && typeof apiPayload.formattedText === "string"
       ? apiPayload.formattedText
@@ -737,11 +821,16 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
 
   const baseText =
     formattedText ||
-    step.prompt_text ||
+    (contentContext?.body ?? step.prompt_text) ||
     "Done.";
 
-  if (baseText || step.media_url) {
-    const mediaPayload = buildMediaWaPayload(step);
+  const mediaPayload = buildMediaWaPayload({
+    ...step,
+    prompt_text: contentContext?.body ?? step.prompt_text,
+    media_url: contentContext?.mediaUrl ?? step.media_url,
+  });
+
+  if (baseText || mediaPayload) {
     const msg = withStepContext({
       base: {
         to: contact.phone_num,
@@ -751,6 +840,7 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
       step,
       session,
       contact,
+      contentContext,
     });
     outbound.push(msg);
   }
@@ -788,9 +878,17 @@ async function runApiStep({ contact, session, step, lastAnswer }) {
     },
   };
 }
-}
 
 async function runEndStep({ contact, session, step }) {
+  await ensureSessionStep(session, step.step_id);
+  const contentContext =
+    step.template_source_id ? await resolveStepContent(session, step) : null;
+  const resolvedPrompt = contentContext?.body ?? step.prompt_text ?? "Thank you!";
+  const mediaPayload = buildMediaWaPayload({
+    ...step,
+    prompt_text: resolvedPrompt,
+    media_url: contentContext?.mediaUrl ?? step.media_url,
+  });
   await prisma.campaign_session.update({
     where: { campaign_session_id: session.campaign_session_id },
     data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
@@ -799,10 +897,15 @@ async function runEndStep({ contact, session, step }) {
   return {
     outbound: [
       withStepContext({
-        base: { to: contact.phone_num, content: step.prompt_text || "Thank you!" },
+        base: {
+          to: contact.phone_num,
+          content: resolvedPrompt || "Thank you!",
+          ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+        },
         step,
         session,
         contact,
+        contentContext,
       }),
     ],
   };
@@ -813,6 +916,12 @@ async function runStepAndReturnMessages({ contact, session, step }) {
   let current = step;
 
   while (current) {
+    await ensureSessionStep(session, current.step_id);
+    const contentContext =
+      current.template_source_id ? await resolveStepContent(session, current) : null;
+    const resolvedPrompt = contentContext?.body ?? current.prompt_text ?? "";
+    const resolvedMediaUrl = contentContext?.mediaUrl ?? current.media_url ?? null;
+
     const expectsInput =
       current.action_type === "choice" || current.action_type === "input";
     const isEnd = current.is_end_step || current.next_step_id == null;
@@ -823,6 +932,7 @@ async function runStepAndReturnMessages({ contact, session, step }) {
         session,
         step: current,
         lastAnswer: null,
+        contentContext,
       });
       outbound.push(...apiResult.outbound);
 
@@ -859,56 +969,67 @@ async function runStepAndReturnMessages({ contact, session, step }) {
           where: { step_id: current.step_id },
           orderBy: { choice_id: "asc" },
         });
-        const listMessage = buildChoiceMessage(contact, current.prompt_text, choices);
+        const listMessage = buildChoiceMessage(contact, resolvedPrompt, choices);
         outbound.push(
           withStepContext({
             base: listMessage,
             step: current,
             session,
             contact,
+            contentContext,
           })
         );
         return { outbound };
       }
 
-      if (current.prompt_text || current.media_url) {
-        const mediaPayload = buildMediaWaPayload(current);
+      if (resolvedPrompt || resolvedMediaUrl) {
+        const mediaPayload = buildMediaWaPayload({
+          ...current,
+          prompt_text: resolvedPrompt,
+          media_url: resolvedMediaUrl,
+        });
         outbound.push(
           withStepContext({
             base: {
               to: contact.phone_num,
-              content: current.prompt_text || "",
+              content: resolvedPrompt || "",
               ...(mediaPayload ? { waPayload: mediaPayload } : {}),
             },
             step: current,
             session,
             contact,
+            contentContext,
           })
         );
       }
       return { outbound };
     }
 
-    if (current.prompt_text || current.media_url) {
-      const mediaPayload = buildMediaWaPayload(current);
+    if (resolvedPrompt || resolvedMediaUrl) {
+      const mediaPayload = buildMediaWaPayload({
+        ...current,
+        prompt_text: resolvedPrompt,
+        media_url: resolvedMediaUrl,
+      });
       console.log("[ENGINE] Sending step", {
         step_id: current.step_id,
         campaign_id: current.campaign_id,
         action: current.action_type,
-        has_text: !!(current.prompt_text && current.prompt_text.trim()),
-        media_url: current.media_url || null,
+        has_text: !!(resolvedPrompt && resolvedPrompt.trim()),
+        media_url: resolvedMediaUrl || null,
         media_payload_type: mediaPayload?.type || null,
       });
       outbound.push(
         withStepContext({
           base: {
             to: contact.phone_num,
-            content: current.prompt_text || "",
+            content: resolvedPrompt || "",
             ...(mediaPayload ? { waPayload: mediaPayload } : {}),
           },
           step: current,
           session,
           contact,
+          contentContext,
         })
       );
     }
@@ -1000,7 +1121,7 @@ function deriveContentType(waPayload, step) {
   return "text";
 }
 
-function withStepContext({ base = {}, step, session, contact }) {
+function withStepContext({ base = {}, step, session, contact, contentContext = null }) {
   const waPayload = base.waPayload ?? (step?.media_url ? buildMediaWaPayload(step) : null);
   const contentValue = base.content ?? step?.prompt_text ?? "";
 
@@ -1016,6 +1137,8 @@ function withStepContext({ base = {}, step, session, contact }) {
       contact_id: contact?.contact_id ?? null,
       step_id: step?.step_id ?? null,
       template_source_id: step?.template_source_id ?? null,
+      content_id: contentContext?.contentId ?? null,
+      content_lang: contentContext?.lang ?? null,
     },
   };
 }

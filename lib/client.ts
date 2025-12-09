@@ -415,7 +415,7 @@ export const Api = {
   // =========================================================
 
   listTemplates: (
-    options: boolean | { includeDeleted?: boolean; status?: string; type?: string; search?: string } = {}
+    options: boolean | { includeDeleted?: boolean; status?: string; type?: string; search?: string; lang?: string; contentKey?: string } = {}
   ) => {
     const opts = typeof options === "boolean" ? { includeDeleted: options } : options || {};
     const params = new URLSearchParams();
@@ -423,6 +423,8 @@ export const Api = {
     if (opts.status) params.append("status", opts.status);
     if (opts.type) params.append("type", opts.type);
     if (opts.search) params.append("search", opts.search);
+    if (opts.lang) params.append("lang", opts.lang);
+    if (opts.contentKey) params.append("contentKey", opts.contentKey);
     const qs = params.toString();
     const suffix = qs ? `?${qs}` : "";
     return http<TemplateListItem[]>(`/api/templates${suffix}`);

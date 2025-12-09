@@ -18,6 +18,14 @@ const fallbackList = async ({ where }) => {
   const conditions = [];
   const params = [];
 
+  if (where?.lang) {
+    params.push(where.lang);
+    conditions.push(`UPPER(lang) = UPPER($${params.length})`);
+  }
+  if (where?.content_key) {
+    params.push(where.content_key);
+    conditions.push(`content_key = $${params.length}`);
+  }
   if (where?.is_deleted === false) {
     conditions.push(`is_deleted = false`);
   }
@@ -36,7 +44,7 @@ const fallbackList = async ({ where }) => {
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const query = `
-    SELECT content_id, title, type, status, lang, body, media_url, placeholders,
+    SELECT content_id, title, type, status, lang, content_key, body, media_url, placeholders,
            created_at, updated_at, expires_at, is_deleted
     FROM content
     ${whereSql}
@@ -50,7 +58,7 @@ const fallbackList = async ({ where }) => {
 const fallbackGetById = async (id) => {
   // eslint-disable-next-line no-restricted-syntax
   const rows = await prisma.$queryRawUnsafe(
-    `SELECT content_id, title, type, status, lang, body, media_url, placeholders,
+    `SELECT content_id, title, type, status, lang, content_key, body, media_url, placeholders,
             created_at, updated_at, expires_at, is_deleted
      FROM content WHERE content_id = $1 LIMIT 1`,
     id,
@@ -160,12 +168,14 @@ export const mapContentToResponse = (content) => {
   return {
     content_id: content.content_id,
     contentid: content.content_id,
+    content_key: content.content_key,
+    contentkey: content.content_key,
     title: content.title,
     type: content.type,
     status: content.status,
     category: content.status,
-    lang: content.lang,
-    defaultlang: content.lang,
+    lang: content.lang ? content.lang.toUpperCase() : content.lang,
+    defaultlang: content.lang ? content.lang.toUpperCase() : content.lang,
     body: content.body,
     media_url: content.media_url,
     mediaurl: content.media_url,
@@ -186,8 +196,10 @@ export const mapContentToResponse = (content) => {
 const normalizeTemplatePayload = (body = {}) => {
   const title = sanitizeString(body.title);
   const type = sanitizeString(body.type);
-  const lang = sanitizeString(body.lang || body.defaultLang);
+  const langRaw = sanitizeString(body.lang || body.defaultLang);
+  const lang = langRaw ? langRaw.toUpperCase() : langRaw;
   const status = sanitizeString(body.status || body.category);
+  const contentKey = sanitizeString(body.content_key || body.contentKey);
   const mediaProvided = Object.prototype.hasOwnProperty.call(body, "media_url")
     || Object.prototype.hasOwnProperty.call(body, "mediaUrl");
   const mediaUrl = mediaProvided ? sanitizeString(body.media_url ?? body.mediaUrl) : undefined;
@@ -205,6 +217,7 @@ const normalizeTemplatePayload = (body = {}) => {
     type,
     status,
     lang,
+    content_key: contentKey || null,
     body: textBody,
     media_url: mediaUrl === undefined ? undefined : mediaUrl || null,
     placeholders:
@@ -219,7 +232,10 @@ const buildTemplateFilters = (query = {}) => {
     parseBoolean(query.includeDeleted) || parseBoolean(query.include_deleted);
   const statusFilter = sanitizeString(query.status);
   const typeFilter = sanitizeString(query.type);
+  const langFilterRaw = sanitizeString(query.lang || query.language);
+  const langFilter = langFilterRaw ? langFilterRaw.toUpperCase() : "";
   const search = sanitizeString(query.search || query.q);
+  const contentKeyFilter = sanitizeString(query.contentKey || query.content_key);
 
   const where = includeDeleted ? {} : { is_deleted: false };
   if (statusFilter && statusFilter.toLowerCase() !== "all") {
@@ -227,6 +243,12 @@ const buildTemplateFilters = (query = {}) => {
   }
   if (typeFilter && typeFilter.toLowerCase() !== "all") {
     where.type = typeFilter;
+  }
+  if (langFilter && langFilter.toLowerCase() !== "all") {
+    where.lang = langFilter;
+  }
+  if (contentKeyFilter) {
+    where.content_key = contentKeyFilter;
   }
   if (search) {
     where.title = { contains: search, mode: "insensitive" };
@@ -278,6 +300,11 @@ export async function createTemplate(req, res) {
     });
   } catch (err) {
     console.error("Template create error:", err);
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        error: "A template with this content key and language already exists.",
+      });
+    }
     return res.status(500).json({ error: err.message });
   }
 }
@@ -364,6 +391,10 @@ export async function updateTemplate(req, res) {
       type: normalized.type || undefined,
       status: normalized.status || undefined,
       lang: normalized.lang || undefined,
+      content_key:
+        normalized.content_key === null
+          ? null
+          : normalized.content_key || undefined,
       body: normalized.body !== undefined ? normalized.body : undefined,
       media_url: normalized.media_url !== undefined ? normalized.media_url : undefined,
       placeholders:
@@ -401,6 +432,11 @@ export async function updateTemplate(req, res) {
     console.error("Template update error:", err);
     if (err.code === "P2025") {
       return res.status(404).json({ error: "Template not found" });
+    }
+    if (err.code === "P2002") {
+      return res.status(409).json({
+        error: "A template with this content key and language already exists.",
+      });
     }
     return res.status(500).json({ error: err.message });
   }

@@ -2,18 +2,19 @@
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 
 const SUPPORTED_LOCALES = [
-  { value: "en", label: "English" },
-  { value: "my", label: "Bahasa Melayu" },
-  { value: "zh", label: "Chinese" },
+  { value: "EN", label: "English" },
+  { value: "MY", label: "Bahasa Melayu" },
+  { value: "CN", label: "Chinese" },
 ];
+const LOCALE_ORDER = SUPPORTED_LOCALES.map((l) => l.value);
 
 type ButtonType = "quick_reply";
 
@@ -50,6 +51,7 @@ type TemplateForm = {
   title: string;
   type: TemplateActionType;
   lang: string;
+  content_key: string;
   body: string;
   mediaurl: string; // URL only
   expiresat: string;
@@ -87,7 +89,36 @@ const MENU_CONFIG_ERROR =
 const countTotalOptions = (sections: TemplateMenuSection[]) =>
   sections.reduce((sum, sec) => sum + (sec.options?.length || 0), 0);
 
-const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
+const generateContentKeyFromTitle = (title: string) => {
+  const base =
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "content";
+  const suffix = Math.random().toString(36).slice(2, 6);
+  return `${base}-${suffix}`;
+};
+
+const chooseAvailableLang = (
+  current: string,
+  used: string[],
+  preferred?: string | null
+) => {
+  const normalizedCurrent = (current || "").toUpperCase();
+  const normalizedPreferred = (preferred || "").toUpperCase();
+  if (normalizedCurrent && !used.includes(normalizedCurrent)) return normalizedCurrent;
+  if (normalizedPreferred && !used.includes(normalizedPreferred)) return normalizedPreferred;
+  const fallback = LOCALE_ORDER.find((lang) => !used.includes(lang));
+  return fallback || normalizedCurrent || "EN";
+};
+
+const looksLikeImage = (url?: string | null) =>
+  !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url || "");
+const looksLikeVideo = (url?: string | null) =>
+  !!url && /\.(mp4|mov|avi|mkv|webm)(\?.*)?$/i.test(url || "");
+const looksLikeDocument = (url?: string | null) =>
+  !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)(\?.*)?$/i.test(url || "");
 
 function createEmptyMenu(): TemplateMenu {
   return {
@@ -235,7 +266,8 @@ function createEmptyForm(): TemplateForm {
   return {
     title: "",
     type: "message",
-    lang: "en",
+    lang: "EN",
+    content_key: "",
     body: "",
     mediaurl: "",
     expiresat: "",
@@ -248,6 +280,7 @@ function createEmptyForm(): TemplateForm {
 
 export default function ContentCreatePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { canCreate, loading: privLoading } = usePrivilege("content");
   const navLinkClass =
     "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
@@ -258,12 +291,34 @@ export default function ContentCreatePage() {
   );
 
   const [form, setForm] = useState<TemplateForm>(() => createEmptyForm());
+  const [usedLangs, setUsedLangs] = useState<string[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [buttonError, setButtonError] = useState<string | null>(null);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!searchParams) return;
+    const fromContentKey = searchParams.get("contentKey") || "";
+    const fromTitle = searchParams.get("fromTitle") || "";
+    const fromBody = searchParams.get("fromBody") || "";
+    const baseLang = (searchParams.get("baseLang") || "").toUpperCase();
+    const used = (searchParams.get("usedLangs") || "")
+      .split(",")
+      .map((l) => l.trim().toUpperCase())
+      .filter(Boolean);
+
+    setUsedLangs(used);
+    setForm((prev) => ({
+      ...prev,
+      content_key: prev.content_key || fromContentKey,
+      title: prev.title || fromTitle,
+      body: prev.body || fromBody,
+      lang: chooseAvailableLang(prev.lang, used, baseLang),
+    }));
+  }, [searchParams]);
 
   const handleChange = (
     e:
@@ -639,12 +694,18 @@ export default function ContentCreatePage() {
         interactiveType: form.interactiveType,
       };
 
+      const contentKey =
+        (form.content_key || "").trim() ||
+        generateContentKeyFromTitle(form.title || "content");
+      const normalizedLang = (form.lang || "EN").toUpperCase();
+
       const payload = {
         title: form.title,
         type: form.type,
         status: "Active",
-        lang: form.lang,
-        defaultLang: form.lang,
+        lang: normalizedLang,
+        defaultLang: normalizedLang,
+        content_key: contentKey,
         body: form.body,
         mediaUrl: form.mediaurl?.trim() || null,
         expiresAt: expiresAtIso,
@@ -768,7 +829,7 @@ export default function ContentCreatePage() {
             </label>
           </div>
 
-          {/* Language */}
+          {/* Language + Content key */}
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm font-medium">
               <span>Language</span>
@@ -780,11 +841,35 @@ export default function ContentCreatePage() {
                 required
               >
                 {SUPPORTED_LOCALES.map((locale) => (
-                  <option key={locale.value} value={locale.value}>
-                    {locale.label} ({locale.value.toUpperCase()})
+                  <option
+                    key={locale.value}
+                    value={locale.value}
+                    disabled={usedLangs.includes(locale.value) && form.lang !== locale.value}
+                  >
+                    {locale.label} ({locale.value})
+                    {usedLangs.includes(locale.value) ? " — already used" : ""}
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-muted-foreground">
+                Required. Contacts with this language will receive this variant.
+              </p>
+            </label>
+
+            <label className="space-y-1 text-sm font-medium">
+              <span>Content Key</span>
+              <input
+                type="text"
+                name="content_key"
+                placeholder="welcome_message"
+                value={form.content_key}
+                onChange={handleChange}
+                className="w-full rounded-md border px-3 py-2"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use the same key for each translation of the same message
+                (e.g. welcome_message). Left blank, we will auto-generate one.
+              </p>
             </label>
           </div>
 
@@ -1251,30 +1336,50 @@ export default function ContentCreatePage() {
             </p>
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
               {/* media preview (URL-based) */}
-              {form.mediaurl.trim() && (
-                <div className="mb-2 overflow-hidden rounded-md bg-background">
-                  {looksLikeVideo(form.mediaurl) ? (
-                    <video
-                      className="w-full max-h-40"
-                      controls
-                      muted
-                      playsInline
-                      preload="metadata"
-                      src={form.mediaurl.trim()}
-                    />
-                  ) : (
-                    <img
-                      src={form.mediaurl.trim()}
-                      alt="Media preview"
-                      className="block w-full object-cover max-h-40"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display =
-                          "none";
-                      }}
-                    />
-                  )}
-                </div>
-              )}
+              {form.mediaurl.trim() ? (() => {
+                const mediaUrl = form.mediaurl.trim();
+                const isImage = looksLikeImage(mediaUrl);
+                const isVideo = looksLikeVideo(mediaUrl);
+                const isDoc = looksLikeDocument(mediaUrl);
+                return (
+                  <div className="mb-2 overflow-hidden rounded-md bg-background">
+                    {isVideo ? (
+                      <video
+                        className="w-full max-h-64 bg-black"
+                        controls
+                        muted
+                        playsInline
+                        preload="metadata"
+                        src={mediaUrl}
+                      />
+                    ) : isImage ? (
+                      <img
+                        src={mediaUrl}
+                        alt="Media preview"
+                        className="block w-full object-cover max-h-64"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="p-3 text-xs text-muted-foreground space-y-1">
+                        <div className="font-semibold">{isDoc ? "Document" : "Attachment"}</div>
+                        <a
+                          href={mediaUrl}
+                          className="block truncate text-primary hover:underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {mediaUrl}
+                        </a>
+                        <div className="text-[11px]">
+                          Preview shown as a link (non-media file).
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })() : null}
 
               {/* body bubble */}
               <div className="rounded-lg bg-background px-3 py-2 text-xs leading-relaxed shadow-sm">

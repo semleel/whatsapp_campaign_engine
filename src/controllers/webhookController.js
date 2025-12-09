@@ -206,6 +206,14 @@ export async function webhookHandler(req, res) {
             type: "text",
             text: { body: content || "..." },
           });
+        const payloadForStorage = {
+          ...waPayload,
+          _meta: {
+            template_source_id: stepContext.template_source_id ?? null,
+            content_id: stepContext.content_id ?? null,
+            content_lang: stepContext.content_lang ?? null,
+          },
+        };
         const senderId =
           activeWaConfig?.phone_number_id ||
           activeWaConfig?.phone_number ||
@@ -231,7 +239,7 @@ export async function webhookHandler(req, res) {
                   : "[interactive message]"),
               sender_id: senderId,
               receiver_id: receiverId,
-              payload_json: JSON.stringify(waPayload),
+              payload_json: JSON.stringify(payloadForStorage),
               message_status: "pending",
             },
           });
@@ -269,7 +277,7 @@ export async function webhookHandler(req, res) {
               provider_msg_id: providerId,
               created_at: new Date(),
               message_status: providerId ? "sent" : "error",
-              payload_json: JSON.stringify(waPayload),
+              payload_json: JSON.stringify(payloadForStorage),
             },
           });
         }

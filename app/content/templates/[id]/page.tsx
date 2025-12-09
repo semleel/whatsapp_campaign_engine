@@ -33,6 +33,7 @@ type TemplateActionType = "choice" | "message" | "input" | "api";
 
 type TemplateData = {
   contentid: number;
+  content_key?: string | null;
   title: string;
   type: TemplateActionType;
   status: string;
@@ -99,10 +100,11 @@ const TEMPLATE_CATEGORY_OPTIONS: {
 ];
 
 const SUPPORTED_LOCALES = [
-  { value: "en", label: "English" },
-  { value: "my", label: "Bahasa Melayu" },
-  { value: "zh", label: "Chinese" },
+  { value: "EN", label: "English" },
+  { value: "MY", label: "Bahasa Melayu" },
+  { value: "CN", label: "Chinese" },
 ];
+const LOCALE_ORDER = SUPPORTED_LOCALES.map((l) => l.value);
 
 function normalizeStatus(status: string | null | undefined): string {
   const value = (status || "").trim();
@@ -158,7 +160,12 @@ const ALLOWED_UPLOAD_TYPES = [
   "application/pdf",
 ];
 const MAX_UPLOAD_SIZE = 16 * 1024 * 1024; // 16 MB
-const looksLikeVideo = (url?: string | null) => !!url && /\.mp4($|\?)/i.test(url);
+const looksLikeImage = (url?: string | null) =>
+  !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url || "");
+const looksLikeVideo = (url?: string | null) =>
+  !!url && /\.(mp4|mov|avi|mkv|webm)(\?.*)?$/i.test(url || "");
+const looksLikeDocument = (url?: string | null) =>
+  !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)(\?.*)?$/i.test(url || "");
 const BUTTON_CONFIG_ERROR =
   "Invalid button configuration: WhatsApp allows up to 3 quick reply buttons.";
 const MENU_CONFIG_ERROR =
@@ -391,13 +398,15 @@ export default function EditTemplatePage() {
   const [menuError, setMenuError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [usedLangs, setUsedLangs] = useState<string[]>([]);
 
   const [form, setForm] = useState<TemplateData>({
     contentid: 0,
+    content_key: "",
     title: "",
     type: "message",
     status: "Active",
-    lang: "en",
+    lang: "EN",
     category: "Marketing",
     body: "",
     description: "",
@@ -412,6 +421,16 @@ export default function EditTemplatePage() {
     interactiveType: "default",
     menu: null,
   });
+  const addTranslationHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (form.content_key) params.set("contentKey", form.content_key);
+    if (form.title) params.set("fromTitle", form.title);
+    if (form.body) params.set("fromBody", form.body);
+    if (form.lang) params.set("baseLang", form.lang);
+    if (usedLangs.length) params.set("usedLangs", usedLangs.join(","));
+    const qs = params.toString();
+    return qs ? `/content/templates/create?${qs}` : "/content/templates/create";
+  }, [form.body, form.content_key, form.lang, form.title, usedLangs]);
 
   // Modal states
   const [confirm, setConfirm] = useState<ConfirmState>({
@@ -528,14 +547,23 @@ export default function EditTemplatePage() {
         const normalizedButtons =
           interactiveType === "buttons" ? quickReplyButtons : [];
 
+        const contentKey =
+          (data as any).content_key ||
+          (data as any).contentkey ||
+          "";
+        const normalizedLang =
+          ((data as any).lang || (data as any).defaultlang || "EN")
+            ?.toString()
+            .trim()
+            .toUpperCase() || "EN";
+
         setForm({
           contentid: (data as any).contentid,
+          content_key: contentKey,
           title: (data as any).title || "",
           type: normalizeTemplateType((data as any).type),
           status: normalizeStatus((data as any).status),
-          lang:
-            ((data as any).lang || (data as any).defaultlang || "en")?.trim() ||
-            "en",
+          lang: normalizedLang,
           category: (data as any).category || "Marketing",
           body: (data as any).body || (data as any).description || "",
           description: (data as any).description || "",
@@ -550,6 +578,28 @@ export default function EditTemplatePage() {
           interactiveType,
           menu: normalizedMenu,
         });
+
+        if (contentKey) {
+          try {
+            const templates = await Api.listTemplates({ includeDeleted: true });
+            const langs = templates
+              .filter(
+                (t: any) =>
+                  (t as any).content_key === contentKey ||
+                  (t as any).contentkey === contentKey
+              )
+              .map(
+                (t: any) =>
+                  ((t.lang || t.defaultlang || "") as string).toUpperCase()
+              )
+              .filter(Boolean);
+            setUsedLangs(Array.from(new Set(langs)));
+          } catch (err) {
+            console.error("Failed to load translations for key", err);
+          }
+        } else {
+          setUsedLangs([]);
+        }
       } catch (e: any) {
         console.error(e);
         setError(e.message || "Error loading template");
@@ -899,6 +949,9 @@ export default function EditTemplatePage() {
         interactiveType: apiInteractiveType,
       };
 
+      const normalizedLang = (form.lang || "EN").toUpperCase();
+      const contentKey = (form.content_key || "").trim() || null;
+
       const cleanedPlaceholders = form.placeholders
         ? { ...form.placeholders }
         : {};
@@ -909,8 +962,9 @@ export default function EditTemplatePage() {
         type: form.type,
         category: form.category || null,
         status: form.status,
-        lang: form.lang,
-        defaultLang: form.lang, // ✅ match TemplatePayload
+        lang: normalizedLang,
+        defaultLang: normalizedLang, // match TemplatePayload
+        content_key: contentKey,
         body: form.body,
         description: form.description || form.body || null,
         mediaUrl: finalMediaUrl,
@@ -1166,10 +1220,20 @@ export default function EditTemplatePage() {
           </p>
         </div>
 
-        <Link href="/content/templates" className={navLinkClass}>
-          {backIcon}
-          Back to library
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href={addTranslationHref}
+            className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Add Translation
+          </Link>
+          <Link
+            href="/content/templates"
+            className="text-sm text-primary hover:underline"
+          >
+            Back to library
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
@@ -1247,7 +1311,7 @@ export default function EditTemplatePage() {
           </div>
 
           {/* Status + Language row */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <label className="text-sm space-y-1">
               <span className="font-medium">Status</span>
               <select
@@ -1267,9 +1331,7 @@ export default function EditTemplatePage() {
               <select
                 className="w-full border rounded px-3 py-2"
                 value={form.lang}
-                onChange={(e) =>
-                  setForm({ ...form, lang: e.target.value as string })
-                }
+                disabled
               >
                 {SUPPORTED_LOCALES.map((loc) => (
                   <option key={loc.value} value={loc.value}>
@@ -1277,6 +1339,25 @@ export default function EditTemplatePage() {
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-muted-foreground">
+                Language is fixed per translation. Create a new translation for another language.
+              </p>
+            </label>
+
+            <label className="text-sm space-y-1">
+              <span className="font-medium">Content Key</span>
+              <input
+                type="text"
+                value={form.content_key || ""}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, content_key: e.target.value }))
+                }
+                className="w-full border rounded px-3 py-2"
+                placeholder="welcome_message"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use the same key across languages to link translations.
+              </p>
             </label>
           </div>
 
@@ -1751,29 +1832,50 @@ export default function EditTemplatePage() {
             </p>
 
             <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
-              {form.mediaurl?.trim() && (
-                <div className="mb-2 overflow-hidden rounded-md bg-background">
-                  {looksLikeVideo(form.mediaurl) ? (
-                    <video
-                      className="w-full max-h-40"
-                      controls
-                      muted
-                      playsInline
-                      preload="metadata"
-                      src={form.mediaurl.trim()}
-                    />
-                  ) : (
-                    <img
-                      src={form.mediaurl.trim()}
-                      className="rounded w-full object-cover max-h-40"
-                      alt="Media preview"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  )}
-                </div>
-              )}
+              {form.mediaurl?.trim() ? (() => {
+                const mediaUrl = form.mediaurl.trim();
+                const isImage = looksLikeImage(mediaUrl);
+                const isVideo = looksLikeVideo(mediaUrl);
+                const isDoc = looksLikeDocument(mediaUrl);
+                return (
+                  <div className="mb-2 overflow-hidden rounded-md bg-background">
+                    {isVideo ? (
+                      <video
+                        className="w-full max-h-64 bg-black"
+                        controls
+                        muted
+                        playsInline
+                        preload="metadata"
+                        src={mediaUrl}
+                      />
+                    ) : isImage ? (
+                      <img
+                        src={mediaUrl}
+                        className="rounded w-full object-cover max-h-64"
+                        alt="Media preview"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : (
+                      <div className="p-3 text-xs text-muted-foreground space-y-1">
+                        <div className="font-semibold">{isDoc ? "Document" : "Attachment"}</div>
+                        <a
+                          href={mediaUrl}
+                          className="block truncate text-primary hover:underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {mediaUrl}
+                        </a>
+                        <div className="text-[11px]">
+                          Preview shown as a link (non-media file).
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })() : null}
 
               <div className="bg-background rounded p-2 text-xs shadow">
                 {renderFormattedLines(form.body, "Body text here")}
@@ -1912,6 +2014,7 @@ export default function EditTemplatePage() {
     </div>
   );
 }
+
 
 
 

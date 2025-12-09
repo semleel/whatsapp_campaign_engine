@@ -140,6 +140,8 @@ export interface SendMessageResponse {
 // =============================================
 export interface ContentTemplate {
     contentid: number;
+    content_key?: string | null;
+    contentkey?: string | null;
     type?: string | null;
     category?: string | null;
     title?: string | null;
@@ -366,6 +368,8 @@ export interface TagItem {
 export interface TemplateListItem {
     contentid: number;
     content_id?: number;
+    content_key?: string | null;
+    contentkey?: string | null;
     title: string;
     type: string;
     status: string;
@@ -388,6 +392,7 @@ export interface TemplateListItem {
 }
 
 export interface TemplateDetail extends TemplateListItem {
+    content_key?: string | null;
     description?: string | null;
     mediaurl?: string | null;
     media_url?: string | null;
@@ -410,6 +415,8 @@ export type TemplatePayload = {
     type: string;
     status: string;
     lang: string;
+    content_key?: string | null;
+    contentKey?: string | null;
     defaultLang?: string;
     category?: string | null;
     description?: string | null;

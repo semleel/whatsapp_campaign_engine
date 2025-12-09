@@ -61,6 +61,80 @@ const generateLocalId = () => `step-${Date.now()}-${Math.random().toString(16).s
 
 const looksLikeImage = (url?: string | null) =>
   !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
+const looksLikeVideo = (url?: string | null) => !!url && /\.(mp4|mov|avi|mkv|webm)$/i.test(url);
+const looksLikeDocument = (url?: string | null) =>
+  !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)$/i.test(url);
+
+const INLINE_FORMATTERS: { regex: RegExp; wrap: (content: string, key: string) => React.ReactNode }[] =
+  [
+    {
+      regex: /```([^`]+)```/g,
+      wrap: (content, key) => (
+        <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
+          {content}
+        </code>
+      ),
+    },
+    {
+      regex: /`([^`]+)`/g,
+      wrap: (content, key) => (
+        <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
+          {content}
+        </code>
+      ),
+    },
+    { regex: /\*(?!\s)([^*]+?)\*(?!\s)/g, wrap: (c, key) => <strong key={key}>{c}</strong> },
+    { regex: /_(?!\s)([^_]+?)_(?!\s)/g, wrap: (c, key) => <em key={key}>{c}</em> },
+    { regex: /~(?!\s)([^~]+?)~(?!\s)/g, wrap: (c, key) => <s key={key}>{c}</s> },
+  ];
+
+function formatWhatsAppLine(line: string, keyPrefix: string) {
+  let segments: React.ReactNode[] = [line];
+
+  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
+    const next: React.ReactNode[] = [];
+
+    segments.forEach((seg, segIdx) => {
+      if (typeof seg !== "string") {
+        next.push(seg);
+        return;
+      }
+
+      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
+      let lastIndex = 0;
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(seg)) !== null) {
+        if (match.index > lastIndex) {
+          next.push(seg.slice(lastIndex, match.index));
+        }
+
+        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
+        lastIndex = match.index + match[0].length;
+      }
+
+      if (lastIndex < seg.length) {
+        next.push(seg.slice(lastIndex));
+      }
+    });
+
+    segments = next;
+  });
+
+  return segments;
+}
+
+function renderFormattedLines(text?: string | null, placeholder = "No prompt yet.") {
+  const lines = text ? text.split("\n") : [placeholder];
+  return lines.map((line, idx) => {
+    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
+    return (
+      <p key={`line-${idx}`} className="whitespace-pre-wrap">
+        {content}
+      </p>
+    );
+  });
+}
 
 const getTemplateId = (template: TemplateListItem) =>
   template.content_id ?? template.contentid ?? null;
@@ -1230,39 +1304,68 @@ export default function CampaignStepsPage() {
                 <span>{activeStep.step_code || "No code"}</span>
               </div>
 
-              {activeStep.media_url?.trim() ? (
-                <div className="space-y-2">
-                  <div className="rounded-md overflow-hidden border bg-muted">
-                    <img
-                      src={activeStep.media_url}
-                      alt="Step media"
-                      className="block w-full object-cover max-h-40"
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.display = "none";
-                        const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                        if (fallback) fallback.style.display = "block";
-                      }}
-                    />
-                  </div>
-                  <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground hidden">
-                    <span className="block font-semibold">Attachment</span>
-                    <a href={activeStep.media_url} className="block truncate text-primary hover:underline" target="_blank" rel="noreferrer">
-                      {activeStep.media_url}
-                    </a>
-                  </div>
-                  {!looksLikeImage(activeStep.media_url) ? (
-                    <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                      <span className="block font-semibold">Attachment</span>
-                      <a href={activeStep.media_url} className="block truncate text-primary hover:underline" target="_blank" rel="noreferrer">
-                        {activeStep.media_url}
-                      </a>
+              {activeStep.media_url?.trim() ? (() => {
+                const mediaUrl = activeStep.media_url?.trim() || "";
+                const isImage = looksLikeImage(mediaUrl);
+                const isVideo = looksLikeVideo(mediaUrl);
+                const isDoc = looksLikeDocument(mediaUrl);
+                return (
+                  <div className="space-y-2">
+                    <div className="rounded-md overflow-hidden border bg-muted">
+                      {isVideo ? (
+                        <video
+                          className="block w-full max-h-64 bg-black"
+                          controls
+                          playsInline
+                          muted
+                          preload="metadata"
+                          src={mediaUrl}
+                        />
+                      ) : isImage ? (
+                        <img
+                          src={mediaUrl}
+                          alt="Step media"
+                          className="block w-full object-cover max-h-64"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                            const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                            if (fallback) fallback.style.display = "block";
+                          }}
+                        />
+                      ) : (
+                        <div className="p-3 text-xs text-muted-foreground">
+                          <div className="font-semibold">Attachment</div>
+                          <a
+                            href={mediaUrl}
+                            className="block truncate text-primary hover:underline"
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {mediaUrl}
+                          </a>
+                          <div className="text-[11px]">Preview shown as a link (non-media file).</div>
+                        </div>
+                      )}
                     </div>
-                  ) : null}
-                </div>
-              ) : null}
+                    {!isImage && !isVideo ? (
+                      <div className="rounded-md border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                        <span className="block font-semibold">{isDoc ? "Document" : "Attachment"}</span>
+                        <a
+                          href={mediaUrl}
+                          className="block truncate text-primary hover:underline"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {mediaUrl}
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })() : null}
 
-              <div className="rounded-lg bg-background px-3 py-2 leading-relaxed shadow-sm whitespace-pre-line">
-                {activeStep.prompt_text?.trim() || "No prompt yet."}
+              <div className="rounded-lg bg-background px-3 py-2 leading-relaxed shadow-sm text-sm space-y-1">
+                {renderFormattedLines(activeStep.prompt_text, "No prompt yet.")}
               </div>
 
               {activeStep.action_type === "choice" && (
