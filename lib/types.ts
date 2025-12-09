@@ -30,33 +30,33 @@ export type EndpointConfig = {
 
 // api_log table (for viewing logs in UI, if you want)
 export interface ApiLogEntry {
-  logid: number; // DB: logid
-  apiid: number | null;
-  campaignid: number | null;
-  campaignsessionid: number | null;
-  contactid: number | null;
+    logid: number; // DB: logid
+    apiid: number | null;
+    campaignid: number | null;
+    campaignsessionid: number | null;
+    contactid: number | null;
 
-  campaignname?: string | null;
-  contact_phone?: string | null;
+    campaignname?: string | null;
+    contact_phone?: string | null;
 
-  request_url: string | null;
-  request_body: string | null;
-  response_body: string | null;
-  response_code: number | null;
+    request_url: string | null;
+    request_body: string | null;
+    response_body: string | null;
+    response_code: number | null;
 
-  status: string | null; // e.g. 'success', 'error', 'timeout'
-  error_message: string | null;
+    status: string | null; // e.g. 'success', 'error', 'timeout'
+    error_message: string | null;
 
-  called_at: string; // ISO datetime string
-  endpoint?: string | null;
-  status_code?: number | string | null;
-  method?: string | null;
-  path?: string | null;
-  createdat?: string | null;
+    called_at: string; // ISO datetime string
+    endpoint?: string | null;
+    status_code?: number | string | null;
+    method?: string | null;
+    path?: string | null;
+    createdat?: string | null;
 
-  stepid?: number | null;
-  source?: string | null;
-  template_used?: string | null;
+    stepid?: number | null;
+    source?: string | null;
+    template_used?: string | null;
 }
 
 // Delivery report row (message + latest deliverlog)
@@ -272,6 +272,9 @@ export type CampaignStep = {
     media_url?: string | null;
     template_source_id?: number | null;
     template?: TemplateDetail | null;
+    next_step_number?: number | null;
+    failure_step_number?: number | null;
+    updatedat?: string | null;
 };
 
 export type CampaignStepChoice = {
