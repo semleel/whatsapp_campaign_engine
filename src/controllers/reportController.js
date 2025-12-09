@@ -64,9 +64,8 @@ export async function reportSummary(_req, res) {
       prisma.message.count(),
       prisma.campaign.count({
         where: {
-          status: { not: "Archived" },
-          is_active: true,
-          OR: [{ is_deleted: false }, { is_deleted: null }],
+          // Treat any non-archived campaign as "active" for summary purposes (cover case variants).
+          status: { notIn: ["Archived", "archived"] },
         },
       }),
       prisma.delivery_log.findMany({
