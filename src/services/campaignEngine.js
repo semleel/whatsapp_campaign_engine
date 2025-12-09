@@ -442,13 +442,27 @@ async function runChoiceStep({
   });
 
   let matchedChoice = null;
+  let selectedCode = null;
 
   if (type === "button" || type === "list") {
-    const selectedCode = extractChoiceCodeFromPayload(payload);
+    selectedCode = extractChoiceCodeFromPayload(payload);
     if (selectedCode) {
-      matchedChoice = choices.find(
-        (c) => (c.choice_code || "").toLowerCase() === selectedCode.toLowerCase()
-      );
+      const lc = selectedCode.toLowerCase();
+      matchedChoice =
+        choices.find((c) => (c.choice_code || "").toLowerCase() === lc) ||
+        choices.find((c) => (c.label || "").trim().toLowerCase() === lc) ||
+        choices.find((c) => String(c.choice_id || "").toLowerCase() === lc);
+      if (!matchedChoice) {
+        console.warn("[ENGINE] No matching choice for interactive reply", {
+          selectedCode: lc,
+          available: choices.map((c) => ({
+            id: c.choice_id,
+            code: c.choice_code,
+            label: c.label,
+            next_step_id: c.next_step_id,
+          })),
+        });
+      }
     }
   } else {
     const text = (incomingText || "").toLowerCase();
@@ -468,6 +482,20 @@ async function runChoiceStep({
       user_input_raw: incomingText,
       is_valid: isValid,
     },
+  });
+
+  console.log("[ENGINE] Choice reply processed", {
+    step_id: step.step_id,
+    selectedCode,
+    incomingText,
+    matchedChoice: matchedChoice
+      ? {
+          id: matchedChoice.choice_id,
+          code: matchedChoice.choice_code,
+          label: matchedChoice.label,
+          next_step_id: matchedChoice.next_step_id,
+        }
+      : null,
   });
 
   if (!isValid) {
@@ -500,6 +528,12 @@ async function runChoiceStep({
   // For choices we only respect the specific button's next_step_id
   const targetStepId = matchedChoice.next_step_id;
 
+  console.log("[ENGINE] Choice routing", {
+    step_id: step.step_id,
+    targetStepId,
+    is_end: step.is_end_step,
+  });
+
   if (!targetStepId) {
     await prisma.campaign_session.update({
       where: { campaign_session_id: session.campaign_session_id },
@@ -520,6 +554,14 @@ async function runChoiceStep({
   const nextStep = await prisma.campaign_step.findUnique({
     where: { step_id: targetStepId },
   });
+
+  if (!nextStep) {
+    console.error("[ENGINE] Target step not found for choice", {
+      targetStepId,
+      step_id: step.step_id,
+      campaign_id: step.campaign_id,
+    });
+  }
 
   await prisma.campaign_session.update({
     where: { campaign_session_id: session.campaign_session_id },

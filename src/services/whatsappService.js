@@ -65,6 +65,8 @@ async function markDeliveryFailure(deliverAttempt, err) {
  */
 export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, deliverLog = null) {
   let deliverAttempt = deliverLog || null;
+  // Track if we've attempted a text-only fallback for a media payload
+  let triedTextFallback = false;
   try {
     if (!to || !messageObj) throw new Error("Invalid message payload");
 
@@ -146,6 +148,19 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
     const msg = data?.error?.message || err.message || "Unknown error";
 
     error("WhatsApp send error:", status, data || err.message);
+
+    // If media upload failed, try a text-only fallback so users aren't blocked
+    const payloadType = (messageObj && typeof messageObj === "object" && messageObj.type) || null;
+    const isMediaPayload = ["image", "video", "audio", "document"].includes(payloadType);
+    if (isMediaPayload && messageRecord?.message_content && !triedTextFallback) {
+      triedTextFallback = true;
+      log("Sending text-only fallback after media send failure");
+      try {
+        await sendWhatsAppMessage(to, messageRecord.message_content, null, null);
+      } catch (fallbackErr) {
+        error("Fallback text send also failed:", fallbackErr?.message || fallbackErr);
+      }
+    }
 
     const text = msg.toLowerCase();
     const isRestricted =
