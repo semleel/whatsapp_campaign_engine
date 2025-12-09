@@ -58,6 +58,21 @@ async function markDeliveryFailure(deliverAttempt, err) {
   });
 }
 
+function extractImageFromText(body = "") {
+  if (!body || typeof body !== "string") return null;
+
+  const urlMatch = body.match(/https?:\/\/\S+/i);
+  if (!urlMatch) return null;
+
+  let url = urlMatch[0];
+  url = url.replace(/[),.;!?]+$/, "");
+
+  if (!/\.(jpe?g|png|gif|webp)$/i.test(url)) return null;
+
+  const caption = body.replace(urlMatch[0], "").trim();
+  return { url, caption: caption || null };
+}
+
 /**
  * Send a WhatsApp message.
  * If `messageRecord` is provided, also create/update deliverlog and message status.
@@ -72,18 +87,43 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
 
     let normalized;
     if (typeof messageObj === "string") {
-      normalized = {
-        type: "text",
-        text: {
-          body: messageObj,
-          preview_url: true
-        }
-      };
-    } else if (typeof messageObj === "object" && messageObj.type) {
-      if (messageObj.type === "text") {
-        messageObj.text.preview_url = messageObj.text.preview_url ?? true;
+      const img = extractImageFromText(messageObj);
+      if (img) {
+        normalized = {
+          type: "image",
+          image: {
+            link: img.url,
+            ...(img.caption ? { caption: img.caption } : {}),
+          },
+        };
+      } else {
+        normalized = {
+          type: "text",
+          text: {
+            body: messageObj,
+            preview_url: true,
+          },
+        };
       }
-      normalized = messageObj;
+    } else if (typeof messageObj === "object" && messageObj.type) {
+      if (messageObj.type === "text" && messageObj.text?.body) {
+        const img = extractImageFromText(messageObj.text.body);
+        if (img) {
+          normalized = {
+            type: "image",
+            image: {
+              link: img.url,
+              ...(img.caption ? { caption: img.caption } : {}),
+            },
+          };
+        } else {
+          messageObj.text = messageObj.text || {};
+          messageObj.text.preview_url = messageObj.text.preview_url ?? true;
+          normalized = messageObj;
+        }
+      } else {
+        normalized = messageObj;
+      }
     } else {
       throw new Error("Invalid message payload");
     }

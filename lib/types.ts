@@ -5,94 +5,58 @@
 // =============================================
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-export type ApiLocation = "query" | "header" | "body" | "path";
-export type ApiValueSource = "contact" | "campaign" | "constant";
-
 export type ApiAuthType = "none" | "bearer_header" | "api_key_header";
 
 // =============================================
-// API Layer (maps to tables: api, apiparameter, api_log, campaign_api_mapping)
+// API Layer (maps to tables: api, api_log)
 // =============================================
-
-// apiparameter table
-export type ApiParameter = {
-    paramid?: number;           // DB: paramid (PK)
-    apiid?: number;             // FK to api.apiid
-
-    location: ApiLocation;      // DB: location ('query', 'header', 'body', 'path')
-    key: string;                // DB: key
-
-    valuesource: ApiValueSource; // DB: valuesource ('contact', 'campaign', 'constant')
-    valuepath?: string | null;   // DB: valuepath (e.g. "phonenum")
-    constantvalue?: string | null; // DB: constantvalue
-
-    required?: boolean;          // DB: required
-};
 
 // api table
 export type EndpointConfig = {
-    apiid?: number;                 // DB: apiid (PK)
-
-    name: string;                   // DB: name
-    description?: string | null;    // DB: description
+    apiid?: number; // DB: api_id (PK)
+    name: string; // DB: name
+    description: string | null; // DB: description
     response_template?: string | null; // DB: response_template
-
-    base_url: string;               // DB: base_url
-    path: string;                   // DB: path
-    method: HttpMethod | string;    // DB: method (varchar(10))
-
-    auth_type: ApiAuthType;         // DB: auth_type
-    auth_header_name?: string | null; // DB: auth_header_name
-    auth_token?: string | null;     // DB: auth_token (if you choose to store it)
-
-    timeout_ms?: number | null;     // DB: timeout_ms
-    retry_enabled?: boolean;        // DB: retry_enabled
-    retry_count?: number | null;    // DB: retry_count
-
-    is_active?: boolean;            // DB: is_active
-    lastupdated?: string | null;    // DB: lastupdated (ISO string)
-
-    // Joined children:
-    parameters?: ApiParameter[];    // from apiparameter
-};
-
-// campaign_step rows with action_type = 'api'
-export type CampaignApiMapping = {
-    step_id: number;              // campaign_step.step_id
-    campaignid: number;           // campaign_step.campaign_id
-    campaignname?: string | null; // joined campaign.campaign_name (optional)
-
-    step_number: number;          // campaign_step.step_number
-    step_code?: string | null;    // campaign_step.step_code
-
-    apiid?: number | null;        // campaign_step.api_id
-    api_name?: string | null;     // joined api.name (optional)
-
-    is_active?: boolean;          // derived from campaign.status if available
+    method: HttpMethod | string; // DB: method (e.g. 'GET', 'POST')
+    url: string; // DB: url (full https://... path)
+    auth_type: ApiAuthType; // DB: auth_type
+    auth_header_name: string | null; // DB: auth_header_name
+    auth_token: string | null; // DB: auth_token
+    is_active: boolean; // DB: is_active
+    lastupdated?: string | null; // DB: last_updated (ISO string)
+    headers_json?: { key: string; value: string }[]; // DB: headers_json
+    body_template?: string | null; // DB: body_template (stringified JSON or raw body)
 };
 
 // api_log table (for viewing logs in UI, if you want)
 export interface ApiLogEntry {
-    logid: number;                     // DB: logid
-    apiid: number | null;
-    campaignid: number | null;
-    campaignsessionid: number | null;
-    contactid: number | null;
+  logid: number; // DB: logid
+  apiid: number | null;
+  campaignid: number | null;
+  campaignsessionid: number | null;
+  contactid: number | null;
 
-    request_url: string | null;
-    request_body: string | null;
-    response_body: string | null;
-    response_code: number | null;
+  campaignname?: string | null;
+  contact_phone?: string | null;
 
-    status: string | null;             // e.g. 'success', 'error', 'timeout'
-    error_message: string | null;
+  request_url: string | null;
+  request_body: string | null;
+  response_body: string | null;
+  response_code: number | null;
 
-    called_at: string;                 // ISO datetime string
-    endpoint?: string | null;
-    status_code?: number | string | null;
-    method?: string | null;
-    path?: string | null;
-    createdat?: string | null;
+  status: string | null; // e.g. 'success', 'error', 'timeout'
+  error_message: string | null;
+
+  called_at: string; // ISO datetime string
+  endpoint?: string | null;
+  status_code?: number | string | null;
+  method?: string | null;
+  path?: string | null;
+  createdat?: string | null;
+
+  stepid?: number | null;
+  source?: string | null;
+  template_used?: string | null;
 }
 
 // Delivery report row (message + latest deliverlog)
@@ -202,9 +166,21 @@ export interface TestRunResult {
     ok: boolean;
     status: number;
     timeMs: number;
+    /**
+     * Nested object from backend:
+     * {
+     *   raw: any;
+     *   formatted?: string | null;
+     * }
+     */
     responseJson?: any;
+    /** Mirror of responseJson.raw for convenience */
+    raw?: any;
+    /** Mirror of responseJson.formatted for convenience */
+    formatted?: any;
     errorMessage?: string;
 }
+
 
 // =============================================
 // Reference data

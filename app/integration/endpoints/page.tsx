@@ -10,9 +10,7 @@ import { showCenteredConfirm, showPrivilegeDenied } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
 function formatUrl(endpoint: EndpointConfig) {
-  const base = endpoint.base_url?.replace(/\/+$/, "") || "";
-  const path = endpoint.path ? `/${endpoint.path.replace(/^\/+/, "")}` : "/";
-  return `${base}${path}`;
+  return endpoint.url || "-";
 }
 
 export default function EndpointsPage() {

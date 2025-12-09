@@ -4,33 +4,28 @@ import Link from "next/link";
 import { usePrivilege } from "@/lib/permissions";
 
 const INTRO =
-  "Connect WhatsApp user journeys to downstream APIs with a clean separation between campaign logic, parameter binding, and formatter fallbacks.";
+  "Manage HTTP endpoints, run live tests, and view execution logs so campaign logic can call downstream APIs with confidence.";
 
 const FEATURE_CARDS = [
   {
-    title: "Endpoint catalog",
-    copy: "Re-usable definitions for each upstream API (base_url, path, auth, retry policy).",
+    title: "Endpoints",
+    copy: "Create, edit, and activate HTTPS definitions with authentication, headers, and body templates.",
     href: "/integration/endpoints",
   },
   {
-    title: "Parameter binding",
-    copy: "Per-parameter rules describing where each value comes from (contact, campaign, constant).",
-    href: "/integration/endpoints",
+    title: "Test Runner",
+    copy: "Exercise any endpoint with sample variables before wiring it into flows.",
+    href: "/integration/test-runner",
   },
   {
-    title: "Campaign mapping",
-    copy: "Link content nodes or keywords to the correct API and define success/error follow-ups.",
-    href: "/integration/mappings",
-  },
-  {
-    title: "Observability",
-    copy: "Inspect api_log entries to understand failures, latency, and payloads.",
+    title: "Logs",
+    copy: "Inspect recent api_log entries to understand requests, responses, and errors.",
     href: "/integration/logs",
   },
 ];
 
 export default function IntegrationHome() {
-  const { canView, canCreate, canUpdate, loading } = usePrivilege("integration");
+  const { canView, canCreate, loading } = usePrivilege("integration");
 
   if (!loading && !canView) {
     return (
@@ -45,7 +40,7 @@ export default function IntegrationHome() {
       <section className="space-y-4">
         <header className="space-y-2">
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Integrations</p>
-          <h1 className="text-2xl font-semibold">Backend Integration & API Mappings</h1>
+          <h1 className="text-2xl font-semibold">Backend integrations</h1>
           <p className="text-sm text-muted-foreground max-w-3xl">{INTRO}</p>
         </header>
 
@@ -67,7 +62,9 @@ export default function IntegrationHome() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Shortcuts</p>
-            <p className="text-sm text-muted-foreground">Jump to endpoints, mappings, or recent logs.</p>
+            <p className="text-sm text-muted-foreground">
+              Jump to endpoints, the test runner, or recent logs.
+            </p>
           </div>
           <div className="flex gap-2">
             {canCreate && (
@@ -75,19 +72,18 @@ export default function IntegrationHome() {
                 New endpoint
               </Link>
             )}
-            {canUpdate && (
-              <Link href="/integration/mappings" className="btn btn-ghost">
-                Manage mappings
-              </Link>
-            )}
+            <Link href="/integration/test-runner" className="btn btn-ghost">
+              Run test
+            </Link>
+            <Link href="/integration/logs" className="btn btn-ghost">
+              View logs
+            </Link>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <span className="pill">Endpoints catalog</span>
-          <span className="pill">Mappings</span>
-          <span className="pill">Logs</span>
-          <span className="pill">Formatters</span>
           <span className="pill">Test runner</span>
+          <span className="pill">Logs</span>
         </div>
       </section>
     </div>

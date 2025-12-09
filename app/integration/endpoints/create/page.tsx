@@ -13,15 +13,15 @@ import { showPrivilegeDenied } from "@/lib/showAlert";
 const INITIAL_ENDPOINT: EndpointConfig = {
   name: "",
   description: "",
-  base_url: "https://",
-  path: "/",
   method: "GET",
+  url: "https://",
   auth_type: "none",
-  timeout_ms: 5000,
-  retry_enabled: false,
-  retry_count: 0,
+  auth_header_name: "Authorization",
+  auth_token: "",
   is_active: true,
-  parameters: [],
+  headers_json: [],
+  body_template: "",
+  response_template: "",
 };
 
 export default function NewEndpointPage() {
@@ -35,7 +35,7 @@ export default function NewEndpointPage() {
         <div>
           <h3 className="text-lg font-semibold">Register endpoint</h3>
           <p className="text-sm text-muted-foreground">
-            Capture the HTTPS destination so campaigns can call downstream systems without redeploying code.
+            Define an HTTPS endpoint so campaigns can call downstream systems without redeploying code.
           </p>
         </div>
       </div>
@@ -51,8 +51,16 @@ export default function NewEndpointPage() {
           }
           setSaving(true);
           try {
-            await Api.createEndpoint(data);
-            router.push("/integration/endpoints");
+            const created = await Api.createEndpoint(data);
+            const endpointId =
+              created.apiid ??
+              (created as any).api_id ??
+              (created as any).id;
+            router.push(
+              endpointId
+                ? `/integration/endpoints/${endpointId}`
+                : "/integration/endpoints"
+            );
           } finally {
             setSaving(false);
           }

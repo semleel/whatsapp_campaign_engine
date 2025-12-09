@@ -1,3 +1,5 @@
+// menuConfig.ts
+
 import type { ReactNode } from "react";
 
 export type MenuItem = {
@@ -57,10 +59,7 @@ export const MENU: MenuSection[] = [
     id: "integration",
     label: "Integrations",
     items: [
-      { label: "API Catalog", href: "/integration", exact: true },
-      { label: "Endpoints", href: "/integration/endpoints" },
-      { label: "Mappings", href: "/integration/mappings" },
-      { label: "Formatters", href: "/integration/formatters" },
+      { label: "Endpoints", href: "/integration/endpoints", exact: true },
       { label: "Test Runner", href: "/integration/test-runner" },
       { label: "Logs", href: "/integration/logs" },
     ],

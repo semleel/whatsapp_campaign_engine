@@ -41,22 +41,28 @@ export default function LiveTestRunnerPage() {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold">Live test runner</h2>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Execute a single endpoint using on-demand variables before wiring it into a flow. Requests reuse the same HTTPS configuration stored in the database.
+            Execute an endpoint with sample variables before wiring it into a flow.
+            Requests reuse the same HTTPS configuration stored in the database.
           </p>
         </div>
       </div>
 
-      <section className="rounded-xl border p-5 space-y-4">
+      {/* Main card */}
+      <section className="rounded-xl border bg-card p-5 space-y-4 shadow-sm">
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading endpoints...</p>
         ) : error ? (
           <p className="text-sm text-rose-600">{error}</p>
         ) : endpoints.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No endpoints available yet.</p>
+          <p className="text-sm text-muted-foreground">
+            No endpoints available yet. Create one first under{" "}
+            <span className="font-medium">Integration → Endpoints</span>.
+          </p>
         ) : (
           <TestRunner
             endpoints={endpoints}

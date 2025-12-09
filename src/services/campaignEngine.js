@@ -68,18 +68,70 @@ const updateContactLanguageForSession = async (sessionId, langCode) => {
 export async function handleIncomingMessage(args) {
   const { fromPhone, text, type, payload, enginePayload } = args;
   const contact = await findOrCreateContact(fromPhone);
+
   const keywordTextTypes = ["text", "button", "list"];
   const incomingTextValue = text || "";
-  const normalizedText =
-    keywordTextTypes.includes(type) && text
-      ? text.trim()
-      : "";
 
-  if (normalizedText.startsWith("/")) {
-    return handleSystemCommand({ contact, command: normalizedText, rawText: text || "" });
+  // We treat the FIRST word as the campaign keyword, and everything after that as "args".
+  // Examples:
+  //   "pokemon random"   -> keywordOnly = "pokemon", keywordArgs = "random"
+  //   "pokemon pikachu"  -> keywordOnly = "pokemon", keywordArgs = "pikachu"
+  //   "weather cheras"   -> keywordOnly = "weather", keywordArgs = "cheras"
+  //   "quote confucius"  -> keywordOnly = "quote",   keywordArgs = "confucius"
+  //
+  // IMPORTANT:
+  // - campaign_keyword.value in the DB should be a single word (no spaces).
+  // - Admins can instruct users to send commands such as:
+  //     • "pokemon <name>" (e.g. "pokemon pikachu") or "pokemon random"
+  //     • "weather <city>" (e.g. "weather cheras") or "weather random"
+  const normalizedText =
+    keywordTextTypes.includes(type) && text ? text.trim() : "";
+  const normalizedLower = normalizedText.toLowerCase();
+
+  // ------------------------------------------------------------------
+  // 1) System commands: /start, /menu, /exit, etc.
+  // ------------------------------------------------------------------
+  if (normalizedLower.startsWith("/")) {
+    const cmd = normalizedLower.split(/\s+/)[0] || normalizedLower;
+    return handleSystemCommand({ contact, command: cmd });
   }
 
-  const campaignFromKeyword = await findCampaignByKeyword(normalizedText);
+  // ------------------------------------------------------------------
+  // 2) Campaign keyword resolution
+  //    - Supports:
+  //      • "pokemon pikachu" -> keyword="pokemon", args="pikachu"
+  //      • "weather cheras"  -> keyword="weather", args="cheras"
+  //      • "pokemon"         -> keyword="pokemon", args=""
+  //      • multi-word keywords like "chinese new year"
+  // ------------------------------------------------------------------
+  let keywordOnly = "";
+  let keywordArgs = "";
+  let campaignFromKeyword = null;
+
+  if (normalizedLower) {
+    // 2a) Exact match on the whole message (for multi-word keywords)
+    const fullMatch = await findCampaignByKeyword(normalizedLower);
+    if (fullMatch) {
+      campaignFromKeyword = fullMatch;
+      keywordOnly = normalizedLower;
+      keywordArgs = "";
+    }
+
+    // 2b) Fallback: first word is keyword, rest is args (for single-word keywords)
+    if (!campaignFromKeyword) {
+      const parts = normalizedLower.split(/\s+/);
+      const base = (parts[0] || "").trim();
+      const rest = parts.slice(1).join(" ").trim();
+      if (base) {
+        const c = await findCampaignByKeyword(base);
+        if (c) {
+          campaignFromKeyword = c;
+          keywordOnly = base;
+          keywordArgs = rest;
+        }
+      }
+    }
+  }
 
   if (campaignFromKeyword) {
     // If there is an active session for a different campaign, block switching
@@ -147,9 +199,19 @@ export async function handleIncomingMessage(args) {
     }
 
     // No existing session, start a new one
+    const keywordMeta =
+      keywordOnly
+        ? {
+            rawText: normalizedText,
+            keyword: keywordOnly,
+            args: keywordArgs || null,
+          }
+        : null;
+
     const newSession = await createSessionForCampaign(
       contact.contact_id,
-      campaignFromKeyword.campaign_id
+      campaignFromKeyword.campaign_id,
+      keywordMeta
     );
     return startCampaignAtFirstStep({ contact, session: newSession });
   }
@@ -335,16 +397,36 @@ async function findCampaignByKeyword(text) {
   });
 }
 
-async function createSessionForCampaign(contactId, campaignId) {
-  const session = await prisma.campaign_session.create({
-    data: {
-      contact_id: contactId,
-      campaign_id: campaignId,
-      session_status: "ACTIVE",
-      created_at: new Date(),
-      last_active_at: new Date(),
-    },
-  });
+// keywordMeta is stored when a session is started from a keyword message.
+// Example structure:
+//   {
+//     rawText: "pokemon pikachu",
+//     keyword: "pokemon",
+//     args: "pikachu"
+//   }
+// In API steps, this becomes:
+//   session.last_payload_type === "keyword_start"
+//   session.last_payload_json.args  -> "pikachu"
+// and integrationService receives {{ keyword }}, {{ keywordArgs }}, {{ keywordRaw }}.
+async function createSessionForCampaign(contactId, campaignId, keywordMeta) {
+  const baseData = {
+    contact_id: contactId,
+    campaign_id: campaignId,
+    session_status: "ACTIVE",
+    created_at: new Date(),
+    last_active_at: new Date(),
+  };
+
+  const data =
+    keywordMeta && Object.keys(keywordMeta).length > 0
+      ? {
+          ...baseData,
+          last_payload_json: keywordMeta,
+          last_payload_type: "keyword_start",
+        }
+      : baseData;
+
+  const session = await prisma.campaign_session.create({ data });
   return session;
 }
 
@@ -353,6 +435,7 @@ async function startCampaignAtFirstStep({ contact, session }) {
     where: { campaign_id: session.campaign_id },
     orderBy: { step_number: "asc" },
   });
+
   console.log(
     "[ENGINE] Starting campaign",
     session.campaign_id,
@@ -371,6 +454,60 @@ async function startCampaignAtFirstStep({ contact, session }) {
         },
       ],
     };
+  }
+
+  // ------------------------------------------------------------
+  // NEW: if campaign started via keyword AND first step is input,
+  // and keyword has args (e.g. "pokemon pikachu"), treat args as
+  // the answer to this first step and skip showing the question.
+  // ------------------------------------------------------------
+  try {
+    if (
+      firstStep.action_type === "input" &&
+      session.last_payload_type === "keyword_start" &&
+      session.last_payload_json
+    ) {
+      let keywordMeta = session.last_payload_json;
+
+      if (typeof keywordMeta === "string") {
+        try {
+          keywordMeta = JSON.parse(keywordMeta);
+        } catch {
+          keywordMeta = null;
+        }
+      }
+
+      const keywordArgs =
+        keywordMeta && typeof keywordMeta === "object"
+          ? (keywordMeta.args || "").toString()
+          : "";
+
+      if (keywordArgs && keywordArgs.trim().length > 0) {
+        console.log(
+          "[ENGINE] Auto-answering first input step from keyword args",
+          {
+            campaign_id: session.campaign_id,
+            session_id: session.campaign_session_id,
+            step_id: firstStep.step_id,
+            args: keywordArgs,
+          }
+        );
+
+        return runInputStep({
+          contact,
+          session,
+          step: firstStep,
+          incomingText: keywordArgs,
+          type: "text",
+          payload: null,
+        });
+      }
+    }
+  } catch (e) {
+    console.warn(
+      "[ENGINE] Failed to auto-answer first step from keyword args:",
+      e?.message || e
+    );
   }
 
   await prisma.campaign_session.update({
@@ -658,6 +795,15 @@ async function runInputStep({ contact, session, step, incomingText, type, payloa
   let value = (incomingText || "").trim();
   let isValid = true;
 
+  // Allow location shares to satisfy text prompts when available.
+  const locFromPayload = extractLocationFromPayload(payload);
+  if (locFromPayload) {
+    value = JSON.stringify({
+      latitude: locFromPayload.latitude,
+      longitude: locFromPayload.longitude,
+    });
+  }
+
   switch (step.expected_input) {
     case "number":
       isValid = value !== "" && /^-?\d+(\.\d+)?$/.test(value);
@@ -765,8 +911,9 @@ async function runApiStep({ contact, session, step, lastAnswer, contentContext =
     return { outbound: [], nextStepId: step.next_step_id };
   }
 
-  // If lastAnswer is not provided, look up the last valid response in this session
+  // If lastAnswer is not provided, first check the stored campaign responses.
   let effectiveLastAnswer = lastAnswer || null;
+
   if (!effectiveLastAnswer && session?.campaign_session_id) {
     effectiveLastAnswer = await prisma.campaign_response.findFirst({
       where: {
@@ -775,6 +922,35 @@ async function runApiStep({ contact, session, step, lastAnswer, contentContext =
       },
       orderBy: { created_at: "desc" },
     });
+  }
+
+  // If still nothing, fallback to keyword metadata added when the session started.
+  if (!effectiveLastAnswer && session) {
+    const isKeywordStart = session.last_payload_type === "keyword_start";
+    if (isKeywordStart && session.last_payload_json) {
+      let keywordMeta = session.last_payload_json;
+      if (typeof keywordMeta === "string") {
+        try {
+          keywordMeta = JSON.parse(keywordMeta);
+        } catch {
+          keywordMeta = null;
+        }
+      }
+
+      if (keywordMeta && typeof keywordMeta === "object") {
+        const args = keywordMeta.args || "";
+        const rawText = keywordMeta.rawText || "";
+        const keywordOnly = keywordMeta.keyword || "";
+        effectiveLastAnswer = {
+          session_id: session.campaign_session_id ?? null,
+          campaign_id: session.campaign_id ?? null,
+          step_id: null,
+          choice_id: null,
+          user_input_raw: args || rawText || keywordOnly || "",
+          is_valid: true,
+        };
+      }
+    }
   }
 
   const vars = {
@@ -794,6 +970,7 @@ async function runApiStep({ contact, session, step, lastAnswer, contentContext =
     // Note: we tag the source so integrationService can log into api_log
     result = await dispatchEndpoint(step.api_id, vars, {
       source: "campaign_step",
+      stepId: step.step_id,
     });
     ok = !!result?.ok;
     status = result?.status ?? status;
@@ -809,40 +986,61 @@ async function runApiStep({ contact, session, step, lastAnswer, contentContext =
 
   const outbound = [];
 
-  // Decide the MAIN message text:
-  // 1) use payload.formattedText if provided by integration
-  // 2) else use localized template body (if available)
-  // 3) else use step.prompt_text (e.g. admin override)
-  // 4) else simple generic fallback
+  // Intro text is now treated as a separate, optional message
+  const introText = (step.prompt_text || "").trim();
+
+  // 1) formattedText from integration (using response_template)
   const formattedText =
-    (apiPayload && typeof apiPayload.formattedText === "string"
+    apiPayload && typeof apiPayload.formattedText === "string"
       ? apiPayload.formattedText
-      : null) || null;
+      : null;
 
-  const baseText =
-    formattedText ||
-    (contentContext?.body ?? step.prompt_text) ||
-    "Done.";
+  // 2) Decide the MAIN result message text
+  let mainText = null;
 
-  const mediaPayload = buildMediaWaPayload({
-    ...step,
-    prompt_text: contentContext?.body ?? step.prompt_text,
-    media_url: contentContext?.mediaUrl ?? step.media_url,
-  });
+  if (formattedText) {
+    // We will send introText (if any) as a separate message, then formattedText as mainText
+    mainText = formattedText;
+  } else if (!introText) {
+    // No intro and no formatter → generic fallback
+    mainText = ok ? "Done." : "Sorry, something went wrong.";
+  } else {
+    // Has intro but no formatter → just use intro as the only text
+    mainText = introText;
+  }
 
-  if (baseText || mediaPayload) {
-    const msg = withStepContext({
-      base: {
-        to: contact.phone_num,
-        content: baseText || "",
-        ...(mediaPayload ? { waPayload: mediaPayload } : {}),
-      },
-      step,
-      session,
-      contact,
-      contentContext,
-    });
-    outbound.push(msg);
+  // If we have an intro AND a formatted result, send intro first
+  if (introText && formattedText) {
+    outbound.push(
+      withStepContext({
+        base: {
+          to: contact.phone_num,
+          content: introText,
+        },
+        step,
+        session,
+        contact,
+      })
+    );
+  }
+
+  // Result message (formatted or fallback)
+  if (mainText || step.media_url) {
+    // For the result message we don't want to reuse intro as caption,
+    // but we still allow media_url if you ever use it with API steps.
+    const mediaPayload = buildMediaWaPayload(step);
+    outbound.push(
+      withStepContext({
+        base: {
+          to: contact.phone_num,
+          content: mainText || "",
+          ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+        },
+        step,
+        session,
+        contact,
+      })
+    );
   }
 
   // Decide next step:
@@ -1069,11 +1267,11 @@ function inferMediaType(url, fallback = "image") {
   return fallback;
 }
 
-// Build media WA payload from step.media_* fields
+// Build media WA payload from step.media_url
 function buildMediaWaPayload(step) {
   if (!step || !step.media_url) return null;
-  const resolvedType = inferMediaType(step.media_url, step.media_type || "image");
-  const caption = step.media_caption || step.prompt_text || undefined;
+  const resolvedType = inferMediaType(step.media_url);
+  const caption = step.prompt_text || undefined;
 
   if (resolvedType === "image") {
     return {
@@ -1116,7 +1314,7 @@ function buildMediaWaPayload(step) {
 function deriveContentType(waPayload, step) {
   if (waPayload?.type) return waPayload.type;
   if (step?.media_url) {
-    return inferMediaType(step.media_url, step.media_type || "image");
+    return inferMediaType(step.media_url);
   }
   return "text";
 }
@@ -1183,7 +1381,6 @@ function buildChoiceMessage(contact, prompt, choices) {
     const rows = choices.map((c, idx) => ({
       id: c.choice_code || String(c.choice_id || idx + 1),
       title: c.label || c.choice_code || `Option ${idx + 1}`,
-      description: c.description || "",
     }));
 
     waPayload = {

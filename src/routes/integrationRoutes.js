@@ -2,7 +2,6 @@
 
 import express from "express";
 import {
-  dispatchMapping,
   getIntegrationLogs,
   runTest,
   updateApiTemplate,
@@ -14,7 +13,6 @@ import {
   listEndpoints,
   updateEndpoint,
 } from "../controllers/apiEndpointController.js";
-import { listApiMappings } from "../controllers/apiMappingController.js";
 import { listApis } from "../controllers/apiCatalogController.js";
 import authMiddleware from "../middleware/auth.js";
 import { requirePrivilege } from "../middleware/permission.js";
@@ -30,12 +28,8 @@ router.get("/endpoints/:id", requirePrivilege("integration", "view"), getEndpoin
 router.put("/endpoints/:id", requirePrivilege("integration", "update"), updateEndpoint);
 router.delete("/endpoints/:id", requirePrivilege("integration", "archive"), deleteEndpoint);
 
-// mapping (read-only view of campaign_step where action_type = 'api')
-router.get("/mappings", requirePrivilege("integration", "view"), listApiMappings);
-
 // execution
 router.post("/test", requirePrivilege("integration", "update"), runTest);
-router.post("/dispatch", requirePrivilege("integration", "update"), dispatchMapping);
 router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
 router.get("/apis", requirePrivilege("integration", "view"), listApis);
 router.put("/apis/:id/template", requirePrivilege("integration", "update"), updateApiTemplate);

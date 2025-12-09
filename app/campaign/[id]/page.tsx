@@ -121,6 +121,11 @@ export default function CampaignDetailPage() {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw || !id) return;
 
+    if (/\s/.test(raw)) {
+      setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
+      return;
+    }
+
     if (keywords.some((k) => k.value.toLowerCase() === raw)) {
       setKeywordMessage("This keyword is already added for this campaign.");
       return;
@@ -308,11 +313,23 @@ export default function CampaignDetailPage() {
         <section className="border-t pt-5 mt-2 space-y-4">
           <div>
             <h4 className="text-sm font-semibold">Entry keywords</h4>
-            <p className="text-xs text-muted-foreground">
-              Keywords that route inbound users into this campaign (e.g.{" "}
-              <span className="font-mono">promo</span>,{" "}
-              <span className="font-mono">raya</span>). Multiple campaigns
-              should not share the same active keyword.
+            <p className="text-xs text-muted-foreground space-y-1">
+              <span>
+                The first word of an incoming message must match one of these keywords (single word,
+                no spaces). Anything after the keyword becomes arguments.
+              </span>
+              <span>
+                Examples for admins to promote:
+                <br />
+                <span className="font-mono">pokemon pikachu</span> /{" "}
+                <span className="font-mono">pokemon random</span>
+                <br />
+                <span className="font-mono">weather cheras</span> /{" "}
+                <span className="font-mono">weather random</span>
+                <br />
+                <span className="font-mono">quote confucius</span> /{" "}
+                <span className="font-mono">quote random</span>
+              </span>
             </p>
           </div>
 
@@ -322,7 +339,7 @@ export default function CampaignDetailPage() {
               value={keywordDraft}
               onChange={(e) => setKeywordDraft(e.target.value)}
               className="rounded-md border px-3 py-2 text-sm flex-1 min-w-[180px]"
-              placeholder="Add keyword (e.g. promo)"
+              placeholder="Add keyword (single word, e.g. weather)"
             />
             <button
               type="button"

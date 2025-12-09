@@ -85,7 +85,6 @@ function updateApiTemplateRequest(
 // ------------------------------------------------------------------
 import type {
   EndpointConfig,
-  CampaignApiMapping,
   ApiLogEntry,
   WhatsAppConfig,
   TestRunPayload,
@@ -123,6 +122,10 @@ import type {
   FeedbackEntry,
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
+
+type ListLogsParams = {
+  limit?: number;
+};
 
 // ------------------------------------------------------------------
 // API client
@@ -298,7 +301,7 @@ export const Api = {
   },
 
   // =========================================================
-  // Integration -> EndpointConfig (api + apiparameter)
+  // Integration -> EndpointConfig (api table)
   // =========================================================
 
   listEndpoints: () => http<EndpointConfig[]>("/api/integration/endpoints"),
@@ -324,13 +327,6 @@ export const Api = {
     }),
 
   // =========================================================
-  // Integration -> CampaignApiMapping (campaign_api_mapping)
-  // =========================================================
-
-  listMappings: () =>
-    http<CampaignApiMapping[]>("/api/integration/mappings"),
-
-  // =========================================================
   // Integration -> Test Runner helper
   // =========================================================
 
@@ -340,12 +336,20 @@ export const Api = {
       body: JSON.stringify(payload),
     }),
 
+  runIntegrationTest: (payload: TestRunPayload) =>
+    http<TestRunResult>("/api/integration/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   // =========================================================
   // Integration -> Logs (api_log)
   // =========================================================
 
-  listLogs: (limit = 100) =>
-    http<ApiLogEntry[]>(`/api/integration/logs?limit=${limit}`),
+  listLogs: (params: ListLogsParams = {}) => {
+    const limit = params.limit ?? 100;
+    return http<ApiLogEntry[]>(`/api/integration/logs?limit=${limit}`);
+  },
 
   // =========================================================
   // Reports

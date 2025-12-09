@@ -65,10 +65,17 @@ function buildHeaders(endpoint, vars) {
     if (!key) return;
     headers[key] = renderTemplateString(value, vars);
   });
-  if (endpoint.auth && endpoint.auth.type !== "none") {
-    const headerName = endpoint.auth.headerName || (endpoint.auth.type === "bearer" ? "Authorization" : "X-API-Key");
-    const prefix = endpoint.auth.type === "bearer" ? "Bearer " : "";
-    headers[headerName] = `${prefix}${endpoint.auth.tokenRef || ""}`;
+  const authType = endpoint.auth?.type || "none";
+  if (authType !== "none") {
+    const headerName =
+      endpoint.auth?.headerName ||
+      (authType === "bearer_header" ? "Authorization" : "X-API-Key");
+    const prefix = authType === "bearer_header" ? "Bearer " : "";
+    const token = endpoint.auth?.tokenRef || "";
+    const headerValue = `${prefix}${token}`.trim();
+    if (headerValue) {
+      headers[headerName] = headerValue;
+    }
   }
   return headers;
 }
@@ -103,10 +110,13 @@ export function materializeVariables(baseVars, paramMap) {
 }
 
 export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
+  const { log = true, source, stepId } = options || {};
   let endpoint = await getRuntimeEndpoint(endpointId);
   if (!endpoint) throw new Error("Endpoint not found");
 
   const endpointNumericId = endpoint.id ?? endpoint.api_id ?? Number(endpointId);
+
+  // If response_template is not hydrated in the runtime cache, fetch from DB once.
   if (!endpoint.response_template && endpointNumericId) {
     try {
       const apiRow = await prisma.api.findUnique({
@@ -122,6 +132,8 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
   }
 
   const resolvedVars = { ...vars };
+
+  // Try to understand the last answer as raw string or JSON
   let lastAnswerValue = null;
   if (resolvedVars.lastAnswer?.user_input_raw) {
     const raw = resolvedVars.lastAnswer.user_input_raw;
@@ -132,15 +144,75 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     }
   }
 
+  // ---- NEW: decode keyword metadata from the session (from keyword_start) ----
+  let keywordMeta = null;
+  if (
+    resolvedVars.session?.last_payload_type === "keyword_start" &&
+    resolvedVars.session.last_payload_json
+  ) {
+    keywordMeta = resolvedVars.session.last_payload_json;
+    if (typeof keywordMeta === "string") {
+      try {
+        keywordMeta = JSON.parse(keywordMeta);
+      } catch {
+        keywordMeta = null;
+      }
+    }
+  }
+
+  const keyword =
+    keywordMeta && typeof keywordMeta === "object"
+      ? String(keywordMeta.keyword || "").trim() || null
+      : null;
+  const keywordArgs =
+    keywordMeta && typeof keywordMeta === "object"
+      ? String(keywordMeta.args || "").trim() || null
+      : null;
+  const keywordRaw =
+    keywordMeta && typeof keywordMeta === "object"
+      ? String(keywordMeta.rawText || "").trim() || null
+      : null;
+
+  // Generic helper: "argument part" of the keyword, if any.
+  const trimmedArgs = (keywordArgs || "").trim();
+
+  let keywordOrArgs = "";
+  if (trimmedArgs) {
+    // e.g. "pokemon pikachu" → "pikachu", "weather cheras" → "cheras"
+    keywordOrArgs = trimmedArgs;
+  } else if (
+    typeof lastAnswerValue === "string" &&
+    lastAnswerValue.trim() &&
+    (!keyword || lastAnswerValue.trim() !== keyword)
+  ) {
+    // Fallback to last answer string (but avoid just repeating the keyword itself)
+    keywordOrArgs = lastAnswerValue.trim();
+  } else {
+    keywordOrArgs = "";
+  }
+
+  const localStepId =
+    stepId ??
+    resolvedVars.step?.step_id ??
+    resolvedVars.step_id ??
+    null;
+
   const requestContext = {
     ...resolvedVars,
     campaign: resolvedVars.campaign || {},
     args: resolvedVars,
+    // lastAnswer for templating: keep both raw DB row and parsed value
     lastAnswer: {
       raw: resolvedVars.lastAnswer || null,
       value: lastAnswerValue,
     },
+    // NEW: keyword helpers for URL / body templating
+    keyword,
+    keywordArgs,
+    keywordRaw,
+    keywordOrArgs,
   };
+
   const url = buildUrl(endpoint, requestContext);
   const method = endpoint.method || "GET";
   const headers = {
@@ -148,7 +220,9 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     ...buildHeaders(endpoint, requestContext),
   };
   const body = buildBody(endpoint, requestContext);
-  const bodyString = body == null ? null : typeof body === "string" ? body : JSON.stringify(body);
+  const bodyString =
+    body == null ? null : typeof body === "string" ? body : JSON.stringify(body);
+
   const retries = Math.max(0, Number(endpoint.retries) || 0);
   const timeoutMs = Math.max(1000, Number(endpoint.timeoutMs) || 8000);
   const backoffMs = Math.max(0, Number(endpoint.backoffMs) || 0);
@@ -196,8 +270,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     }
   };
 
-  const shouldLog = options.log !== false;
-  const source = options.source || "engine";
+  const shouldLog = log !== false;
 
   const campaignId =
     resolvedVars.campaign?.campaign_id ??
@@ -217,10 +290,12 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
 
   let lastError = null;
   let lastResult = null;
+
   for (let i = 0; i <= retries; i += 1) {
     try {
       const result = await attempt();
       lastResult = result;
+
       if (!result.ok) {
         lastError = new Error(`Remote responded with status ${result.status}`);
         if (i < retries) {
@@ -232,17 +307,27 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
 
       const responseBody = result.payload;
 
+      // ---- Response templating (Formatter) ----
       let formattedText = null;
       if (endpoint.response_template) {
+        const responseObj =
+          responseBody && typeof responseBody === "object" ? responseBody : {};
+
+        // Re-use keywordMeta from above
         const ctx = {
           contact: resolvedVars.contact || null,
           campaign: resolvedVars.campaign || null,
           session: resolvedVars.session || null,
           lastAnswer: resolvedVars.lastAnswer || null,
           response: responseBody,
+          keyword,
+          keywordArgs,
+          keywordRaw,
+          keywordOrArgs,
+          ...responseObj,
         };
+
         try {
-          // Use the same {{ token }} behavior as the formatter playground
           formattedText = renderTemplateString(endpoint.response_template, ctx);
         } catch (err) {
           appWarn?.(
@@ -272,19 +357,25 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
               campaign_id: campaignId,
               campaign_session_id: sessionId,
               contact_id: contactId,
+              step_id: localStepId,
               request_url: url,
               request_body: bodyString,
               response_body:
-                typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody),
+                typeof responseBody === "string"
+                  ? responseBody
+                  : JSON.stringify(responseBody),
               response_code: result.status,
               status: "success",
               error_message: null,
-              called_at: new Date(),
               source,
+              called_at: new Date(),
             },
           });
         } catch (logErr) {
-          appWarn?.("[integration] failed to write api_log (success):", logErr?.message || logErr);
+          appWarn?.(
+            "[integration] failed to write api_log (success):",
+            logErr?.message || logErr
+          );
         }
       }
 
@@ -307,23 +398,27 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
           campaign_id: campaignId,
           campaign_session_id: sessionId,
           contact_id: contactId,
+          step_id: localStepId,
           request_url: url,
           request_body: bodyString,
           response_body:
             lastResult && typeof lastResult.payload === "string"
               ? lastResult.payload
               : lastResult?.payload != null
-                ? JSON.stringify(lastResult.payload)
-                : null,
+              ? JSON.stringify(lastResult.payload)
+              : null,
           response_code: lastResult?.status ?? 500,
           status: "error",
           error_message: lastError?.message || "Unknown error during dispatch",
-          called_at: new Date(),
           source,
+          called_at: new Date(),
         },
       });
     } catch (logErr) {
-      appWarn?.("[integration] failed to write api_log (error):", logErr?.message || logErr);
+      appWarn?.(
+        "[integration] failed to write api_log (error):",
+        logErr?.message || logErr
+      );
     }
   }
 

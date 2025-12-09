@@ -682,6 +682,13 @@ export async function saveCampaignStepsBulk(req, res) {
         where: { campaign_id: campaignID },
         select: { step_id: true },
       });
+      await tx.campaign_step.updateMany({
+        where: { campaign_id: campaignID },
+        data: {
+          next_step_id: null,
+          failure_step_id: null,
+        },
+      });
       const existingIds = existing.map((s) => s.step_id);
       const incomingIds = normalizedSteps
         .map((s) => Number(s.step_id))

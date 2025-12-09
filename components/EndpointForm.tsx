@@ -1,102 +1,186 @@
-// components/EndpointForm.tsx
-
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { showCenteredAlert } from "@/lib/showAlert";
-import type {
-  ApiAuthType,
-  ApiLocation,
-  ApiParameter,
-  ApiValueSource,
-  EndpointConfig,
-  HttpMethod,
-} from "@/lib/types";
+import type { EndpointConfig, HttpMethod, ApiAuthType } from "@/lib/types";
 
 type Props = {
   initial: EndpointConfig;
   submitting?: boolean;
+  sampleResponse?: any;
+  testingSample?: boolean;
+  onRunSample?: () => Promise<void> | void;
   onCancel?: () => void;
-  onSubmit: (data: EndpointConfig) => Promise<void> | void;
+  onSubmit: (payload: EndpointConfig) => Promise<void> | void;
 };
 
 const METHOD_OPTIONS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
-const LOCATION_OPTIONS: ApiLocation[] = ["path", "query", "header", "body"];
-const VALUE_SOURCE_OPTIONS: ApiValueSource[] = ["contact", "campaign", "constant"];
 
-function buildUrlPreview(base: string, path: string) {
-  const trimmedBase = base.replace(/\/+$/, "");
-  const trimmedPath = path ? `/${path.replace(/^\/+/, "")}` : "";
-  return `${trimmedBase}${trimmedPath || "/"}`;
+function renderTemplatePreview(template: string, payload: any) {
+  if (!template) return "";
+  return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
+    const path = token.trim().split(".");
+    let value: any = payload;
+    for (const key of path) {
+      if (value == null) break;
+      value = value[key];
+    }
+    return value == null ? `{${token}}` : String(value);
+  });
 }
 
-export default function EndpointForm({ initial, submitting, onCancel, onSubmit }: Props) {
+export default function EndpointForm({
+  initial,
+  submitting,
+  sampleResponse,
+  testingSample,
+  onRunSample,
+  onCancel,
+  onSubmit,
+}: Props) {
   const [name, setName] = useState(initial.name || "");
-  const [description, setDescription] = useState(initial.description || "");
-  const [method, setMethod] = useState<HttpMethod>((initial.method as HttpMethod) || "GET");
-  const [baseUrl, setBaseUrl] = useState(initial.base_url || "https://");
-  const [path, setPath] = useState(initial.path || "/");
-  const [authType, setAuthType] = useState<ApiAuthType>(initial.auth_type || "none");
-  const [authHeader, setAuthHeader] = useState(initial.auth_header_name || "Authorization");
+  const [description, setDescription] = useState(initial.description ?? "");
+  const [method, setMethod] = useState<HttpMethod>(
+    (initial.method as HttpMethod) || "GET"
+  );
+  const [url, setUrl] = useState(initial.url || "https://");
+  const [authType, setAuthType] = useState<ApiAuthType>(
+    (initial.auth_type as ApiAuthType) || "none"
+  );
+  const [authHeader, setAuthHeader] = useState(
+    initial.auth_header_name || "Authorization"
+  );
   const [authToken, setAuthToken] = useState(initial.auth_token || "");
-  const [timeoutMs, setTimeoutMs] = useState<number>(initial.timeout_ms ?? 5000);
-  const [retryEnabled, setRetryEnabled] = useState(Boolean(initial.retry_enabled));
-  const [retryCount, setRetryCount] = useState<number>(initial.retry_count ?? 0);
   const [isActive, setIsActive] = useState(initial.is_active ?? true);
-  const [parameters, setParameters] = useState<ApiParameter[]>(initial.parameters || []);
+  const [headers, setHeaders] = useState<{ key: string; value: string }[]>(
+    (initial.headers_json as any) || []
+  );
+  const [bodyTemplate, setBodyTemplate] = useState(initial.body_template ?? "");
+  const [responseTemplate, setResponseTemplate] = useState(
+    initial.response_template ?? ""
+  );
+  const [preview, setPreview] = useState<string | null>(null);
+  const [bodyInfo, setBodyInfo] = useState<string | null>(null);
 
-  const urlPreview = useMemo(() => buildUrlPreview(baseUrl, path), [baseUrl, path]);
   const showAuthFields = authType !== "none";
+  const showBodySection = ["POST", "PUT", "PATCH"].includes(method);
 
-  const handleParamChange = (idx: number, patch: Partial<ApiParameter>) => {
-    setParameters((prev) => {
+  const handleAddHeader = () => {
+    setHeaders((prev) => [...prev, { key: "", value: "" }]);
+  };
+
+  const handleHeaderChange = (
+    idx: number,
+    field: "key" | "value",
+    value: string
+  ) => {
+    setHeaders((prev) => {
       const next = [...prev];
-      next[idx] = { ...next[idx], ...patch };
+      next[idx] = { ...next[idx], [field]: value };
       return next;
     });
   };
 
-  const handleRemoveParam = (idx: number) => {
-    setParameters((prev) => prev.filter((_, i) => i !== idx));
+  const handleRemoveHeader = (idx: number) => {
+    setHeaders((prev) => prev.filter((_, index) => index !== idx));
+  };
+
+  const handleTestTemplate = () => {
+    if (!responseTemplate || !sampleResponse) {
+      setPreview(
+        !responseTemplate
+          ? "No template yet."
+          : "No sample response available for preview."
+      );
+      return;
+    }
+
+    const ctx: any =
+      sampleResponse && typeof sampleResponse === "object"
+        ? { response: sampleResponse, ...sampleResponse }
+        : { response: sampleResponse };
+
+    const rendered = renderTemplatePreview(responseTemplate, ctx);
+    setPreview(rendered || "(Rendered template is empty)");
+  };
+
+  const handleValidateBodyJson = async () => {
+    setBodyInfo(null);
+    const raw = bodyTemplate.trim();
+    if (!raw) {
+      setBodyInfo("Body is empty - nothing to validate.");
+      return;
+    }
+    try {
+      JSON.parse(raw);
+      setBodyInfo(
+        'Looks like valid JSON. Remember: tokens must be inside quotes, e.g. "{{token}}".'
+      );
+      await showCenteredAlert("Body template is valid JSON.");
+    } catch {
+      setBodyInfo(
+        "Not valid JSON. If you are using {{tokens}}, ensure they are inside string values."
+      );
+      await showCenteredAlert(
+        'Body template is not valid JSON. Tokens should be inside quotes, e.g. "{{last_answer.lat}}".'
+      );
+    }
+  };
+
+  const handleFormatBodyJson = async () => {
+    setBodyInfo(null);
+    const raw = bodyTemplate.trim();
+    if (!raw) {
+      setBodyInfo("Body is empty - nothing to format.");
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const formatted = JSON.stringify(parsed, null, 2);
+      setBodyTemplate(formatted);
+      setBodyInfo("Body has been pretty-printed.");
+      await showCenteredAlert("Body template formatted as pretty JSON.");
+    } catch {
+      setBodyInfo(
+        "Could not format: body is not valid JSON. Tokens must remain inside quotes."
+      );
+      await showCenteredAlert(
+        "Cannot format: body is not valid JSON. Make sure any {{tokens}} are inside quoted strings."
+      );
+    }
   };
 
   const handleSubmit = async () => {
-    const trimmedBase = baseUrl.trim();
+    const trimmedUrl = url.trim();
     if (!name.trim()) {
       await showCenteredAlert("Name is required");
       return;
     }
-    if (!/^https:\/\//i.test(trimmedBase)) {
-      await showCenteredAlert("Base URL must start with https://");
+    if (!/^https:\/\//i.test(trimmedUrl)) {
+      await showCenteredAlert("URL must start with https://");
       return;
     }
 
+    const formattedHeaders = headers
+      .map((row) => ({ key: row.key.trim(), value: row.value.trim() }))
+      .filter((row) => row.key);
+
     const payload: EndpointConfig = {
-      ...("apiid" in initial && initial.apiid ? { apiid: initial.apiid } : {}),
+      ...("apiid" in initial && (initial as any).apiid
+        ? { apiid: (initial as any).apiid }
+        : {}),
       name: name.trim(),
       description: description.trim() || null,
-      base_url: trimmedBase,
-      path: path.trim() || "/",
       method,
+      url: trimmedUrl,
       auth_type: authType,
-      auth_header_name: showAuthFields ? authHeader.trim() || "Authorization" : null,
-      auth_token: showAuthFields ? authToken.trim() || null : null,
-      timeout_ms: Number(timeoutMs) || 0,
-      retry_enabled: retryEnabled,
-      retry_count: retryEnabled ? Number(retryCount) || 0 : 0,
+      auth_header_name:
+        authType === "none" ? null : authHeader.trim() || "Authorization",
+      auth_token: authType === "none" ? null : authToken.trim() || null,
       is_active: isActive,
-      parameters: parameters
-        .map((param) => ({
-          ...param,
-          location: param.location || "query",
-          key: (param.key || "").trim(),
-          valuesource: param.valuesource || "contact",
-          valuepath: param.valuesource === "constant" ? null : (param.valuepath || "").trim() || null,
-          constantvalue:
-            param.valuesource === "constant" ? (param.constantvalue || "").trim() || null : param.constantvalue || null,
-          required: Boolean(param.required),
-        }))
-        .filter((param) => param.key),
+      headers_json: formattedHeaders,
+      body_template: showBodySection && bodyTemplate ? bodyTemplate : null,
+      response_template: responseTemplate || "",
     };
 
     await onSubmit(payload);
@@ -104,32 +188,71 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
 
   return (
     <form
-      className="space-y-6"
-      onSubmit={async (e) => {
-        e.preventDefault();
+      className="space-y-6 max-w-5xl mx-auto"
+      onSubmit={async (event) => {
+        event.preventDefault();
         await handleSubmit();
       }}
     >
-      <section className="rounded-xl border p-4 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">Destination API</p>
-          <p className="text-sm text-muted-foreground">
-            Define how the platform calls the upstream system whenever a campaign node is executed.
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+            Integration endpoint
           </p>
+          <p className="text-sm text-muted-foreground">
+            Define how your campaign calls this external API.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                isActive ? "bg-emerald-500" : "bg-slate-400"
+              }`}
+            />
+            {isActive ? "Active" : "Inactive"}
+          </span>
+          {initial.lastupdated && (
+            <span className="hidden sm:inline">
+              Last updated:{" "}
+              <span className="font-medium">
+                {new Date(initial.lastupdated).toLocaleString()}
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      <section className="rounded-xl border bg-background p-4 space-y-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Destination API
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Method, URL and description for this reusable endpoint.
+            </p>
+          </div>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-1 text-sm font-medium">
             <span>Name</span>
             <input
-              className="w-full rounded-md border px-3 py-2"
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Loyalty balance"
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Weather forecast"
             />
           </label>
           <label className="space-y-1 text-sm font-medium">
             <span>Method</span>
-            <select className="w-full rounded-md border px-3 py-2" value={method} onChange={(e) => setMethod(e.target.value as HttpMethod)}>
+            <select
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              value={method}
+              onChange={(event) =>
+                setMethod(event.target.value as HttpMethod)
+              }
+            >
               {METHOD_OPTIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
@@ -140,48 +263,52 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
           <label className="space-y-1 text-sm font-medium md:col-span-2">
             <span>Description</span>
             <input
-              className="w-full rounded-md border px-3 py-2"
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Fetch balance from loyalty core"
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="Fetch weather forecast from Open-Meteo"
             />
           </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Base URL</span>
+          <label className="space-y-1 text-sm font-medium md:col-span-2">
+            <span>URL</span>
             <input
-              className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.company.com"
+              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://api.open-meteo.com/v1/forecast?latitude={{last_answer.lat}}&longitude={{last_answer.lon}}"
             />
+            <p className="text-[11px] text-muted-foreground">
+              Must start with <code className="font-mono">https://</code>. You can
+              interpolate variables with{" "}
+              <code className="font-mono">{'{{tokens}}'}</code>.
+            </p>
           </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Path</span>
+          <label className="flex items-center gap-2 text-sm font-medium md:col-span-2">
             <input
-              className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder="/loyalty/balance"
+              type="checkbox"
+              className="rounded border"
+              checked={isActive}
+              onChange={(event) => setIsActive(event.target.checked)}
             />
+            <span>Endpoint is active</span>
           </label>
-        </div>
-        <div className="rounded-lg bg-muted px-3 py-2 text-xs font-mono text-muted-foreground">
-          {urlPreview}
         </div>
       </section>
 
-      <section className="rounded-xl border p-4 space-y-4">
+      <section className="rounded-xl border bg-background p-4 space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm font-medium">Authentication</p>
             <p className="text-xs text-muted-foreground">
-              Supports disabled auth, Bearer headers, or custom API-key headers.
+              Choose between no auth, a bearer header, or a custom API key header.
             </p>
           </div>
           <select
-            className="rounded-md border px-3 py-2 text-sm"
+            className="rounded-md border bg-background px-3 py-2 text-sm"
             value={authType}
-            onChange={(e) => setAuthType(e.target.value as ApiAuthType)}
+            onChange={(event) =>
+              setAuthType(event.target.value as ApiAuthType)
+            }
           >
             <option value="none">No auth</option>
             <option value="bearer_header">Bearer header</option>
@@ -189,162 +316,104 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
           </select>
         </div>
         {showAuthFields && (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-[1.2fr_1.8fr]">
             <label className="space-y-1 text-sm font-medium">
               <span>Header name</span>
               <input
-                className="w-full rounded-md border px-3 py-2"
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 value={authHeader}
-                onChange={(e) => setAuthHeader(e.target.value)}
+                onChange={(event) => setAuthHeader(event.target.value)}
                 placeholder="Authorization"
               />
             </label>
             <label className="space-y-1 text-sm font-medium">
               <span>Token / secret</span>
               <input
-                className="w-full rounded-md border px-3 py-2"
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 value={authToken}
-                onChange={(e) => setAuthToken(e.target.value)}
-                placeholder="env:LOYALTY_TOKEN"
+                onChange={(event) => setAuthToken(event.target.value)}
+                placeholder="env:API_TOKEN"
               />
+              <p className="text-[11px] text-muted-foreground">
+                You can reference environment variables (e.g.{" "}
+                <code className="font-mono">env:API_TOKEN</code>) in your backend.
+              </p>
             </label>
           </div>
         )}
       </section>
 
-      <section className="rounded-xl border p-4 space-y-4">
-        <p className="text-sm font-medium">Execution policy</p>
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="space-y-1 text-sm font-medium">
-            <span>Timeout (ms)</span>
-            <input
-              type="number"
-              className="w-full rounded-md border px-3 py-2"
-              value={timeoutMs}
-              onChange={(e) => setTimeoutMs(Number(e.target.value))}
-              min={1000}
-              step={500}
-            />
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Retry enabled</span>
-            <select
-              className="w-full rounded-md border px-3 py-2"
-              value={retryEnabled ? "yes" : "no"}
-              onChange={(e) => setRetryEnabled(e.target.value === "yes")}
-            >
-              <option value="no">No</option>
-              <option value="yes">Yes</option>
-            </select>
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Retry count</span>
-            <input
-              type="number"
-              className="w-full rounded-md border px-3 py-2"
-              value={retryCount}
-              onChange={(e) => setRetryCount(Number(e.target.value))}
-              min={0}
-              disabled={!retryEnabled}
-            />
-          </label>
-        </div>
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
-            className="rounded border"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-          />
-          Endpoint is active
-        </label>
-      </section>
-
-      <section className="rounded-xl border p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-medium">Parameter mapping</p>
+      <section className="rounded-xl border bg-background p-4 space-y-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Headers</p>
+            <p className="text-xs text-muted-foreground">
+              Add static headers that should be sent with every request.
+            </p>
+          </div>
           <button
             type="button"
-            className="rounded-md border px-3 py-1 text-sm font-medium"
-            onClick={() =>
-              setParameters((prev) => [
-                ...prev,
-                {
-                  location: "query",
-                  key: "",
-                  valuesource: "contact",
-                  valuepath: "",
-                  constantvalue: "",
-                  required: true,
-                },
-              ])
-            }
+            className="rounded-md border bg-background px-3 py-1 text-xs font-medium hover:bg-muted"
+            onClick={handleAddHeader}
           >
-            Add parameter
+            + Add header
           </button>
         </div>
-        {parameters.length === 0 && <p className="text-sm text-muted-foreground">No parameters defined.</p>}
+
+        {headers.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No headers added yet. Common examples:{" "}
+            <code className="font-mono text-[11px]">
+              Content-Type: application/json
+            </code>{" "}
+            or{" "}
+            <code className="font-mono text-[11px]">
+              X-API-Key: ******
+            </code>
+            .
+          </p>
+        )}
+
+        {headers.length > 0 && (
+          <div className="hidden text-[11px] font-medium text-muted-foreground md:grid md:grid-cols-[1.2fr_1.8fr_60px] md:gap-2 md:px-1">
+            <span>Header name</span>
+            <span>Value</span>
+            <span className="text-right">Actions</span>
+          </div>
+        )}
+
         <div className="space-y-3">
-          {parameters.map((param, idx) => (
-            <div key={param.paramid ?? idx} className="rounded-lg border p-3 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs uppercase tracking-wide text-muted-foreground">
-                <span>Parameter #{idx + 1}</span>
-                <button type="button" className="text-rose-600" onClick={() => handleRemoveParam(idx)}>
+          {headers.map((header, index) => (
+            <div
+              key={`${header.key}-${index}`}
+              className="rounded-lg border bg-muted/40 p-3 space-y-3"
+            >
+              <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted-foreground">
+                <span>Header #{index + 1}</span>
+                <button
+                  type="button"
+                  className="text-rose-600 hover:underline"
+                  onClick={() => handleRemoveHeader(index)}
+                >
                   Remove
                 </button>
               </div>
-              <div className="grid gap-3 md:grid-cols-4">
-                <select
-                  className="rounded-md border px-3 py-2 text-sm"
-                  value={param.location}
-                  onChange={(e) => handleParamChange(idx, { location: e.target.value as ApiLocation })}
-                >
-                  {LOCATION_OPTIONS.map((loc) => (
-                    <option key={loc} value={loc}>
-                      {loc}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid gap-3 md:grid-cols-[1.2fr_1.8fr] md:items-center">
                 <input
-                  className="rounded-md border px-3 py-2 text-sm"
-                  placeholder="Key"
-                  value={param.key || ""}
-                  onChange={(e) => handleParamChange(idx, { key: e.target.value })}
-                />
-                <select
-                  className="rounded-md border px-3 py-2 text-sm"
-                  value={param.valuesource}
-                  onChange={(e) => handleParamChange(idx, { valuesource: e.target.value as ApiValueSource })}
-                >
-                  {VALUE_SOURCE_OPTIONS.map((source) => (
-                    <option key={source} value={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
-                <label className="inline-flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(param.required)}
-                    onChange={(e) => handleParamChange(idx, { required: e.target.checked })}
-                  />
-                  Required
-                </label>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  className="rounded-md border px-3 py-2 text-sm font-mono"
-                  placeholder="value path (contact.email)"
-                  value={param.valuepath || ""}
-                  onChange={(e) => handleParamChange(idx, { valuepath: e.target.value })}
-                  disabled={param.valuesource === "constant"}
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                  placeholder="Header key (e.g. Content-Type)"
+                  value={header.key}
+                  onChange={(event) =>
+                    handleHeaderChange(index, "key", event.target.value)
+                  }
                 />
                 <input
-                  className="rounded-md border px-3 py-2 text-sm font-mono"
-                  placeholder="constant value"
-                  value={param.constantvalue || ""}
-                  onChange={(e) => handleParamChange(idx, { constantvalue: e.target.value })}
-                  disabled={param.valuesource !== "constant"}
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                  placeholder="Header value (e.g. application/json)"
+                  value={header.value}
+                  onChange={(event) =>
+                    handleHeaderChange(index, "value", event.target.value)
+                  }
                 />
               </div>
             </div>
@@ -352,12 +421,135 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
         </div>
       </section>
 
-      <div className="flex justify-end gap-3">
+      {showBodySection && (
+        <section className="rounded-xl border bg-background p-4 space-y-3 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">
+                Body template (JSON with <code className="font-mono">{'{{tokens}}'}</code>)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                This JSON will be sent as the request body. You can reference
+                campaign / contact / answer variables.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1 text-[11px] text-muted-foreground items-end">
+              <button
+                type="button"
+                className="rounded border bg-background px-2 py-1 hover:bg-muted"
+                onClick={handleValidateBodyJson}
+                disabled={submitting}
+              >
+                Validate JSON
+              </button>
+              <button
+                type="button"
+                className="rounded border bg-background px-2 py-1 hover:bg-muted"
+                onClick={handleFormatBodyJson}
+                disabled={submitting}
+              >
+                Format JSON
+              </button>
+            </div>
+          </div>
+          <textarea
+            className="w-full min-h-[180px] rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+            value={bodyTemplate}
+            onChange={(event) => {
+              setBodyTemplate(event.target.value);
+              setBodyInfo(null);
+            }}
+            placeholder='{"latitude":"{{last_answer.lat}}","longitude":"{{last_answer.lon}}"}'
+          />
+          {bodyInfo && (
+            <p className="text-[11px] text-muted-foreground">{bodyInfo}</p>
+          )}
+        </section>
+      )}
+
+      <section className="rounded-xl border bg-background p-4 space-y-4 shadow-sm">
+        <div>
+          <p className="text-sm font-medium">Response template</p>
+          <p className="text-xs text-muted-foreground">
+            Controls what the user sees after an API step. You can use{" "}
+            <code className="font-mono">
+              {"{{current_weather.temperature}}"}
+            </code>{" "}
+            (we automatically read from the API response), or{" "}
+            <code className="font-mono">
+              {"{{response.current_weather.temperature}}"}
+            </code>{" "}
+            if you prefer to be explicit.
+          </p>
+        </div>
+
+        <textarea
+          className="w-full min-h-[140px] rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+          value={responseTemplate}
+          onChange={(e) => setResponseTemplate(e.target.value)}
+          placeholder={
+            "Weather for your area:\nTemperature: {{current_weather.temperature}}°C\nWind: {{current_weather.windspeed}} km/h"
+          }
+        />
+
+        {sampleResponse !== undefined && (
+          <div className="grid gap-4 md:grid-cols-2 items-start">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-muted-foreground">
+                  Sample API response
+                </p>
+                {onRunSample && (
+                  <button
+                    type="button"
+                    className="rounded-md border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-60"
+                    onClick={() => onRunSample()}
+                    disabled={testingSample || submitting}
+                  >
+                    {testingSample ? "Running..." : "Run & refresh"}
+                  </button>
+                )}
+              </div>
+              <div className="rounded-lg border bg-muted/50 p-2 text-[11px] max-h-[240px] overflow-auto">
+                {sampleResponse ? (
+                  <pre className="whitespace-pre-wrap">
+                    {JSON.stringify(sampleResponse, null, 2)}
+                  </pre>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No sample yet. Click{" "}
+                    <span className="font-semibold">Run &amp; refresh</span> to
+                    execute this API once and capture the response.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground">
+                Quick preview
+              </p>
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
+                onClick={handleTestTemplate}
+                disabled={submitting}
+              >
+                Test template with sample
+              </button>
+              <div className="rounded-md border bg-background px-2 py-2 text-[11px] min-h-[60px] whitespace-pre-wrap">
+                {preview ?? "Preview will appear here."}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <div className="sticky bottom-0 mt-6 flex justify-end gap-3 border-t bg-background/80 px-4 py-3 backdrop-blur-sm">
         {onCancel && (
           <button
             type="button"
-            className="rounded-md border px-4 py-2 text-sm font-medium"
-            onClick={() => onCancel()}
+            className="rounded-md border bg-background px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-60"
+            onClick={onCancel}
             disabled={submitting}
           >
             Cancel
@@ -365,7 +557,7 @@ export default function EndpointForm({ initial, submitting, onCancel, onSubmit }
         )}
         <button
           type="submit"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
           disabled={submitting}
         >
           {submitting ? "Saving..." : "Save endpoint"}

@@ -67,6 +67,11 @@ export default function CampaignCreatePage() {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw) return;
 
+    if (/\s/.test(raw)) {
+      setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
+      return;
+    }
+
     if (keywords.includes(raw)) {
       setKeywordMessage("Keyword already added for this campaign.");
       return;
@@ -287,11 +292,24 @@ export default function CampaignCreatePage() {
         <section className="border-t pt-5 mt-2 space-y-4">
           <div>
             <h4 className="text-sm font-semibold">Entry keywords</h4>
-            <p className="text-xs text-muted-foreground">
-              Keywords that route inbound users into this campaign (e.g.{" "}
-              <span className="font-mono">promo</span>,{" "}
-              <span className="font-mono">raya</span>). You can also edit them
-              later on the campaign detail page.
+            <p className="text-xs text-muted-foreground space-y-1">
+              <span>
+                Keywords route inbound WhatsApp users into this campaign. The
+                first word must match a keyword you configure (single word,
+                no spaces), and anything after it is treated as arguments.
+              </span>
+              <span>
+                Examples you can promote to users:
+                <br />
+                <span className="font-mono">pokemon pikachu</span> /{" "}
+                <span className="font-mono">pokemon random</span>
+                <br />
+                <span className="font-mono">weather cheras</span> /{" "}
+                <span className="font-mono">weather random</span>
+                <br />
+                <span className="font-mono">quote confucius</span> /{" "}
+                <span className="font-mono">quote random</span>
+              </span>
             </p>
           </div>
 
@@ -301,7 +319,7 @@ export default function CampaignCreatePage() {
               value={keywordDraft}
               onChange={(e) => setKeywordDraft(e.target.value)}
               className="rounded-md border px-3 py-2 text-sm flex-1 min-w-[180px]"
-              placeholder="Add keyword (e.g. promo)"
+              placeholder="Add keyword (single word, e.g. pokemon)"
             />
             <button
               type="button"
