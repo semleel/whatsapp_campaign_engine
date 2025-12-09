@@ -35,6 +35,7 @@ export type EndpointConfig = {
 
     name: string;                   // DB: name
     description?: string | null;    // DB: description
+    response_template?: string | null; // DB: response_template
 
     base_url: string;               // DB: base_url
     path: string;                   // DB: path
@@ -267,16 +268,18 @@ export type CampaignUpdatePayload = {
     status?: string | null;
     startAt?: string | null;
     endAt?: string | null;
+    is_active?: boolean | null;
 };
 
 // Campaign engine enums/types
 export type ActionType = "message" | "choice" | "input" | "api" | "end";
-export type JumpMode = "next" | "custom";
-export type ExpectedInput = "none" | "choice" | "text" | "number" | "email";
-export type InputType = "text" | "number" | "email";
+export type ExpectedInput = "none" | "choice" | "text" | "number" | "email" | "location";
+export type InputType = "text" | "number" | "email" | "location";
+export type ValidationMode = "none" | "numeric" | "email";
 
 export type CampaignStep = {
     step_id: number;
+    client_id?: number;
     campaign_id: number;
     step_number: number;
     step_code: string | null;
@@ -286,9 +289,7 @@ export type CampaignStep = {
     action_type: ActionType;
     api_id: number | null;
     next_step_id: number | null;
-    next_step_number?: number | null;
     failure_step_id: number | null;
-    failure_step_number?: number | null;
     is_end_step: boolean;
     media_url?: string | null;
     template_source_id?: number | null;
@@ -307,11 +308,8 @@ export type CampaignStepChoice = {
 
 export type CampaignStepWithChoices = CampaignStep & {
     input_type?: InputType | null;
-    // Optional UI-only jump mode: "next" = natural next, "custom" = jump to specific step number
-    jump_mode?: JumpMode;
     template?: TemplateDetail | null;
-    next_step_number?: number | null;
-    failure_step_number?: number | null;
+    validation_mode?: ValidationMode;
     campaign_step_choice: CampaignStepChoice[];
 };
 
@@ -324,6 +322,7 @@ export type ApiListItem = {
     api_id: number;
     name: string;
     is_active?: boolean | null;
+    response_template?: string | null;
 };
 
 // =============================================
@@ -432,48 +431,48 @@ export type TemplatePayload = {
 };
 
 export interface TemplateOverviewCounts {
-  total: number;
-  approved: number;
-  pendingMeta: number;
-  draft: number;
-  expired: number;
-  rejected: number;
+    total: number;
+    approved: number;
+    pendingMeta: number;
+    draft: number;
+    expired: number;
+    rejected: number;
 }
 
 export interface TemplateActivityItem {
-  id: number;
-  title: string;
-  status: string | null;
-  updatedAt: string | null;
+    id: number;
+    title: string;
+    status: string | null;
+    updatedAt: string | null;
 }
 
 export interface TemplateUsageItem {
-  id: number;
-  title: string;
-  status: string | null;
-  type: string | null;
-  usageCount: number;
+    id: number;
+    title: string;
+    status: string | null;
+    type: string | null;
+    usageCount: number;
 }
 
 export interface TemplateExpiryItem {
-  id: number;
-  title: string;
-  status: string | null;
-  expiresAt: string | null;
+    id: number;
+    title: string;
+    status: string | null;
+    expiresAt: string | null;
 }
 
 export interface TemplatesOverviewResponse {
-  counts: TemplateOverviewCounts;
-  pipeline: {
-    draft: number;
-    pendingMeta: number;
-    approved: number;
-    rejected: number;
-    expired: number;
-  };
-  recent: TemplateActivityItem[];
-  mostUsed: TemplateUsageItem[];
-  upcomingExpiries: TemplateExpiryItem[];
+    counts: TemplateOverviewCounts;
+    pipeline: {
+        draft: number;
+        pendingMeta: number;
+        approved: number;
+        rejected: number;
+        expired: number;
+    };
+    recent: TemplateActivityItem[];
+    mostUsed: TemplateUsageItem[];
+    upcomingExpiries: TemplateExpiryItem[];
 }
 
 // ========================
@@ -667,39 +666,39 @@ export interface SystemKeyword {
 }
 
 export interface FlowStat {
-  campaignid: number | null;
-  name: string;
-  sessions: number;
-  completed: number;
-  completionRate: number; // percent (0-100)
+    campaignid: number | null;
+    name: string;
+    sessions: number;
+    completed: number;
+    completionRate: number; // percent (0-100)
 }
 
 export interface ReportSummary {
-  metrics: {
-    messagesLast24: number;
-    messagesTotal: number;
-    deliveryRate: number;
-    activeCampaigns: number;
-    deliveries: number;
-    deliveriesSuccess: number;
-    deliveriesFailed: number;
-  };
-  trending: Array<{
-    campaignid: number | null;
-    name: string;
-    sent: number;
-    delivered: number;
-    deliveredRate: number;
-  }>;
+    metrics: {
+        messagesLast24: number;
+        messagesTotal: number;
+        deliveryRate: number;
+        activeCampaigns: number;
+        deliveries: number;
+        deliveriesSuccess: number;
+        deliveriesFailed: number;
+    };
+    trending: Array<{
+        campaignid: number | null;
+        name: string;
+        sent: number;
+        delivered: number;
+        deliveredRate: number;
+    }>;
 }
 
 // =============================================
 // System Commands (system_command table)
 // =============================================
 export type SystemCommand = {
-  command: string;
-  description: string | null;
-  is_enabled: boolean;
-  created_at?: string | null;
-  updated_at?: string | null;
+    command: string;
+    description: string | null;
+    is_enabled: boolean;
+    created_at?: string | null;
+    updated_at?: string | null;
 };

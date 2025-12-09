@@ -78,11 +78,31 @@ export async function createCampaign(req, res) {
 
 export async function listCampaigns(_req, res) {
   try {
+    const deriveWindowStatus = (startAt, endAt) => {
+      const now = new Date();
+      const start = startAt ? new Date(startAt) : null;
+      const end = endAt ? new Date(endAt) : null;
+
+      // Upcoming if there is no schedule at all, or start is in the future.
+      if (!start && !end) return "Upcoming";
+      if (start && now < start) return "Upcoming";
+
+      // Expired if an end date exists and has passed.
+      if (end && now > end) return "Expired";
+
+      // Otherwise we are within the active window (start reached, not past end).
+      return "On Going";
+    };
+
     const campaigns = await prisma.campaign.findMany({
-      where: { status: { not: "Archived" } },
+      where: {
+        status: { not: "Archived" },
+        OR: [{ is_deleted: false }, { is_deleted: null }],
+      },
       include: {
         target_region: { select: { region_name: true } },
         campaign_keyword: { select: { keyword_id: true } },
+        _count: { select: { campaign_step: true } },
       },
       orderBy: { campaign_id: "desc" },
     });
@@ -92,13 +112,14 @@ export async function listCampaigns(_req, res) {
       campaignname: campaign.campaign_name,
       objective: campaign.objective,
       regionname: campaign.target_region?.region_name ?? "N/A",
-      currentstatus: campaign.status ?? "Unknown",
-      status: campaign.status ?? "Unknown",
+      currentstatus: deriveWindowStatus(campaign.start_at, campaign.end_at),
+      status: deriveWindowStatus(campaign.start_at, campaign.end_at),
+      is_active: campaign.is_active ?? null, // surface null explicitly if not set
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
       hasKeyword: (campaign.campaign_keyword?.length ?? 0) > 0,
-      hasTemplate: false,
+      hasSteps: (campaign._count?.campaign_step ?? 0) > 0,
     }));
 
     return res.status(200).json(formatted);
@@ -111,7 +132,9 @@ export async function listCampaigns(_req, res) {
 export async function listArchivedCampaigns(_req, res) {
   try {
     const campaigns = await prisma.campaign.findMany({
-      where: { status: "Archived" },
+      where: {
+        OR: [{ status: "Archived" }, { is_deleted: true }],
+      },
       include: {
         target_region: { select: { region_name: true } },
       },
@@ -123,7 +146,7 @@ export async function listArchivedCampaigns(_req, res) {
       campaignname: campaign.campaign_name,
       objective: campaign.objective,
       regionname: campaign.target_region?.region_name ?? "N/A",
-      currentstatus: campaign.status ?? "Archived",
+      currentstatus: campaign.is_deleted ? "Archived" : campaign.status ?? "Archived",
       camstatusid: statusToId(campaign.status),
       start_at: campaign.start_at,
       end_at: campaign.end_at,
@@ -187,6 +210,7 @@ export async function updateCampaign(req, res) {
       status,
       startAt,
       endAt,
+      is_active,
     } = req.body;
 
     const existing = await prisma.campaign.findUnique({
@@ -235,6 +259,9 @@ export async function updateCampaign(req, res) {
     if (typeof endAt !== "undefined") {
       data.end_at = parseNullableDate(endAt);
     }
+    if (typeof is_active === "boolean") {
+      data.is_active = is_active;
+    }
 
     if (wantsScheduleChange && currentStatus !== "Active") {
       const now = new Date();
@@ -259,6 +286,17 @@ export async function updateCampaign(req, res) {
       }
     } else if (requestedStatus) {
       data.status = requestedStatus;
+    }
+
+    // Keep is_deleted in sync when status is explicitly set
+    if (typeof data.status !== "undefined") {
+      if (data.status === "Archived") {
+        data.is_deleted = true;
+        data.is_active = false;
+      } else {
+        data.is_deleted = false;
+        data.is_active = true;
+      }
     }
 
     await prisma.campaign.update({
@@ -303,7 +341,7 @@ const parseStepPayload = (body = {}) => {
   };
 };
 
-const mapStepResponse = (step, idToNumber) => {
+const mapStepResponse = (step) => {
   let inputType = null;
   let expectedInput = step.expected_input;
   if (step.action_type === "input") {
@@ -323,6 +361,7 @@ const mapStepResponse = (step, idToNumber) => {
 
   return {
     step_id: step.step_id,
+    client_id: step.step_id,
     campaign_id: step.campaign_id,
     step_number: step.step_number,
     step_code: step.step_code,
@@ -333,14 +372,11 @@ const mapStepResponse = (step, idToNumber) => {
     action_type: step.action_type,
     api_id: step.api_id,
     next_step_id: step.next_step_id,
-    next_step_number: step.next_step_id && idToNumber ? idToNumber.get(step.next_step_id) || null : null,
     failure_step_id: step.failure_step_id,
-    failure_step_number: step.failure_step_id && idToNumber ? idToNumber.get(step.failure_step_id) || null : null,
     is_end_step: step.is_end_step,
     template_source_id: step.template_source_id,
     template,
     media_url: step.media_url,
-    jump_mode: step.next_step_id ? "custom" : "next",
     campaign_step_choice: (
       step.campaign_step_choice_campaign_step_choice_step_idTocampaign_step || []
     ).map((c) => ({
@@ -350,7 +386,6 @@ const mapStepResponse = (step, idToNumber) => {
       choice_code: c.choice_code,
       label: c.label,
       next_step_id: c.next_step_id,
-      next_step_number: c.next_step_id && idToNumber ? idToNumber.get(c.next_step_id) || null : null,
       is_correct: c.is_correct,
     })),
   };
@@ -391,14 +426,7 @@ export async function getCampaignWithSteps(req, res) {
       end_at: campaign.end_at,
     };
 
-    const idToNumber = new Map();
-    (campaign.campaign_step || []).forEach((s) => {
-      idToNumber.set(s.step_id, s.step_number);
-    });
-
-    const mappedSteps = (campaign.campaign_step || []).map((step) =>
-      mapStepResponse(step, idToNumber)
-    );
+    const mappedSteps = (campaign.campaign_step || []).map((step) => mapStepResponse(step));
 
     return res.status(200).json({
       campaign: mappedCampaign,
@@ -450,22 +478,29 @@ export async function upsertCampaignStep(req, res) {
 
     const steps = await prisma.campaign_step.findMany({
       where: { campaign_id: campaignID },
-      select: { step_id: true, step_number: true },
+      select: { step_id: true },
     });
-    const stepNumberToId = new Map(steps.map((s) => [s.step_number, s.step_id]));
-    const resolveStepIdFromNumber = (num) => {
-      if (num == null) return null;
-      const id = stepNumberToId.get(num);
-      return id ?? null;
-    };
+    const validIds = new Set(steps.map((s) => s.step_id));
 
-    const nextNumber = payload.next_step_id;
-    const failureNumber = payload.failure_step_id;
-    payload.next_step_id = resolveStepIdFromNumber(nextNumber);
-    payload.failure_step_id = resolveStepIdFromNumber(failureNumber);
-
-    if (payload.is_end_step) {
+    if (payload.action_type === "choice") {
       payload.next_step_id = null;
+      payload.is_end_step = false;
+    } else if (payload.is_end_step) {
+      payload.next_step_id = null;
+    }
+
+    if (payload.action_type !== "choice" && !payload.is_end_step && !payload.next_step_id) {
+      return res
+        .status(400)
+        .json({ error: "next_step_id is required for non-choice steps unless is_end_step is true" });
+    }
+
+    if (payload.next_step_id && !validIds.has(payload.next_step_id)) {
+      return res.status(400).json({ error: "next_step_id must reference a step in this campaign" });
+    }
+
+    if (payload.failure_step_id && !validIds.has(payload.failure_step_id)) {
+      payload.failure_step_id = null;
     }
 
     let result = null;
@@ -550,22 +585,12 @@ export async function saveStepChoices(req, res) {
     console.log("[DEBUG saveStepChoices] choices payload:", JSON.stringify(choices, null, 2));
 
     await prisma.$transaction(async (tx) => {
-      // 1) Load all steps in this campaign so we can map step_number -> step_id
+      // 1) Load all steps in this campaign so we can validate next_step_id references
       const stepsForCampaign = await tx.campaign_step.findMany({
         where: { campaign_id: campaignID },
-        select: { step_id: true, step_number: true },
+        select: { step_id: true },
       });
-
-      const numberToId = new Map(stepsForCampaign.map((s) => [s.step_number, s.step_id]));
-
-      const resolveNextStepIdFromNumber = (raw) => {
-        if (raw == null || raw === "") return null;
-        const num = Number(raw);
-        if (Number.isNaN(num)) return null;
-        // Always interpret the input as a STEP NUMBER,
-        // then map it to the correct step_id for this campaign.
-        return numberToId.get(num) ?? null;
-      };
+      const validStepIds = new Set(stepsForCampaign.map((s) => s.step_id));
 
       // 2) Existing choices for delete detection
       const existing = await tx.campaign_step_choice.findMany({
@@ -590,16 +615,13 @@ export async function saveStepChoices(req, res) {
       for (const c of choices) {
         const choiceId = ("choice_id" in c ? c.choice_id : c.choiceid) || null;
 
-        // UI might send: next_step_number / nextStepNumber / next_step_id / nextStepId,
-        // but we ALWAYS treat it as a STEP NUMBER.
-        const rawNextStepNumber =
-          c.next_step_number ??
-          c.nextStepNumber ??
-          c.next_step_id ??
-          c.nextStepId ??
-          null;
-
-        const resolvedNextStepId = resolveNextStepIdFromNumber(rawNextStepNumber);
+        const rawNext = c.next_step_id ?? c.nextStepId ?? null;
+        const parsedNext =
+          rawNext == null || rawNext === "" ? null : Number(rawNext);
+        const resolvedNextStepId =
+          parsedNext && !Number.isNaN(parsedNext) && validStepIds.has(parsedNext)
+            ? parsedNext
+            : null;
 
         const data = {
           campaign_id: campaignID,
@@ -641,6 +663,7 @@ export async function saveCampaignStepsBulk(req, res) {
       ...s,
       step_number: idx + 1,
       step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
+      client_id: s.client_id ?? s.step_id ?? (s.stepId ? Number(s.stepId) : null),
     }));
 
     // Validate unique step_code (non-empty) per campaign
@@ -675,8 +698,15 @@ export async function saveCampaignStepsBulk(req, res) {
         await tx.campaign_step.deleteMany({ where: { step_id: { in: toDelete } } });
       }
 
+      // Temporarily move existing step_numbers out of the way to avoid unique constraint clashes
+      await tx.campaign_step.updateMany({
+        where: { campaign_id: campaignID },
+        data: { step_number: { increment: 100000 } },
+      });
+
       const savedSteps = [];
       for (const step of normalizedSteps) {
+        const isChoiceStep = (step.action_type || "message") === "choice";
         const computedExpected = (() => {
           if (step.action_type === "message" || step.action_type === "api") return "none";
           if (step.action_type === "choice") return "choice";
@@ -704,7 +734,7 @@ export async function saveCampaignStepsBulk(req, res) {
               : Number(step.template_source_id),
           failure_step_id: null,
           next_step_id: null,
-          is_end_step: false,
+          is_end_step: isChoiceStep ? false : !!step.is_end_step,
           media_url:
             typeof step.media_url === "string" && step.media_url.length ? step.media_url : null,
         };
@@ -720,59 +750,61 @@ export async function saveCampaignStepsBulk(req, res) {
             data,
           });
         }
-        savedSteps.push({ saved, source: step, sourceChoices: step.campaign_step_choice || [] });
+        const clientId = step.client_id ?? step.step_id ?? saved.step_id;
+        savedSteps.push({
+          saved,
+          source: {
+            ...step,
+            action_type: step.action_type || "message",
+            is_end_step: isChoiceStep ? false : !!step.is_end_step,
+          },
+          sourceChoices: step.campaign_step_choice || [],
+          clientId,
+        });
       }
 
-      // Build mapping: step_number -> step_id
-      const stepNumberToId = new Map(savedSteps.map(({ saved }) => [saved.step_number, saved.step_id]));
-      const resolveFromStepNumber = (raw) => {
+      // Build mapping: client_id/step_id -> saved step_id
+      const clientIdToSavedId = new Map();
+      savedSteps.forEach(({ saved, clientId }) => {
+        clientIdToSavedId.set(saved.step_id, saved.step_id);
+        if (clientId != null) {
+          const normalizedClientId = Number(clientId);
+          if (!Number.isNaN(normalizedClientId)) {
+            clientIdToSavedId.set(normalizedClientId, saved.step_id);
+          }
+        }
+      });
+      const resolveRef = (raw) => {
         if (raw == null || raw === "") return null;
         const num = Number(raw);
         if (Number.isNaN(num)) return null;
-        return stepNumberToId.get(num) ?? null;
+        return clientIdToSavedId.get(num) ?? null;
       };
 
-      // Apply jump logic + failure mapping
+      // Apply routing using explicit next_step_id values only
       for (const { saved, source } of savedSteps) {
-        const stepNumber = saved.step_number;
+        const dbNextStepId =
+          source.action_type === "choice" ? null : source.is_end_step ? null : resolveRef(source.next_step_id);
+        const dbFailureStepId = resolveRef(source.failure_step_id);
 
-        const jumpMode = source.jump_mode ?? source.jumpMode ?? (source.next_step_id ? "custom" : "next");
-
-        let dbNextStepId = null;
-        let dbIsEnd = false;
-
-        if (jumpMode === "custom" && source.next_step_id) {
-          // Treat next_step_id from payload as step NUMBER
-          dbNextStepId = resolveFromStepNumber(source.next_step_id);
-        } else if (source.is_end_step) {
-          dbNextStepId = null;
-          dbIsEnd = true;
-        } else {
-          // Default: sequential next step
-          const nextStepNumber = stepNumber + 1;
-          const seqTarget = stepNumberToId.get(nextStepNumber) ?? null;
-          if (seqTarget) {
-            dbNextStepId = seqTarget;
-          } else {
-            // Last step in flow
-            dbNextStepId = null;
-            dbIsEnd = true;
-          }
+        if (source.action_type !== "choice" && !source.is_end_step && !dbNextStepId) {
+          throw Object.assign(
+            new Error(`Invalid next_step_id for step ${source.step_code || source.step_number}`),
+            { statusCode: 400 }
+          );
         }
-
-        const dbFailureStepId = resolveFromStepNumber(source.failure_step_id);
 
         await tx.campaign_step.update({
           where: { step_id: saved.step_id },
           data: {
             next_step_id: dbNextStepId,
-            is_end_step: dbIsEnd,
+            is_end_step: !!source.is_end_step,
             failure_step_id: dbFailureStepId,
           },
         });
       }
 
-      // Choices: replace per step, and map choice.next_step_id (step number -> step_id)
+      // Choices: replace per step, and map choice.next_step_id (ID-based)
       for (const { saved, sourceChoices } of savedSteps) {
         const stepId = saved.step_id;
         const existingChoices = await tx.campaign_step_choice.findMany({
@@ -785,20 +817,37 @@ export async function saveCampaignStepsBulk(req, res) {
             where: { choice_id: { in: choiceIds } },
           });
         }
-        await tx.campaign_step_choice.deleteMany({ where: { step_id: stepId } });
+        // Delete removed
+        await tx.campaign_step_choice.deleteMany({
+          where: {
+            step_id: stepId,
+            choice_id: {
+              notIn: (Array.isArray(sourceChoices) ? sourceChoices : [])
+                .map((c) => Number(c.choice_id) || 0)
+                .filter((id) => id > 0),
+            },
+          },
+        });
 
         const payloadChoices = Array.isArray(sourceChoices) ? sourceChoices : [];
-        if (payloadChoices.length) {
-          await tx.campaign_step_choice.createMany({
-            data: payloadChoices.map((c) => ({
-              campaign_id: campaignID,
-              step_id: stepId,
-              choice_code: c.choice_code || "",
-              label: c.label || "",
-              next_step_id: resolveFromStepNumber(c.next_step_id),
-              is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
-            })),
-          });
+        for (const c of payloadChoices) {
+          const choiceId = Number(c.choice_id);
+          const data = {
+            campaign_id: campaignID,
+            step_id: stepId,
+            choice_code: c.choice_code || "",
+            label: c.label || "",
+            next_step_id: resolveRef(c.next_step_id),
+            is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
+          };
+          if (choiceId > 0) {
+            await tx.campaign_step_choice.update({
+              where: { choice_id: choiceId },
+              data,
+            });
+          } else {
+            await tx.campaign_step_choice.create({ data });
+          }
         }
       }
 
@@ -833,18 +882,14 @@ export async function saveCampaignStepsBulk(req, res) {
       end_at: result.end_at,
     };
 
-    const idToNumber = new Map();
-    (result.campaign_step || []).forEach((s) => {
-      idToNumber.set(s.step_id, s.step_number);
-    });
-
-    const mappedSteps = (result.campaign_step || []).map((step) =>
-      mapStepResponse(step, idToNumber)
-    );
+    const mappedSteps = (result.campaign_step || []).map((step) => mapStepResponse(step));
 
     return res.status(200).json({ campaign: mappedCampaign, steps: mappedSteps });
   } catch (err) {
     console.error("Save campaign steps (bulk) error:", err);
+    if (err?.statusCode === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     return res.status(500).json({ error: err.message });
   }
 }
@@ -859,7 +904,7 @@ export async function archiveCampaign(req, res) {
 
     await prisma.campaign.update({
       where: { campaign_id: campaignID },
-      data: { status: "Archived" },
+      data: { status: "Archived", is_deleted: true, is_active: false },
     });
 
     return res.status(200).json({ message: "Campaign archived successfully!" });
@@ -881,7 +926,7 @@ export async function restoreCampaign(req, res) {
 
     await prisma.campaign.update({
       where: { campaign_id: campaignID },
-      data: { status: "Inactive" },
+      data: { status: "Inactive", is_deleted: false, is_active: true },
     });
 
     return res.status(200).json({ message: "Campaign restored to Inactive!" });
@@ -910,7 +955,7 @@ export async function hardDeleteArchivedCampaign(req, res) {
       return res.status(404).json({ error: "Campaign not found" });
     }
 
-    if (campaign.status !== "Archived") {
+    if (campaign.status !== "Archived" && !campaign.is_deleted) {
       return res
         .status(400)
         .json({ error: "Only archived campaigns can be permanently deleted." });
@@ -939,7 +984,10 @@ export async function hardDeleteArchivedCampaigns(req, res) {
     }
 
     const result = await prisma.campaign.deleteMany({
-      where: { campaign_id: { in: parsedIds }, status: "Archived" },
+      where: {
+        campaign_id: { in: parsedIds },
+        OR: [{ status: "Archived" }, { is_deleted: true }],
+      },
     });
 
     return res.status(200).json({
@@ -956,11 +1004,20 @@ export async function autoCheckCampaignStatuses() {
   try {
     const now = new Date();
 
+    const deriveWindowStatus = (startAt, endAt) => {
+      const start = startAt ? new Date(startAt) : null;
+      const end = endAt ? new Date(endAt) : null;
+
+      if (!start && !end) return "Upcoming";
+      if (start && now < start) return "Upcoming";
+      if (end && now > end) return "Expired";
+      return "On Going";
+    };
+
     const campaigns = await prisma.campaign.findMany({
       where: {
-        status: {
-          in: [STATUS_ON_HOLD, STATUS_ACTIVE], 
-        },
+        status: { not: "Archived" },
+        OR: [{ is_deleted: false }, { is_deleted: null }],
       },
       select: {
         campaign_id: true,
@@ -972,30 +1029,9 @@ export async function autoCheckCampaignStatuses() {
 
     for (const campaign of campaigns) {
       const currentStatus = campaign.status;
-      const startWindow = campaign.start_at
-        ? new Date(campaign.start_at)
-        : null;
-      const endWindow = campaign.end_at ? new Date(campaign.end_at) : null;
+      const nextStatus = deriveWindowStatus(campaign.start_at, campaign.end_at);
 
-      let nextStatus = null;
-
-      if (currentStatus === STATUS_ON_HOLD) {
-        if (startWindow && now >= startWindow) {
-          nextStatus = STATUS_ACTIVE;
-
-          if (endWindow && now > endWindow) {
-            nextStatus = STATUS_INACTIVE;
-          }
-        }
-      }
-
-      if (currentStatus === STATUS_ACTIVE) {
-        if (endWindow && now > endWindow) {
-          nextStatus = STATUS_INACTIVE;
-        }
-      }
-
-      if (nextStatus && nextStatus !== currentStatus) {
+      if (nextStatus !== currentStatus) {
         await prisma.campaign.update({
           where: { campaign_id: campaign.campaign_id },
           data: { status: nextStatus },

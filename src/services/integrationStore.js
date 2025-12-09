@@ -79,7 +79,7 @@ const splitUrl = (url) => {
 
 const mapKeyValue = (row) => ({
   key: row.key,
-  value: row.constantvalue || row.valuepath || "",
+  value: row.constant_value || row.value_path || "",
 });
 
 function hydrateEndpoint(row, params = []) {
@@ -91,13 +91,15 @@ function hydrateEndpoint(row, params = []) {
 
   return {
     id: row.api_id,
+    api_id: row.api_id,
     name: row.name,
     method: row.method?.toUpperCase() === "POST" ? "POST" : "GET",
     url: buildUrl(row),
     description: row.description || "",
     headers: headers.map(mapKeyValue),
     query: query.map(mapKeyValue),
-    bodyTemplate: bodyTemplateRow?.constantvalue || "",
+    bodyTemplate: bodyTemplateRow?.constant_value || "",
+    response_template: row.response_template || "",
     auth: {
       type: row.auth_type || "none",
       headerName: row.auth_header_name || undefined,
@@ -294,8 +296,8 @@ export async function appendLog(entry) {
           entry?.level === "error"
             ? "error"
             : responseCode && responseCode >= 200 && responseCode < 300
-            ? "success"
-            : entry?.meta?.statusText || null,
+              ? "success"
+              : entry?.meta?.statusText || null,
         error_message: entry?.error || entry?.message || null,
         called_at: calledAt,
       },

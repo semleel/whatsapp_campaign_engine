@@ -62,7 +62,13 @@ export async function reportSummary(_req, res) {
     const [messagesLast24, messagesTotal, activeCampaigns, deliveries] = await Promise.all([
       prisma.message.count({ where: { created_at: { gte: since24h } } }),
       prisma.message.count(),
-      prisma.campaign.count({ where: { status: { not: "Archived" } } }),
+      prisma.campaign.count({
+        where: {
+          status: { not: "Archived" },
+          is_active: true,
+          OR: [{ is_deleted: false }, { is_deleted: null }],
+        },
+      }),
       prisma.delivery_log.findMany({
         where: { created_at: { gte: since7d } },
         select: {

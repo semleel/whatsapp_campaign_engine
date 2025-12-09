@@ -9,7 +9,7 @@ import { upsertStatus } from "../services/whatsappStatusService.js";
 /**
  * Convert raw WA message into a simple display text for logging/DB
  */
-const buildDisplayText = (message) => {
+function buildDisplayText(message) {
   switch (message.type) {
     case "text":
       return message.text?.body?.trim() || "";
@@ -23,32 +23,60 @@ const buildDisplayText = (message) => {
         return `[List reply: ${message.interactive.list_reply?.title}]`;
       }
       return "[Interactive message]";
+    case "location": {
+      const lat = message.location?.latitude;
+      const lng = message.location?.longitude;
+      if (typeof lat === "number" && typeof lng === "number") {
+        return `[Location: ${lat}, ${lng}]`;
+      }
+      return "[Location]";
+    }
     case "sticker":
       return "[Sticker]";
     default:
       return "[Unsupported message type]";
   }
-};
+}
 
+// NOTE: this is what the campaign engine sees
 function mapToEnginePayload(message) {
+  // Buttons
   if (message.type === "interactive" && message.interactive?.type === "button_reply") {
     return {
       text: message.interactive.button_reply?.title || "",
       type: "button",
     };
   }
+
+  // List
   if (message.type === "interactive" && message.interactive?.type === "list_reply") {
     return {
       text: message.interactive.list_reply?.title || "",
       type: "list",
     };
   }
+
+  // Location
+  if (message.type === "location") {
+    const lat = message.location?.latitude;
+    const lng = message.location?.longitude;
+    const hasCoords = typeof lat === "number" && typeof lng === "number";
+
+    return {
+      text: hasCoords ? `${lat},${lng}` : "",
+      type: "location",
+    };
+  }
+
+  // Plain text (default)
   if (message.type === "text") {
     return {
       text: message.text?.body?.trim() || "",
       type: "text",
     };
   }
+
+  // Fallback
   return { text: "", type: "text" };
 }
 
@@ -163,6 +191,7 @@ export async function webhookHandler(req, res) {
         text: enginePayload.text,
         type: enginePayload.type,
         payload: req.body,
+        enginePayload,
       });
 
       if (!result?.outbound?.length) continue;

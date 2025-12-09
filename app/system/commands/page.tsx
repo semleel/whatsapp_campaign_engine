@@ -193,18 +193,27 @@ export default function SystemCommandsPage() {
                   )}
                 </div>
 
-                <div className="w-28 text-right">
+                <div className="w-28 flex justify-end">
                   <button
                     type="button"
                     onClick={() => handleToggle(cmd.command)}
-                    className={
-                      "inline-flex items-center rounded-full px-2 py-0.5 text-xs border " +
-                      (cmd.is_enabled
-                        ? "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200 dark:border-emerald-800"
-                        : "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-900/40 dark:text-slate-200 dark:border-slate-700")
+                    className={`relative h-6 w-11 overflow-hidden rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${
+                      cmd.is_enabled
+                        ? "bg-emerald-500 border-emerald-600"
+                        : "bg-slate-200 border-slate-300"
+                    } hover:opacity-90`}
+                    aria-pressed={cmd.is_enabled}
+                    aria-label={
+                      cmd.is_enabled
+                        ? `Disable ${cmd.command} command`
+                        : `Enable ${cmd.command} command`
                     }
                   >
-                    {cmd.is_enabled ? "Enabled" : "Disabled"}
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        cmd.is_enabled ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
                   </button>
                 </div>
               </div>

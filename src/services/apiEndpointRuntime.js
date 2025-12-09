@@ -15,7 +15,21 @@ function mapParameters(paramRows = []) {
 
   for (const p of paramRows) {
     if (!p.key) continue;
-    const value = (p.constant_value || "").trim();
+
+    const source = (p.value_source || "constant").toLowerCase();
+    let value = "";
+
+    if (source === "constant") {
+      // Literal value straight from the DB
+      value = (p.constant_value || "").trim();
+    } else if (p.value_path) {
+      // Build a template like {{contact.latitude}} or {{campaign.code}}
+      const path = p.value_path.trim();
+      if (path) {
+        value = `{{${source}.${path}}}`;
+      }
+    }
+
     if (!value) continue;
 
     if (p.location === "header") {
