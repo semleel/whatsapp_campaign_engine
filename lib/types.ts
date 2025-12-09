@@ -191,11 +191,6 @@ export interface RegionRef {
     regioncode?: string | null;
 }
 
-export interface UserFlowRef {
-    userflowid: number;
-    userflowname: string;
-}
-
 export interface CampaignStatusRef {
     camstatusid: number | string;
     currentstatus: string;
@@ -209,7 +204,6 @@ export interface CampaignListItem {
     campaignname: string;
     objective: string | null;
     regionname: string;
-    userflowname?: string;
     currentstatus: string;
     status: string;
     camstatusid: number | null;
@@ -328,17 +322,6 @@ export interface KeywordCheckResponse {
     keywordid?: number;
     campaignid?: number;
     campaignname?: string | null;
-}
-
-// =============================================
-// Tag types
-// =============================================
-export interface TagItem {
-    tagid: number;
-    name: string;
-    isdeleted?: boolean | null;
-    createdat?: string | null;
-    updatedat?: string | null;
 }
 
 // =============================================
@@ -461,139 +444,6 @@ export interface TemplatesOverviewResponse {
     upcomingExpiries: TemplateExpiryItem[];
 }
 
-// ========================
-// Flow list / detail types
-// ========================
-export type FlowType = "START" | "CAMPAIGN" | "END";
-
-export type FlowStatus = "Active" | "Draft";
-
-export interface FlowListItem {
-    userflowid: number;
-    userflowname: string;
-    description?: string | null;
-    nodeCount: number;
-    entryKey: string | null;
-    fallbackKey: string | null;
-    status: FlowStatus;            // "Active" | "Draft"
-    updatedAt: string | null;  // ISO string
-    flowType: FlowType;
-}
-
-// ========================
-// Flow builder payload types (frontend -> backend)
-// ========================
-export type AttachmentType = "none" | "image" | "video" | "audio" | "document";
-export type InteractiveType = "none" | "buttons" | "list";
-
-export type FlowEdgePayload = {
-    source: string;
-    target: string;
-    label?: string | null; // "*" or "ANY" = fallback
-};
-
-export type FlowFallbackEdgePayload = {
-    source: string;
-    target: string;
-};
-
-export type FlowNodePayload = {
-    key: string;
-    type: "message" | "template" | "wait_input" | "decision" | "jump" | "api" | string;
-
-    body: string;
-    ui_metadata?: any;
-    allowedInputs?: string[];
-    fallbackKey?: string | null;
-
-    // API request type
-    endpointId?: number | null;
-    apiSuccessKey?: string | null;
-    apiErrorKey?: string | null;
-
-    // Decision step
-    decisionRules?: { id?: string; left?: string; op?: string; right?: string; nextKey?: string }[];
-    elseKey?: string | null;
-
-    // Attachments
-    attachmentType?: AttachmentType;
-    attachmentUrl?: string | null;
-
-    // Interactive UI
-    interactiveType?: InteractiveType;
-    buttons?: string[];
-    listOptions?: string[];
-
-    // Wait + template + jump
-    waitTimeoutMin?: number | null;
-    templateId?: number | null;
-    jumpNextKey?: string | null;
-};
-
-export type FlowCreatePayload = {
-    userflowname: string;
-    entryKey: string | null;
-    fallbackKey: string | null;
-    description?: string | null;
-    flowType?: FlowType;
-
-    nodes: FlowNodePayload[];
-    edges: FlowEdgePayload[];
-    fallbackEdges?: FlowFallbackEdgePayload[];
-};
-
-export type FlowUpdatePayload = FlowCreatePayload;
-
-// ========================
-// Flow definition types (backend -> frontend)
-// ========================
-export type FlowBranchRule = {
-    input: string;
-    next: string;
-};
-
-export type FlowNodeDefinition = {
-    key: string;
-    type: "message" | "template" | "wait_input" | "decision" | "jump" | "api" | string;
-
-    body: string;
-    ui_metadata?: any;
-    description?: string | null;
-    allowedInputs?: string[];
-    branches?: FlowBranchRule[];
-    fallback?: string | null;
-    endpointId?: number | null;
-    apiSuccessKey?: string | null;
-    apiErrorKey?: string | null;
-
-    // ✅ NEW (builder hydration)
-    attachmentType?: AttachmentType;
-    attachmentUrl?: string | null;
-
-    interactiveType?: InteractiveType;
-    buttons?: string[];
-    listOptions?: string[];
-
-    decisionRules?: { id?: string; left?: string; op?: string; right?: string; nextKey?: string }[];
-    elseKey?: string | null;
-
-    waitTimeoutMin?: number | null;
-    templateId?: number | null;
-    jumpNextKey?: string | null;
-};
-
-export type FlowDefinition = {
-    id: number | string;
-    name: string;
-    entryKey: string | null;
-    fallbackKey: string | null;
-    nodes: FlowNodeDefinition[];
-
-    // (optional but useful)
-    description?: string | null;
-    flowType?: FlowType;
-};
-
 // campaign session types
 export type SessionStatus = "ACTIVE" | "PAUSED" | "COMPLETED" | "EXPIRED" | "CANCELLED";
 
@@ -620,36 +470,6 @@ export type FeedbackEntry = {
     comment: string | null;
     created_at?: string | null;
 };
-
-// ========================
-// System Flow / Keyword (DB-configurable core commands)
-// ========================
-
-export interface SystemFlow {
-    systemflowid: number;
-    code: string;            // e.g. "ONBOARDING", "MENU", "RESET"
-    userflowid: number;
-    userflowname?: string;  // joined display
-    is_active: boolean;
-    createdat?: string | null;
-}
-
-export interface SystemFlowActivationRef {
-    systemflowid: number;
-    userflowid: number;
-}
-
-export interface SystemKeyword {
-    keyword: string;         // PK
-    userflowid: number;      // fallback direct flow
-    systemflowid?: number | null;
-    systemflowcode?: string | null; // joined display
-    is_active: boolean;
-    createdat?: string | null;
-
-    // joined optional display
-    userflowname?: string | null;
-}
 
 export interface FlowStat {
     campaignid: number | null;

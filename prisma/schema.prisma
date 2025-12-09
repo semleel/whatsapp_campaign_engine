@@ -147,7 +147,6 @@ model campaign_step {
   error_message                                                         String?
   media_url                                                             String?
   template_source_id                                                    Int?
-  api_config                                                            api_config?
   campaign_response                                                     campaign_response[]
   campaign_session                                                      campaign_session[]
   api                                                                   api?                   @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)
@@ -195,6 +194,25 @@ model contact {
   target_region    target_region?     @relation(fields: [region_id], references: [region_id], onDelete: NoAction, onUpdate: NoAction)
   message          message[]
   service_feedback service_feedback[]
+}
+
+model content {
+  content_id    Int             @id @default(autoincrement())
+  title         String          @db.VarChar
+  type          String?         @db.VarChar
+  status        String?         @db.VarChar
+  lang          String?         @db.VarChar
+  body          String?
+  media_url     String?         @db.VarChar
+  placeholders  Json?
+  created_at    DateTime?       @default(now()) @db.Timestamp(6)
+  updated_at    DateTime?       @db.Timestamp(6)
+  expires_at    DateTime?       @db.Timestamp(6)
+  is_deleted    Boolean         @default(false)
+  content_key   String?         @db.VarChar
+  campaign_step campaign_step[]
+
+  @@unique([content_key, lang], map: "content_key_lang_unique")
 }
 
 model delivery_log {
@@ -316,23 +334,4 @@ model whatsapp_config {
   updated_at          DateTime? @db.Timestamp(6)
   updated_by_admin_id Int?
   admin               admin?    @relation(fields: [updated_by_admin_id], references: [admin_id], onDelete: NoAction, onUpdate: NoAction)
-}
-
-model content {
-  content_id    Int             @id @default(autoincrement())
-  title         String          @db.VarChar
-  type          String?         @db.VarChar
-  status        String?         @db.VarChar
-  lang          String?         @db.VarChar
-  body          String?
-  media_url     String?         @db.VarChar
-  placeholders  Json?
-  created_at    DateTime?       @default(now()) @db.Timestamp(6)
-  updated_at    DateTime?       @db.Timestamp(6)
-  expires_at    DateTime?       @db.Timestamp(6)
-  is_deleted    Boolean         @default(false)
-  content_key   String?         @db.VarChar
-  campaign_step campaign_step[]
-
-  @@unique([content_key, lang], map: "content_key_lang_unique")
 }

@@ -90,7 +90,6 @@ import type {
   TestRunPayload,
   TestRunResult,
   RegionRef,
-  UserFlowRef,
   CampaignStatusRef,
   CampaignListItem,
   CampaignDetail,
@@ -106,16 +105,7 @@ import type {
   TemplateDetail,
   TemplatePayload,
   TemplatesOverviewResponse,
-  FlowListItem,
-  FlowCreatePayload,
-  FlowDefinition,
-  FlowUpdatePayload,
-  TagItem,
-  SystemFlow,
-  SystemKeyword,
   CampaignSession,
-  SystemFlowActivationRef,
-  FlowStatus,
   FlowStat,
   ReportSummary,
   SystemCommand,
@@ -133,12 +123,10 @@ type ListLogsParams = {
 
 export const Api = {
   // =========================================================
-  // Reference data (regions, userflows, campaign status)
+  // Reference data (regions, campaign status)
   // =========================================================
 
   listRegions: () => http<RegionRef[]>("/api/reference/regions"),
-
-  listUserFlows: () => http<UserFlowRef[]>("/api/reference/userflows"),
 
   listCampaignStatuses: () =>
     http<CampaignStatusRef[]>("/api/reference/campaignstatus"),
@@ -147,12 +135,6 @@ export const Api = {
     http<{ message: string; region: RegionRef }>("/api/reference/regions", {
       method: "POST",
       body: JSON.stringify({ regionName, regionCode }),
-    }),
-
-  createUserFlow: (userFlowName: string) =>
-    http<{ message: string; userflow: UserFlowRef }>("/api/reference/userflows", {
-      method: "POST",
-      body: JSON.stringify({ userFlowName }),
     }),
 
   // =========================================================
@@ -507,77 +489,7 @@ export const Api = {
   },
 
   // =========================================================
-  // Tags
-  // =========================================================
-  listTags: (includeDeleted = false) =>
-    http<TagItem[]>(`/api/tags${includeDeleted ? "?includeDeleted=true" : ""}`),
-
-  getTag: (id: number | string) => http<TagItem>(`/api/tags/${id}`),
-
-  createTag: (name: string) =>
-    http<{ message: string; data: TagItem }>("/api/tags", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-    }),
-
-  updateTag: (
-    id: number | string,
-    payload: { name?: string; isdeleted?: boolean }
-  ) =>
-    http<{ message: string; data: TagItem }>(`/api/tags/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  archiveTag: (id: number | string) =>
-    http<{ message: string; data: TagItem }>(`/api/tags/${id}/archive`, {
-      method: "POST",
-    }),
-
-  recoverTag: (id: number | string) =>
-    http<{ message: string; data: TagItem }>(`/api/tags/${id}/recover`, {
-      method: "POST",
-    }),
-
-  deleteTag: (id: number | string) =>
-    http<{ message: string }>(`/api/tags/${id}`, {
-      method: "DELETE",
-    }),
-
-  // =========================================================
-  // Flow builder (userflow + nodes + rules)
-  // =========================================================
-
-  listFlows: () => http<FlowListItem[]>("/api/flow/list"),
-
-  createFlowDefinition: (payload: FlowCreatePayload) =>
-    http<{ message: string; userflow: UserFlowRef }>("/api/flow/create", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  getFlowDefinition: (id: string | number) =>
-    http<FlowDefinition>(`/api/flow/${id}`),
-
-  updateFlowDefinition: (id: string | number, payload: FlowUpdatePayload) =>
-    http<{ message: string }>(`/api/flow/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  deleteFlowDefinition: (id: string | number) =>
-    http<{ message: string }>(`/api/flow/${id}`, {
-      method: "DELETE",
-    }),
-
-  updateFlowStatus: (id: string | number, status: FlowStatus) =>
-    http<{ message: string; status: FlowStatus }>(`/api/flow/${id}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    }),
-
-  // =========================================================
-  // System -> System Flows & Keywords
+  // System Commands
   // =========================================================
 
   listSystemCommands: () =>
@@ -594,59 +506,6 @@ export const Api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       }
-    ),
-
-  listSystemFlows: () => http<SystemFlow[]>("/api/system/flows"),
-
-  getActiveSystemStartFlow: () =>
-    http<SystemFlowActivationRef | null>("/api/system/start-flow"),
-
-  setActiveSystemStartFlow: (userflowid: number) =>
-    http<SystemFlowActivationRef>("/api/system/start-flow", {
-      method: "POST",
-      body: JSON.stringify({ userflowid }),
-    }),
-
-  getActiveSystemEndFlow: () =>
-    http<SystemFlowActivationRef | null>("/api/system/end-flow"),
-
-  setActiveSystemEndFlow: (userflowid: number) =>
-    http<SystemFlowActivationRef>("/api/system/end-flow", {
-      method: "POST",
-      body: JSON.stringify({ userflowid }),
-    }),
-
-  listSystemKeywords: () => http<SystemKeyword[]>("/api/system/keywords"),
-
-  createSystemKeyword: (payload: {
-    keyword: string;
-    userflowid: number;
-    systemflowid?: number | null;
-    is_active?: boolean;
-  }) =>
-    http<SystemKeyword>("/api/system/keywords", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
-  updateSystemKeyword: (
-    keyword: string,
-    payload: {
-      keyword?: string;
-      userflowid?: number;
-      systemflowid?: number | null;
-      is_active?: boolean;
-    }
-  ) =>
-    http<SystemKeyword>(`/api/system/keywords/${encodeURIComponent(keyword)}`, {
-      method: "PUT",
-      body: JSON.stringify(payload),
-    }),
-
-  deleteSystemKeyword: (keyword: string) =>
-    http<{ ok: boolean }>(
-      `/api/system/keywords/${encodeURIComponent(keyword)}`,
-      { method: "DELETE" }
     ),
 
   // =========================================================

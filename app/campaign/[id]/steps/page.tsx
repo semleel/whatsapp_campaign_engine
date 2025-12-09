@@ -658,6 +658,10 @@ export default function CampaignStepsPage() {
         return formatStepLabel(target) ?? "None";
       })()
       : "-";
+  const activeApi =
+    activeStep?.api_id && typeof activeStep.api_id === "number"
+      ? apis.find((api) => api.api_id === activeStep.api_id) ?? null
+      : null;
 
   if (!privLoading && !canView) {
     return (
@@ -744,6 +748,10 @@ export default function CampaignStepsPage() {
                           );
                           const showInactiveTemplateOption =
                             messageMode === "template" && stepTemplateId && !selectedTemplate;
+                          const apiForStep =
+                            typeof s.api_id === "number"
+                              ? apis.find((api) => api.api_id === s.api_id) || null
+                              : null;
 
                           return (
                             <SortableStepRow
@@ -774,12 +782,20 @@ export default function CampaignStepsPage() {
                                             const nextAction = e.target.value as ActionType;
                                             const nextInputType =
                                               nextAction === "input" ? s.input_type || "text" : null;
-                                            // When switching TO a choice step, clear step-level next_step_id
-                                            const extra: Partial<CampaignStepWithChoices> = {};
+                                            const extra: Partial<CampaignStepWithChoices> = {
+                                              api_id: nextAction === "api" ? s.api_id : null,
+                                            };
+
+                                            if (nextAction !== "api") {
+                                              extra.failure_step_id = null;
+                                              extra.error_message = null;
+                                            }
+
                                             if (nextAction === "choice") {
                                               extra.next_step_id = null;
                                               extra.is_end_step = false;
                                             }
+
                                             updateStep(idx, {
                                               action_type: nextAction,
                                               input_type: nextInputType,
@@ -1084,12 +1100,43 @@ export default function CampaignStepsPage() {
                                                   key={`fail-${st.local_id}`}
                                                   value={value}
                                                 >
-                                                  {`Step ${st.step_number} – ${st.step_code || st.prompt_text || "Step"}`}
+                                                  {`Step ${st.step_number} - ${st.step_code || st.prompt_text || "Step"}`}
                                                 </option>
                                               );
                                             })}
                                           </select>
                                         </label>
+                                        <label className="space-y-1 text-sm font-medium md:col-span-2">
+                                          <span>Error message</span>
+                                          <textarea
+                                            className="w-full rounded border px-3 py-2 text-xs font-mono"
+                                            rows={3}
+                                            value={s.error_message ?? ""}
+                                            onChange={(e) =>
+                                              updateStep(idx, {
+                                                error_message: e.target.value || null,
+                                              })
+                                            }
+                                            placeholder="Displayed when the API call fails."
+                                          />
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Optional fallback message shown when the API fails.
+                                          </p>
+                                        </label>
+                                        <div className="md:col-span-2 space-y-2 text-sm">
+                                          <p className="text-[11px] font-semibold text-muted-foreground">
+                                            Response template (read-only)
+                                          </p>
+                                          {apiForStep?.response_template ? (
+                                            <pre className="rounded bg-background px-2 py-1 text-[11px] whitespace-pre-wrap border">
+                                              {apiForStep.response_template}
+                                            </pre>
+                                          ) : (
+                                            <p className="text-xs text-muted-foreground">
+                                              Select an API to preview its response template.
+                                            </p>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
 
@@ -1400,9 +1447,23 @@ export default function CampaignStepsPage() {
               )}
 
               {activeStep.action_type === "api" && (
-                <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-2">
                   <p>Calls API: {activeStep.api_id ? `#${activeStep.api_id}` : "Not selected"}</p>
                   <p>On failure: {failureLabel}</p>
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold text-muted-foreground">
+                      Response template
+                    </p>
+                    {activeApi?.response_template ? (
+                      <pre className="rounded bg-background px-2 py-1 text-[11px] whitespace-pre-wrap border">
+                        {activeApi.response_template}
+                      </pre>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        This API has no response template configured.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
