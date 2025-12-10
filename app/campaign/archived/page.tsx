@@ -59,47 +59,6 @@ export default function ArchivedCampaignsPage() {
     }
   };
 
-  const handleDelete = async (id: number) => {
-    const confirmed = await showCenteredConfirm(
-      "Permanently delete this archived campaign? This cannot be undone."
-    );
-    if (!confirmed) return;
-    try {
-      await Api.deleteArchivedCampaign(id);
-      setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      setMessage("Campaign permanently deleted.");
-    } catch (err: any) {
-      console.error(err);
-      setMessage(err?.message || "Failed to delete campaign.");
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    const ids = Array.from(selectedIds);
-    if (!ids.length) return;
-    const confirmed = await showCenteredConfirm(
-      `Permanently delete ${ids.length} archived campaign(s)? This cannot be undone.`
-    );
-    if (!confirmed) return;
-    try {
-      const res = await Api.deleteArchivedCampaigns(ids);
-      setCampaigns((prev) =>
-        prev.filter((c) => !selectedIds.has(c.campaignid))
-      );
-      setSelectedIds(new Set());
-      setMessage(res.message);
-      await showCenteredAlert(res.message);
-    } catch (err: any) {
-      console.error(err);
-      setMessage(err?.message || "Failed to delete archived campaigns.");
-    }
-  };
-
   const handleBulkRestore = async () => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
@@ -175,22 +134,6 @@ export default function ArchivedCampaignsPage() {
             }
           >
             Restore selected
-          </button>
-          <button
-            onClick={handleBulkDelete}
-            disabled={!selectedIds.size}
-            className={`rounded border px-3 py-2 text-sm font-medium ${
-              selectedIds.size
-                ? "text-rose-700 hover:bg-rose-50 border-rose-200"
-                : "text-muted-foreground border-border cursor-not-allowed opacity-60"
-            }`}
-            title={
-              selectedIds.size
-                ? "Delete selected archived campaigns"
-                : "Select archived campaigns to delete"
-            }
-          >
-            Delete selected
           </button>
           <Link
             href="/campaign"
@@ -277,12 +220,6 @@ export default function ArchivedCampaignsPage() {
                         className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
                       >
                         Restore
-                      </button>
-                      <button
-                        onClick={() => handleDelete(c.campaignid)}
-                        className="rounded border px-2 py-1 text-xs font-medium text-rose-700 border-rose-200 hover:bg-rose-50"
-                      >
-                        Delete
                       </button>
                     </td>
                   </tr>

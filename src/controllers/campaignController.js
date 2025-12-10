@@ -24,10 +24,19 @@ const parseNullableInt = (value) => {
 export async function createCampaign(req, res) {
   try {
     const { campaignName, objective, targetRegionID, status, startAt, endAt } = req.body;
+    const normalizedName = typeof campaignName === "string" ? campaignName.trim() : "";
 
-    if (!campaignName) {
+    if (!normalizedName) {
       return res.status(400).json({ error: "campaignName is required" });
     }
+    const nameInUse = await prisma.campaign.findFirst({
+      where: { campaign_name: { equals: normalizedName, mode: "insensitive" } },
+    });
+    if (nameInUse) {
+      return res.status(409).json({ error: "Campaign name already exists" });
+    }
+
+    const campaignNameValue = normalizedName;
 
     const startDate = parseNullableDate(startAt);
     const endDate = parseNullableDate(endAt);
@@ -59,17 +68,32 @@ export async function createCampaign(req, res) {
     }
 
     const data = {
-      campaign_name: campaignName,
+      campaign_name: campaignNameValue,
       objective: objective || null,
       target_region_id: parseNullableInt(targetRegionID),
       status: derivedStatus || normalizedStatus,
       start_at: startDate,
       end_at: endDate,
       created_by_admin_id: req.adminId || null,
+      is_active: false,
     };
 
     const campaign = await prisma.campaign.create({ data });
-    return res.status(201).json({ message: "Campaign created successfully!", data: campaign });
+    const responsePayload = {
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
+      objective: campaign.objective,
+      targetregionid: campaign.target_region_id || null,
+      status: campaign.status,
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
+      createdat: campaign.created_at,
+      updatedat: campaign.updated_at,
+      camstatusid: statusToId(campaign.status),
+    };
+    return res
+      .status(201)
+      .json({ message: "Campaign created successfully!", data: responsePayload });
   } catch (err) {
     console.error("Create campaign error:", err);
     return res.status(500).json({ error: err.message });
