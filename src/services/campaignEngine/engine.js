@@ -33,6 +33,22 @@ export async function handleIncomingMessage(args) {
       : "";
   const normalizedKeywordLower = normalizedKeywordText.toLowerCase();
   let activeSession = await findActiveSession(contact.contact_id);
+  if (!activeSession) {
+    const expiredSession = await findExpiredSession(contact.contact_id);
+    if (expiredSession) {
+      const revived = await prisma.campaign_session.update({
+        where: { campaign_session_id: expiredSession.campaign_session_id },
+        data: { session_status: "ACTIVE", last_active_at: new Date() },
+        include: { campaign: true },
+      });
+      const resumeNotice = {
+        to: contact.phone_num,
+        content: "Please continue the campaign; currently you're resuming at your last checkpoint.",
+      };
+      const result = await replayCurrentStep({ contact, session: revived });
+      return { outbound: [resumeNotice, ...(result?.outbound || [])] };
+    }
+  }
 
   if (normalizedCommandLower.startsWith("/")) {
     const cmd = normalizedCommandLower.split(/\s+/)[0] || normalizedCommandLower;
@@ -184,30 +200,6 @@ export async function handleIncomingMessage(args) {
     });
   }
 
-  const expiredSession = await findExpiredSession(contact.contact_id);
-  if (expiredSession) {
-    const revived = await prisma.campaign_session.update({
-      where: { campaign_session_id: expiredSession.campaign_session_id },
-      data: { session_status: "ACTIVE", last_active_at: new Date() },
-      include: { campaign: true },
-    });
-
-    const resumeNotice = {
-      to: contact.phone_num,
-      content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
-    };
-
-    const result = await continueCampaignSession({
-      contact,
-      session: revived,
-      incomingText: incomingTextValue,
-      type,
-      payload,
-      enginePayload,
-    });
-
-    return { outbound: [resumeNotice, ...(result?.outbound || [])] };
-  }
 
   return showMainMenuWithUnknownKeyword(contact, trimmedIncomingText);
 }
@@ -341,6 +333,52 @@ async function startCampaignAtFirstStep({ contact, session }) {
   result.outbound = result.outbound || [];
   result.outbound.push(buildExitHintMessage(contact));
   return result;
+}
+
+async function getCurrentStepForSession(session) {
+  let stepId = session.current_step_id;
+  if (!stepId) {
+    const lastResponse = await prisma.campaign_response.findFirst({
+      where: { session_id: session.campaign_session_id },
+      orderBy: { created_at: "desc" },
+      select: { step_id: true },
+    });
+    if (lastResponse?.step_id) {
+      stepId = lastResponse.step_id;
+    }
+  }
+  if (!stepId) {
+    return null;
+  }
+  if (stepId !== session.current_step_id) {
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: { current_step_id: stepId, last_active_at: new Date() },
+    });
+    session.current_step_id = stepId;
+  }
+  return prisma.campaign_step.findUnique({
+    where: { step_id: stepId },
+  });
+}
+
+async function replayCurrentStep({ contact, session }) {
+  const step = await getCurrentStepForSession(session);
+  if (!step) {
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: { session_status: "CANCELLED" },
+    });
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Sorry, we can't continue this campaign right now.",
+        },
+      ],
+    };
+  }
+  return runStepAndReturnMessages({ contact, session, step });
 }
 
 async function continueCampaignSession({
