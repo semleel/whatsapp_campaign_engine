@@ -2,7 +2,6 @@
 import winston from "winston";
 import path from "path";
 import fs from "fs";
-import DailyRotateFile from "winston-daily-rotate-file";
 
 // Ensure logs directory exists
 const logDir = "logs";
@@ -10,7 +9,7 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir);
 }
 
-// Define log format
+// Log format
 const logFormat = winston.format.combine(
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.printf(({ timestamp, level, message, stack }) => {
@@ -18,30 +17,30 @@ const logFormat = winston.format.combine(
   })
 );
 
-// Create logger with rotation
+// Create logger WITHOUT rotation
 const logger = winston.createLogger({
   level: "info",
   format: logFormat,
   transports: [
+    // Console output
     new winston.transports.Console({ handleExceptions: true }),
-    new DailyRotateFile({
-      filename: path.join(logDir, "%DATE%-app.log"),
-      datePattern: "YYYY-MM-DD",
-      maxSize: "20m",
-      maxFiles: "14d", // keep 14 days
+
+    // Append-only general app log
+    new winston.transports.File({
+      filename: path.join(logDir, "app.log"),
       level: "info"
     }),
-    new DailyRotateFile({
-      filename: path.join(logDir, "%DATE%-error.log"),
-      datePattern: "YYYY-MM-DD",
-      maxSize: "10m",
-      maxFiles: "14d",
+
+    // Append-only error log
+    new winston.transports.File({
+      filename: path.join(logDir, "error.log"),
       level: "error"
     })
   ],
   exitOnError: false
 });
 
+// Export helper functions
 export const log = (...args) => logger.info(args.join(" "));
 export const warn = (...args) => logger.warn(args.join(" "));
 export const error = (...args) => logger.error(args.join(" "));

@@ -26,8 +26,6 @@ yarn-error.log*
 logs/*
 !logs/.gitkeep
 logs/*.log
-logs/*.json
-logs/*.gz
 
 # prisma
 /src/generated/prisma
