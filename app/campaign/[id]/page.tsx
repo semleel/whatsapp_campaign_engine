@@ -116,15 +116,8 @@ export default function CampaignDetailPage() {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw || !id) return;
 
-<<<<<<< HEAD
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
-=======
-    if (!KEYWORD_PATTERN.test(raw)) {
-      setKeywordMessage(
-        "Keyword must only contain letters and numbers (no spaces or symbols)."
-      );
->>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
       return;
     }
 

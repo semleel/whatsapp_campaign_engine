@@ -68,15 +68,10 @@ export default function CampaignCreatePage() {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw) return;
 
-<<<<<<< HEAD
-    if (/\s/.test(raw)) {
-      setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
-=======
     if (!KEYWORD_PATTERN.test(raw)) {
       setKeywordMessage(
-        "Keyword must only contain letters and numbers (no spaces or symbols)."
+        "Keyword must be a single word containing only letters and numbers (no spaces or symbols)."
       );
->>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
       return;
     }
 
@@ -375,7 +370,7 @@ export default function CampaignCreatePage() {
               </div>
             )}
             {keywordMessage && (
-              <p className="mt-2 text-[11px] text-muted-foreground">
+              <p className="mt-2 text-[11px] text-rose-600">
                 {keywordMessage}
               </p>
             )}

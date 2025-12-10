@@ -78,58 +78,6 @@ export default function ArchivedCampaignsPage() {
     }
   };
 
-<<<<<<< HEAD
-  const handleDelete = async (id: number) => {
-    if (!canArchive) {
-      await showPrivilegeDenied({ action: "delete campaigns", resource: "Campaigns" });
-      return;
-    }
-    const confirmed = await showCenteredConfirm(
-      "Permanently delete this archived campaign? This cannot be undone."
-    );
-    if (!confirmed) return;
-    try {
-      await Api.deleteArchivedCampaign(id);
-      setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      setMessage("Campaign permanently deleted.");
-    } catch (err: any) {
-      console.error(err);
-      setMessage(err?.message || "Failed to delete campaign.");
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (!canArchive) {
-      await showPrivilegeDenied({ action: "delete campaigns", resource: "Campaigns" });
-      return;
-    }
-    const ids = Array.from(selectedIds);
-    if (!ids.length) return;
-    const confirmed = await showCenteredConfirm(
-      `Permanently delete ${ids.length} archived campaign(s)? This cannot be undone.`
-    );
-    if (!confirmed) return;
-    try {
-      const res = await Api.deleteArchivedCampaigns(ids);
-      setCampaigns((prev) =>
-        prev.filter((c) => !selectedIds.has(c.campaignid))
-      );
-      setSelectedIds(new Set());
-      setMessage(res.message);
-      await showCenteredAlert(res.message);
-    } catch (err: any) {
-      console.error(err);
-      setMessage(err?.message || "Failed to delete archived campaigns.");
-    }
-  };
-
-=======
->>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
   const handleBulkRestore = async () => {
     if (!canArchive) {
       await showPrivilegeDenied({ action: "restore campaigns", resource: "Campaigns" });
@@ -189,8 +137,7 @@ export default function ArchivedCampaignsPage() {
         <div>
           <h3 className="text-lg font-semibold">Archived campaigns</h3>
           <p className="text-sm text-muted-foreground">
-            View, restore, or permanently delete campaigns that were previously
-            archived.
+            View or restore campaigns that were previously archived.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -210,23 +157,6 @@ export default function ArchivedCampaignsPage() {
           >
             Restore selected
           </button>
-<<<<<<< HEAD
-          <button
-            onClick={handleBulkDelete}
-            disabled={!selectedIds.size}
-            className={`rounded border px-3 py-2 text-sm font-medium ${
-              selectedIds.size
-                ? "text-rose-700 hover:bg-rose-50 border-rose-200"
-                : "text-muted-foreground border-border cursor-not-allowed opacity-60"
-            }`}
-            title={
-              selectedIds.size
-                ? "Delete selected archived campaigns"
-                : "Select archived campaigns to delete"
-            }
-          >
-            Delete selected
-          </button>
         <Link
           href="/campaign"
           className={navLinkClass}
@@ -235,15 +165,6 @@ export default function ArchivedCampaignsPage() {
           Back to campaigns
         </Link>
       </div>
-=======
-          <Link
-            href="/campaign"
-            className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
-          >
-            Back to active list
-          </Link>
-        </div>
->>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
       </div>
 
       {message && <div className="text-sm text-muted-foreground">{message}</div>}
