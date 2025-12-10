@@ -114,7 +114,10 @@ export default function EndpointsPage() {
             </thead>
             <tbody>
               {endpoints.map((endpoint) => (
-                <tr key={endpoint.apiid} className="border-t">
+                <tr
+                  key={endpoint.apiid}
+                  className="border-t transition-colors hover:bg-muted/60 hover:text-slate-900"
+                >
                   <td className="px-3 py-2 font-medium">{endpoint.name || endpoint.apiid}</td>
                   <td className="px-3 py-2 text-muted-foreground">{endpoint.method || "GET"}</td>
                   <td className="px-3 py-2 text-muted-foreground">{formatUrl(endpoint)}</td>

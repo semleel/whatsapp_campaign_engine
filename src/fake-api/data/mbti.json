@@ -1,0 +1,292 @@
+{
+    "INTJ": {
+        "type": "INTJ",
+        "title": "The Architect",
+        "description": "Strategic, analytical, independent thinkers who love long-term planning.",
+        "strengths": [
+            "Strategic",
+            "Independent",
+            "High problem-solving ability",
+            "Confident"
+        ],
+        "weaknesses": [
+            "Overly critical",
+            "Emotionally distant",
+            "Perfectionistic"
+        ],
+        "best_match": "ENFP",
+        "worst_match": "ESFP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/intj.png"
+    },
+    "INTP": {
+        "type": "INTP",
+        "title": "The Thinker",
+        "description": "Innovative inventors who find joy in understanding complex ideas.",
+        "strengths": [
+            "Creative",
+            "Logical",
+            "Flexible",
+            "Objective"
+        ],
+        "weaknesses": [
+            "Indecisive",
+            "Detached",
+            "Easily bored"
+        ],
+        "best_match": "ENTJ",
+        "worst_match": "ISFJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/intp.png"
+    },
+    "ENTJ": {
+        "type": "ENTJ",
+        "title": "The Commander",
+        "description": "Bold, confident leaders who love challenges and efficient systems.",
+        "strengths": [
+            "Efficient",
+            "Strong-willed",
+            "Good at leadership"
+        ],
+        "weaknesses": [
+            "Impatient",
+            "Insensitive",
+            "Dominating"
+        ],
+        "best_match": "INTP",
+        "worst_match": "ISFP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/entj.png"
+    },
+    "ENTP": {
+        "type": "ENTP",
+        "title": "The Debater",
+        "description": "Smart, curious thinkers who love to debate and explore new ideas.",
+        "strengths": [
+            "Energetic",
+            "Quick-thinking",
+            "Innovative"
+        ],
+        "weaknesses": [
+            "Argumentative",
+            "Insensitive",
+            "Easily distracted"
+        ],
+        "best_match": "INFJ",
+        "worst_match": "ISFJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/entp.png"
+    },
+    "INFJ": {
+        "type": "INFJ",
+        "title": "The Advocate",
+        "description": "Idealistic, compassionate, and insightful, with a strong sense of purpose.",
+        "strengths": [
+            "Empathetic",
+            "Creative",
+            "Principled"
+        ],
+        "weaknesses": [
+            "Sensitive",
+            "Perfectionistic",
+            "Reserved"
+        ],
+        "best_match": "ENFP",
+        "worst_match": "ESTP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/infj.png"
+    },
+    "INFP": {
+        "type": "INFP",
+        "title": "The Mediator",
+        "description": "Creative, idealistic, caring people who value harmony and meaning.",
+        "strengths": [
+            "Empathetic",
+            "Loyal",
+            "Imaginative"
+        ],
+        "weaknesses": [
+            "Overly idealistic",
+            "Easily stressed",
+            "Avoids conflict"
+        ],
+        "best_match": "ENFJ",
+        "worst_match": "ESTJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/infp.png"
+    },
+    "ENFJ": {
+        "type": "ENFJ",
+        "title": "The Protagonist",
+        "description": "Inspirational leaders who help others grow and succeed.",
+        "strengths": [
+            "Charismatic",
+            "Altruistic",
+            "Leadership skills"
+        ],
+        "weaknesses": [
+            "Overcommitted",
+            "Too idealistic",
+            "Sensitive to criticism"
+        ],
+        "best_match": "INFP",
+        "worst_match": "ISTP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/enfj.png"
+    },
+    "ENFP": {
+        "type": "ENFP",
+        "title": "The Campaigner",
+        "description": "Enthusiastic, creative free spirits who love connecting with others.",
+        "strengths": [
+            "Energetic",
+            "Creative",
+            "Empathetic"
+        ],
+        "weaknesses": [
+            "Disorganized",
+            "Easily stressed",
+            "Needs validation"
+        ],
+        "best_match": "INTJ",
+        "worst_match": "ISTJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/enfp.png"
+    },
+    "ISTJ": {
+        "type": "ISTJ",
+        "title": "The Logistician",
+        "description": "Serious, responsible and organized individuals who value tradition.",
+        "strengths": [
+            "Reliable",
+            "Practical",
+            "Hardworking"
+        ],
+        "weaknesses": [
+            "Too rigid",
+            "Insensitive",
+            "Resists change"
+        ],
+        "best_match": "ESFP",
+        "worst_match": "ENFP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/istj.png"
+    },
+    "ISFJ": {
+        "type": "ISFJ",
+        "title": "The Defender",
+        "description": "Warm, dependable protectors who enjoy helping and supporting others.",
+        "strengths": [
+            "Supportive",
+            "Reliable",
+            "Patient"
+        ],
+        "weaknesses": [
+            "Overly humble",
+            "Takes things personally",
+            "Avoids confrontation"
+        ],
+        "best_match": "ESFP",
+        "worst_match": "ENTP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/isfj.png"
+    },
+    "ESTJ": {
+        "type": "ESTJ",
+        "title": "The Executive",
+        "description": "Organized, dedicated managers who value order and responsibility.",
+        "strengths": [
+            "Strong leadership",
+            "Organized",
+            "Practical"
+        ],
+        "weaknesses": [
+            "Stubborn",
+            "Insensitive",
+            "Controlling"
+        ],
+        "best_match": "ISFP",
+        "worst_match": "INFP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/estj.png"
+    },
+    "ESFJ": {
+        "type": "ESFJ",
+        "title": "The Consul",
+        "description": "Caring, social individuals who focus on harmony and community.",
+        "strengths": [
+            "Friendly",
+            "Loyal",
+            "Supportive"
+        ],
+        "weaknesses": [
+            "Sensitive",
+            "Needs approval",
+            "Avoids tough decisions"
+        ],
+        "best_match": "ISFP",
+        "worst_match": "INTP",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/esfj.png"
+    },
+    "ISTP": {
+        "type": "ISTP",
+        "title": "The Virtuoso",
+        "description": "Bold, practical experimenters who love hands-on problem solving.",
+        "strengths": [
+            "Practical",
+            "Independent",
+            "Adaptable"
+        ],
+        "weaknesses": [
+            "Reserved",
+            "Risk-taking",
+            "Easily bored"
+        ],
+        "best_match": "ESTJ",
+        "worst_match": "ENFJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/istp.png"
+    },
+    "ISFP": {
+        "type": "ISFP",
+        "title": "The Adventurer",
+        "description": "Gentle, artistic explorers who enjoy expressing creativity.",
+        "strengths": [
+            "Artistic",
+            "Sensitive",
+            "Flexible"
+        ],
+        "weaknesses": [
+            "Private",
+            "Unpredictable",
+            "Easily stressed"
+        ],
+        "best_match": "ESFJ",
+        "worst_match": "ENTJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/isfp.png"
+    },
+    "ESTP": {
+        "type": "ESTP",
+        "title": "The Entrepreneur",
+        "description": "Energetic, action-oriented individuals who thrive in lively environments.",
+        "strengths": [
+            "Bold",
+            "Direct",
+            "Resourceful"
+        ],
+        "weaknesses": [
+            "Impatient",
+            "Risky behavior",
+            "Insensitive"
+        ],
+        "best_match": "ISTP",
+        "worst_match": "INFJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/estp.png"
+    },
+    "ESFP": {
+        "type": "ESFP",
+        "title": "The Entertainer",
+        "description": "Fun-loving and spontaneous individuals who enjoy the spotlight.",
+        "strengths": [
+            "Energetic",
+            "Optimistic",
+            "Sociable"
+        ],
+        "weaknesses": [
+            "Impulsive",
+            "Easily bored",
+            "Avoids planning"
+        ],
+        "best_match": "ISTJ",
+        "worst_match": "INTJ",
+        "image_url": "https://vifbuskjmlyvzkjmcwmq.supabase.co/storage/v1/object/public/Message_Media/attachments/esfp.png"
+    }
+}

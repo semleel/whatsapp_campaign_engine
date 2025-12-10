@@ -24,6 +24,7 @@ export default function TestRunner({
   const [varsText, setVarsText] = useState(
     JSON.stringify(
       {
+        lastAnswer: { user_input_raw: "INTJ" },
         contact: { phonenum: "60123456789" },
         campaign: { code: "RAYA2025" },
       },
@@ -252,8 +253,8 @@ export default function TestRunner({
               <div className="flex gap-2 text-xs">
                 <span
                   className={`px-2 py-0.5 rounded-full font-semibold ${result.ok
-                      ? "bg-emerald-50 text-emerald-700"
-                      : "bg-rose-50 text-rose-700"
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-rose-50 text-rose-700"
                     }`}
                 >
                   {result.ok ? "Success" : "Failed"}
@@ -271,7 +272,7 @@ export default function TestRunner({
               Run a test to see the API response.
             </div>
           ) : (
-            <pre className="max-h-96 overflow-auto rounded bg-muted px-3 py-2 text-xs">
+            <pre className="max-h-96 overflow-auto rounded bg-muted px-3 py-2 text-xs text-wrap">
               {JSON.stringify(payloadToRender ?? {}, null, 2)}
             </pre>
           )}

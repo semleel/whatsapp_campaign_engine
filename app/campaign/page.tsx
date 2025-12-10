@@ -273,7 +273,10 @@ export default function CampaignsPage() {
                   .join(" | ");
 
                 return (
-                  <tr key={c.campaignid} className="border-t">
+                <tr
+                  key={c.campaignid}
+                  className="border-t transition-colors hover:bg-muted/60 hover:text-slate-900"
+                >
                     <td className="px-3 py-2 font-medium">
                       <div className="flex items-center gap-2">
                         <span>{c.campaignname}</span>

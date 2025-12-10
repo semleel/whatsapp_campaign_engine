@@ -37,6 +37,8 @@ function applyFormatter(value, formatter) {
       return new Intl.NumberFormat("en-MY").format(Number(value) || 0);
     case "date":
       return new Date(value).toLocaleDateString("en-MY");
+    case "list":
+      return Array.isArray(value) ? value.join(", ") : String(value);
     default:
       return String(value);
   }
@@ -405,8 +407,8 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
             lastResult && typeof lastResult.payload === "string"
               ? lastResult.payload
               : lastResult?.payload != null
-              ? JSON.stringify(lastResult.payload)
-              : null,
+                ? JSON.stringify(lastResult.payload)
+                : null,
           response_code: lastResult?.status ?? 500,
           status: "error",
           error_message: lastError?.message || "Unknown error during dispatch",
