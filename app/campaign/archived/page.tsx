@@ -78,6 +78,7 @@ export default function ArchivedCampaignsPage() {
     }
   };
 
+<<<<<<< HEAD
   const handleDelete = async (id: number) => {
     if (!canArchive) {
       await showPrivilegeDenied({ action: "delete campaigns", resource: "Campaigns" });
@@ -127,6 +128,8 @@ export default function ArchivedCampaignsPage() {
     }
   };
 
+=======
+>>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
   const handleBulkRestore = async () => {
     if (!canArchive) {
       await showPrivilegeDenied({ action: "restore campaigns", resource: "Campaigns" });
@@ -207,6 +210,7 @@ export default function ArchivedCampaignsPage() {
           >
             Restore selected
           </button>
+<<<<<<< HEAD
           <button
             onClick={handleBulkDelete}
             disabled={!selectedIds.size}
@@ -231,6 +235,15 @@ export default function ArchivedCampaignsPage() {
           Back to campaigns
         </Link>
       </div>
+=======
+          <Link
+            href="/campaign"
+            className="inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Back to active list
+          </Link>
+        </div>
+>>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
       </div>
 
       {message && <div className="text-sm text-muted-foreground">{message}</div>}
@@ -309,12 +322,6 @@ export default function ArchivedCampaignsPage() {
                         className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
                       >
                         Restore
-                      </button>
-                      <button
-                        onClick={() => handleDelete(c.campaignid)}
-                        className="rounded border px-2 py-1 text-xs font-medium text-rose-700 border-rose-200 hover:bg-rose-50"
-                      >
-                        Delete
                       </button>
                     </td>
                   </tr>

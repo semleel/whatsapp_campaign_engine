@@ -11,6 +11,7 @@ import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { usePrivilege } from "@/lib/permissions";
 
 type SelectOption = { id: string; name: string; code?: string };
+const KEYWORD_PATTERN = /^[a-z0-9]+$/;
 
 export default function CampaignCreatePage() {
   const router = useRouter();
@@ -67,8 +68,15 @@ export default function CampaignCreatePage() {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw) return;
 
+<<<<<<< HEAD
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
+=======
+    if (!KEYWORD_PATTERN.test(raw)) {
+      setKeywordMessage(
+        "Keyword must only contain letters and numbers (no spaces or symbols)."
+      );
+>>>>>>> 77e0d0cb200820d644d4703b5519fd16742b143d
       return;
     }
 
@@ -79,11 +87,21 @@ export default function CampaignCreatePage() {
 
     try {
       const availability = await Api.checkKeywordAvailability(raw);
-      if (!availability.ok) {
-        const data = availability.data;
+      const data = availability.data;
+      if (
+        !availability.ok ||
+        (data && data.available === false) ||
+        (data && data.error)
+      ) {
+        const campaignHint =
+          data && data.campaignname
+            ? ` Keyword already belongs to "${data.campaignname}".`
+            : "";
         setKeywordMessage(
-          (data && "error" in data && data.error) ||
-            "Unable to validate keyword. Please try again."
+          (data && data.error) ||
+            (data && data.available === false
+              ? `Keyword already taken.${campaignHint}`
+              : "Unable to validate keyword. Please try again.")
         );
         return;
       }

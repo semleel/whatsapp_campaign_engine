@@ -7,6 +7,7 @@ const mapKeywordRow = (row) => ({
   value: row.value,
   campaignid: row.campaign_id,
   campaignname: row.campaign?.campaign_name || null,
+  campaignstatus: row.campaign?.status || null,
 });
 
 export async function listAllKeywords(req, res) {

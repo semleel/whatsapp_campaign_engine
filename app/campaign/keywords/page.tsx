@@ -16,12 +16,14 @@ type KeywordRow = {
   value: string;
   campaignid: number;
   campaignname: string;
+  campaignstatus?: string | null;
 };
 
 // Fallback from environment (Option C)
 const FALLBACK_MESSAGE =
   process.env.NEXT_PUBLIC_KEYWORD_FALLBACK_MESSAGE ??
   "Sorry, I didn't understand that. Type MENU to see available campaigns.";
+const KEYWORD_PATTERN = /^[a-z0-9]+$/;
 
 export default function KeywordEntryModule() {
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([]);
@@ -36,11 +38,40 @@ export default function KeywordEntryModule() {
     keyword: "",
     campaignId: 0,
   });
+  const [campaignFilter, setCampaignFilter] = useState("");
+  const [campaignPage, setCampaignPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
+  const normalizedFilter = campaignFilter.trim().toLowerCase();
+  const filteredCampaigns = campaigns.filter((campaign) => {
+    if (!normalizedFilter) return true;
+    const nameMatch = campaign.campaignname
+      .toLowerCase()
+      .includes(normalizedFilter);
+    const statusMatch = (campaign.status || "")
+      .toLowerCase()
+      .includes(normalizedFilter);
+    return nameMatch || statusMatch;
+  });
+  const totalCampaignPages = Math.max(
+    1,
+    Math.ceil(filteredCampaigns.length / ITEMS_PER_PAGE)
+  );
+  const paginatedCampaigns = filteredCampaigns.slice(
+    (campaignPage - 1) * ITEMS_PER_PAGE,
+    campaignPage * ITEMS_PER_PAGE
+  );
+
+  useEffect(() => {
+    if (campaignPage > totalCampaignPages) {
+      setCampaignPage(totalCampaignPages);
+    }
+  }, [campaignPage, totalCampaignPages]);
 
   const [submitting, setSubmitting] = useState(false);
   const [keywordFormError, setKeywordFormError] = useState("");
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const [fallback] = useState(FALLBACK_MESSAGE); // read-only
+  const [showAddForm, setShowAddForm] = useState(false);
 
   // Load campaigns and keywords on mount
   useEffect(() => {
@@ -93,16 +124,42 @@ export default function KeywordEntryModule() {
     const campaign = campaigns.find((c) => c.campaignid === draft.campaignId);
     if (!campaign) return;
 
+    if (!KEYWORD_PATTERN.test(normalized)) {
+      setKeywordFormError("Keyword must only contain letters and numbers.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const data = await Api.createKeyword(normalized, draft.campaignId);
-      const created = data.keyword;
+      const availability = await Api.checkKeywordAvailability(normalized);
+      const data = availability.data;
+      if (
+        !availability.ok ||
+        (data && data.available === false) ||
+        (data && "error" in data && data.error)
+      ) {
+        const campaignHint =
+          data && data.campaignname
+            ? ` Keyword already belongs to "${data.campaignname}".`
+            : "";
+        setKeywordFormError(
+          (data && data.error) ||
+            (data && data.available === false
+              ? `Keyword already taken.${campaignHint}`
+              : "Unable to validate keyword. Please try again.")
+        );
+        return;
+      }
+
+      const result = await Api.createKeyword(normalized, draft.campaignId);
+      const created = result.keyword;
 
       const newRow: KeywordRow = {
         keywordid: created.keywordid,
         value: created.value,
         campaignid: created.campaignid,
         campaignname: campaign.campaignname,
+        campaignstatus: created.campaignstatus ?? campaign.status ?? null,
       };
 
       setKeywords((prev) => [newRow, ...prev]);
@@ -147,10 +204,18 @@ export default function KeywordEntryModule() {
             routed correctly.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowAddForm((prev) => !prev)}
+          className="rounded-md border border-blue-500 px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50"
+        >
+          {showAddForm ? "Hide add keyword form" : "Show add keyword form"}
+        </button>
       </div>
 
       {/* New mapping */}
-      <section className="rounded-xl border p-5 space-y-4">
+      {showAddForm && (
+        <section className="rounded-xl border p-5 space-y-4">
         <div>
           <h4 className="text-base font-semibold">Add keyword mapping</h4>
           <p className="text-sm text-muted-foreground">
@@ -158,7 +223,7 @@ export default function KeywordEntryModule() {
           </p>
         </div>
 
-        <form onSubmit={handleAdd} className="grid gap-4 md:grid-cols-3">
+        <form onSubmit={handleAdd} className="space-y-4">
           <input
             className="rounded-md border px-3 py-2 text-sm"
             placeholder="Keyword (e.g. promo)"
@@ -166,28 +231,81 @@ export default function KeywordEntryModule() {
             onChange={(e) => setDraft({ ...draft, keyword: e.target.value })}
           />
 
-          <select
-            className="rounded-md border px-3 py-2 text-sm bg-white"
-            value={draft.campaignId}
-            onChange={(e) =>
-              setDraft({ ...draft, campaignId: Number(e.target.value) })
-            }
-            disabled={loadingCampaigns || !!campaignError}
-          >
-            <option value={0}>
-              {loadingCampaigns
-                ? "Loading campaigns..."
-                : campaignError
-                  ? "Error loading campaigns"
-                  : "Select campaign"}
-            </option>
-            {campaigns.map((c) => (
-              <option key={c.campaignid} value={c.campaignid}>
-                {c.campaignname}
-                {c.status ? ` (${c.status})` : ""}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={campaignFilter}
+              onChange={(e) => {
+                setCampaignFilter(e.target.value);
+                setCampaignPage(1);
+              }}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="Filter campaigns (name or status)"
+            />
+            <div className="h-48 overflow-y-auto rounded-md border bg-white">
+              {!loadingCampaigns &&
+                filteredCampaigns.length === 0 &&
+                !campaignError && (
+                  <div className="p-3 text-xs text-muted-foreground">
+                    No campaigns match this filter.
+                  </div>
+                )}
+              {loadingCampaigns ? (
+                <div className="p-3 text-xs text-muted-foreground">
+                  Loading campaigns...
+                </div>
+              ) : campaignError ? (
+                <div className="p-3 text-xs text-rose-600">{campaignError}</div>
+              ) : (
+                paginatedCampaigns.map((c) => (
+                  <button
+                    key={c.campaignid}
+                    type="button"
+                    onClick={() =>
+                      setDraft((prev) => ({ ...prev, campaignId: c.campaignid }))
+                    }
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm ${
+                      draft.campaignId === c.campaignid
+                        ? "bg-primary/20 font-semibold"
+                        : "hover:bg-muted"
+                    }`}
+                  >
+                    <span>{c.campaignname}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {c.status || "Unknown"}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() =>
+                  setCampaignPage((prev) => Math.max(1, prev - 1))
+                }
+                disabled={campaignPage === 1}
+                className="underline disabled:text-muted-foreground"
+              >
+                Prev
+              </button>
+              <span>
+                Page {campaignPage} / {totalCampaignPages}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setCampaignPage((prev) =>
+                    Math.min(totalCampaignPages, prev + 1)
+                  )
+                }
+                disabled={campaignPage === totalCampaignPages}
+                className="underline disabled:text-muted-foreground"
+              >
+                Next
+              </button>
+            </div>
+          </div>
 
           <div className="md:col-span-3 flex justify-end">
             <button
@@ -206,10 +324,15 @@ export default function KeywordEntryModule() {
           </div>
         </form>
 
+        {keywordFormError && (
+          <p className="text-xs text-rose-600 mt-2">{keywordFormError}</p>
+        )}
+
         {campaignError && (
           <p className="text-xs text-red-600 mt-1">{campaignError}</p>
         )}
       </section>
+      )}
 
       {/* Keyword table */}
       <section className="rounded-xl border overflow-x-auto">
@@ -246,7 +369,14 @@ export default function KeywordEntryModule() {
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
                     {k.value}
                   </td>
-                  <td className="px-3 py-2">{k.campaignname}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{k.campaignname}</div>
+                    {(k.campaignstatus || "").toLowerCase() === "archived" && (
+                      <div className="text-[11px] uppercase text-rose-600">
+                        Archived
+                      </div>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right">
                     <button
                       type="button"
@@ -293,6 +423,3 @@ export default function KeywordEntryModule() {
     </div>
   );
 }
-
-
-
