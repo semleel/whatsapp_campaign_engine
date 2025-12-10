@@ -242,7 +242,7 @@ export default function KeywordEntryModule() {
               className="w-full rounded-md border px-3 py-2 text-sm"
               placeholder="Filter campaigns (name or status)"
             />
-            <div className="h-48 overflow-y-auto rounded-md border bg-white">
+            <div className="h-48 overflow-y-auto rounded-md border bg-card">
               {!loadingCampaigns &&
                 filteredCampaigns.length === 0 &&
                 !campaignError && (
