@@ -110,6 +110,8 @@ import type {
   ReportSummary,
   SystemCommand,
   FeedbackEntry,
+  GenerateTemplatePayload,
+  GenerateTemplateResult,
 } from "./types";
 import type { DeliveryReportRow, ConversationThread } from "./types";
 
@@ -314,6 +316,12 @@ export const Api = {
 
   runTest: (payload: TestRunPayload) =>
     http<TestRunResult>("/api/integration/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  generateTemplate: (payload: GenerateTemplatePayload) =>
+    http<GenerateTemplateResult>("/api/integration/generate-template", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

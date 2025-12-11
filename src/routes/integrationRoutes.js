@@ -5,6 +5,7 @@ import {
   getIntegrationLogs,
   runTest,
   updateApiTemplate,
+  generateTemplate,
 } from "../controllers/integrationController.js";
 import {
   createEndpoint,
@@ -30,6 +31,11 @@ router.delete("/endpoints/:id", requirePrivilege("integration", "archive"), dele
 
 // execution
 router.post("/test", requirePrivilege("integration", "update"), runTest);
+router.post(
+  "/generate-template",
+  requirePrivilege("integration", "update"),
+  generateTemplate
+);
 router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
 router.get("/apis", requirePrivilege("integration", "view"), listApis);
 router.put("/apis/:id/template", requirePrivilege("integration", "update"), updateApiTemplate);

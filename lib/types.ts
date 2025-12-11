@@ -181,6 +181,22 @@ export interface TestRunResult {
     errorMessage?: string;
 }
 
+export type GenerateTemplatePayload = {
+    campaign?: {
+        name?: string | null;
+        description?: string | null;
+    };
+    step?: {
+        prompt_text?: string | null;
+    };
+    responseJson?: any;
+    lastAnswer?: string | null;
+};
+
+export type GenerateTemplateResult = {
+    template: string;
+};
+
 
 // =============================================
 // Reference data
