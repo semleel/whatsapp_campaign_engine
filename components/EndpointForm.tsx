@@ -1,6 +1,9 @@
+// components/EndpointForm.tsx
+
 "use client";
 
 import { useState } from "react";
+import { Api } from "@/lib/client";
 import { showCenteredAlert } from "@/lib/showAlert";
 import type { EndpointConfig, HttpMethod, ApiAuthType } from "@/lib/types";
 
@@ -12,6 +15,9 @@ type Props = {
   onRunSample?: () => Promise<void> | void;
   onCancel?: () => void;
   onSubmit: (payload: EndpointConfig) => Promise<void> | void;
+  campaign?: { name?: string | null; description?: string | null };
+  step?: { prompt_text?: string | null };
+  lastAnswer?: string | null;
 };
 
 const METHOD_OPTIONS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
@@ -29,6 +35,22 @@ function renderTemplatePreview(template: string, payload: any) {
   });
 }
 
+function buildPreviewContext(sampleResponse: any, lastAnswer?: string | null) {
+  const response =
+    sampleResponse && typeof sampleResponse === "object"
+      ? sampleResponse
+      : sampleResponse != null
+        ? { value: sampleResponse }
+        : {};
+  return {
+    lastAnswer: {
+      raw: lastAnswer ?? "",
+      value: lastAnswer ?? "",
+    },
+    response,
+  };
+}
+
 export default function EndpointForm({
   initial,
   submitting,
@@ -37,6 +59,9 @@ export default function EndpointForm({
   onRunSample,
   onCancel,
   onSubmit,
+  campaign,
+  step,
+  lastAnswer,
 }: Props) {
   const [name, setName] = useState(initial.name || "");
   const [description, setDescription] = useState(initial.description ?? "");
@@ -61,9 +86,12 @@ export default function EndpointForm({
   );
   const [preview, setPreview] = useState<string | null>(null);
   const [bodyInfo, setBodyInfo] = useState<string | null>(null);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const [autoGenError, setAutoGenError] = useState<string | null>(null);
 
   const showAuthFields = authType !== "none";
   const showBodySection = ["POST", "PUT", "PATCH"].includes(method);
+  const hasSampleJson = Boolean(sampleResponse && typeof sampleResponse === "object");
 
   const handleAddHeader = () => {
     setHeaders((prev) => [...prev, { key: "", value: "" }]);
@@ -95,13 +123,33 @@ export default function EndpointForm({
       return;
     }
 
-    const ctx: any =
-      sampleResponse && typeof sampleResponse === "object"
-        ? { response: sampleResponse, ...sampleResponse }
-        : { response: sampleResponse };
+    const ctx = buildPreviewContext(sampleResponse, lastAnswer);
 
     const rendered = renderTemplatePreview(responseTemplate, ctx);
     setPreview(rendered || "(Rendered template is empty)");
+  };
+
+  const handleAutoGenerate = async () => {
+    if (!hasSampleJson) {
+      setAutoGenError("Auto-generation requires a JSON sample response.");
+      return;
+    }
+    setAutoGenerating(true);
+    setAutoGenError(null);
+    try {
+      const result = await Api.generateTemplate({
+        campaign,
+        step,
+        responseJson: sampleResponse,
+        lastAnswer,
+      });
+      setResponseTemplate(result.template || "");
+      setPreview(result.template || "(Auto-generated template returned empty.)");
+    } catch (err: any) {
+      setAutoGenError(err?.message || "Failed to generate template (Gemini).");
+    } finally {
+      setAutoGenerating(false);
+    }
   };
 
   const handleValidateBodyJson = async () => {
@@ -429,8 +477,9 @@ export default function EndpointForm({
                 Body template (JSON with <code className="font-mono">{'{{tokens}}'}</code>)
               </p>
               <p className="text-xs text-muted-foreground">
-                This JSON will be sent as the request body. You can reference
-                campaign / contact / answer variables.
+                This JSON will be sent as the request body. Reference answer
+                variables (e.g., <code className="font-mono">{"{{ lastAnswer.value }}"}</code>)
+                or API response tokens to control what is sent.
               </p>
             </div>
             <div className="flex flex-col gap-1 text-[11px] text-muted-foreground items-end">
@@ -471,16 +520,42 @@ export default function EndpointForm({
         <div>
           <p className="text-sm font-medium">Response template</p>
           <p className="text-xs text-muted-foreground">
-            Controls what the user sees after an API step. You can use{" "}
-            <code className="font-mono">
-              {"{{current_weather.temperature}}"}
-            </code>{" "}
-            (we automatically read from the API response), or{" "}
-            <code className="font-mono">
-              {"{{response.current_weather.temperature}}"}
-            </code>{" "}
-            if you prefer to be explicit.
+            Controls what the user sees after an API step. Reference any API field
+            via <code className="font-mono">{"{{ response.field }}"}</code> or
+            refer to the previous answer with{" "}
+            <code className="font-mono">{"{{ lastAnswer.value }}"}</code>. The
+            auto-generator will infer the needed formatters for you.
           </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              className="rounded-md border px-3 py-1 text-xs font-semibold"
+              onClick={handleAutoGenerate}
+              disabled={!hasSampleJson || autoGenerating || submitting}
+            >
+              {autoGenerating ? "Generating..." : "✨ Auto-generate Template"}
+            </button>
+            <p className="text-[11px] text-muted-foreground">
+              AI inserts formatters like <code className="font-mono">|list</code>, <code className="font-mono">|date</code>, and <code className="font-mono">|number</code> automatically; focus on referencing the tokens it provides.
+            </p>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            If this endpoint is not yet attached to a campaign step, the AI will generate a neutral response template using only the API response and the last user answer.
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            Gemini free tier may be rate-limited; try again later if you see an error here.
+          </p>
+          {!hasSampleJson && (
+            <p className="text-[11px] text-muted-foreground">
+              Capture a JSON response by running the sample test before generating a template.
+            </p>
+          )}
+          {autoGenError && (
+            <p className="text-[11px] text-rose-600">{autoGenError}</p>
+          )}
         </div>
 
         <textarea
@@ -488,7 +563,7 @@ export default function EndpointForm({
           value={responseTemplate}
           onChange={(e) => setResponseTemplate(e.target.value)}
           placeholder={
-            "Weather for your area:\nTemperature: {{current_weather.temperature}}°C\nWind: {{current_weather.windspeed}} km/h"
+            "Example: {{ response.status }} — {{ response.message }}\nAdd more tokens once the AI helper inserts them."
           }
         />
 
@@ -537,7 +612,8 @@ export default function EndpointForm({
                 Test template with sample
               </button>
               <div className="rounded-md border bg-background px-2 py-2 text-[11px] min-h-[60px] whitespace-pre-wrap">
-                {preview ?? "Preview will appear here."}
+                {preview ??
+                  "Preview will appear here after running a sample API call or auto-generating a template."}
               </div>
             </div>
           </div>

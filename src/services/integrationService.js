@@ -5,6 +5,7 @@ import { appendLog } from "./integrationStore.js";
 import prisma from "../config/prismaClient.js";
 import { getRuntimeEndpoint } from "./apiEndpointRuntime.js";
 import { log as appLog, warn as appWarn } from "../utils/logger.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ---------------------------------------------------------------------------
 // Simple {{ token }} formatter (used for URL/body templating)
@@ -20,14 +21,30 @@ export function renderTemplateString(input, context = {}) {
   return input.replace(PLACEHOLDER, (_, token) => {
     const [rawPath, formatter] = token.split("|").map((part) => part.trim());
     const value = resolvePath(context, rawPath);
-    if (value == null) return "";
+    if (value === undefined || value === null) return "";
+    if (!formatter) return toPlainString(value);
     return applyFormatter(value, formatter);
   });
 }
 
+function toPlainString(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    return value.map((item) => toPlainString(item)).join(", ");
+  }
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function applyFormatter(value, formatter) {
-  if (!formatter) return String(value);
-  switch ((formatter || "").toLowerCase()) {
+  const normalized = (formatter || "").toLowerCase().trim();
+  switch (normalized) {
     case "currency":
       return new Intl.NumberFormat("en-MY", {
         style: "currency",
@@ -38,10 +55,36 @@ function applyFormatter(value, formatter) {
     case "date":
       return new Date(value).toLocaleDateString("en-MY");
     case "list":
-      return Array.isArray(value) ? value.join(", ") : String(value);
+      return Array.isArray(value) ? value.map((item) => toPlainString(item)).join(", ") : toPlainString(value);
     default:
-      return String(value);
+      return toPlainString(value);
   }
+}
+
+function normalizeLastAnswer(rawAnswer) {
+  if (rawAnswer == null) {
+    return { raw: null, value: null };
+  }
+
+  const rawValue =
+    typeof rawAnswer === "object" && "user_input_raw" in rawAnswer
+      ? rawAnswer.user_input_raw
+      : rawAnswer;
+
+  let parsedValue = rawValue;
+  if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim();
+    try {
+      parsedValue = JSON.parse(trimmed);
+    } catch {
+      parsedValue = trimmed;
+    }
+  }
+
+  return {
+    raw: rawValue ?? "",
+    value: parsedValue ?? "",
+  };
 }
 
 function ensureHttps(url) {
@@ -134,64 +177,9 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
   }
 
   const resolvedVars = { ...vars };
-
-  // Try to understand the last answer as raw string or JSON
-  let lastAnswerValue = null;
-  if (resolvedVars.lastAnswer?.user_input_raw) {
-    const raw = resolvedVars.lastAnswer.user_input_raw;
-    try {
-      lastAnswerValue = JSON.parse(raw);
-    } catch {
-      lastAnswerValue = raw;
-    }
-  }
-
-  // ---- NEW: decode keyword metadata from the session (from keyword_start) ----
-  let keywordMeta = null;
-  if (
-    resolvedVars.session?.last_payload_type === "keyword_start" &&
-    resolvedVars.session.last_payload_json
-  ) {
-    keywordMeta = resolvedVars.session.last_payload_json;
-    if (typeof keywordMeta === "string") {
-      try {
-        keywordMeta = JSON.parse(keywordMeta);
-      } catch {
-        keywordMeta = null;
-      }
-    }
-  }
-
-  const keyword =
-    keywordMeta && typeof keywordMeta === "object"
-      ? String(keywordMeta.keyword || "").trim() || null
-      : null;
-  const keywordArgs =
-    keywordMeta && typeof keywordMeta === "object"
-      ? String(keywordMeta.args || "").trim() || null
-      : null;
-  const keywordRaw =
-    keywordMeta && typeof keywordMeta === "object"
-      ? String(keywordMeta.rawText || "").trim() || null
-      : null;
-
-  // Generic helper: "argument part" of the keyword, if any.
-  const trimmedArgs = (keywordArgs || "").trim();
-
-  let keywordOrArgs = "";
-  if (trimmedArgs) {
-    // e.g. "pokemon pikachu" → "pikachu", "weather cheras" → "cheras"
-    keywordOrArgs = trimmedArgs;
-  } else if (
-    typeof lastAnswerValue === "string" &&
-    lastAnswerValue.trim() &&
-    (!keyword || lastAnswerValue.trim() !== keyword)
-  ) {
-    // Fallback to last answer string (but avoid just repeating the keyword itself)
-    keywordOrArgs = lastAnswerValue.trim();
-  } else {
-    keywordOrArgs = "";
-  }
+  const lastAnswerContext = normalizeLastAnswer(
+    resolvedVars.lastAnswer ?? resolvedVars.last_answer ?? null
+  );
 
   const localStepId =
     stepId ??
@@ -201,20 +189,11 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
 
   const requestContext = {
     ...resolvedVars,
-    campaign: resolvedVars.campaign || {},
-    args: resolvedVars,
-    // lastAnswer for templating: keep both raw DB row and parsed value
     lastAnswer: {
-      raw: resolvedVars.lastAnswer || null,
-      value: lastAnswerValue,
+      raw: lastAnswerContext.raw,
+      value: lastAnswerContext.value,
     },
-    // NEW: keyword helpers for URL / body templating
-    keyword,
-    keywordArgs,
-    keywordRaw,
-    keywordOrArgs,
   };
-
   const url = buildUrl(endpoint, requestContext);
   const method = endpoint.method || "GET";
   const headers = {
@@ -312,21 +291,19 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
       // ---- Response templating (Formatter) ----
       let formattedText = null;
       if (endpoint.response_template) {
-        const responseObj =
-          responseBody && typeof responseBody === "object" ? responseBody : {};
+        const responsePayload =
+          responseBody && typeof responseBody === "object"
+            ? responseBody
+            : responseBody != null
+              ? { value: responseBody }
+              : {};
 
-        // Re-use keywordMeta from above
         const ctx = {
-          contact: resolvedVars.contact || null,
-          campaign: resolvedVars.campaign || null,
-          session: resolvedVars.session || null,
-          lastAnswer: resolvedVars.lastAnswer || null,
-          response: responseBody,
-          keyword,
-          keywordArgs,
-          keywordRaw,
-          keywordOrArgs,
-          ...responseObj,
+          lastAnswer: {
+            raw: lastAnswerContext.raw,
+            value: lastAnswerContext.value,
+          },
+          response: responsePayload,
         };
 
         try {
@@ -425,6 +402,184 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
   }
 
   throw lastError || new Error("Unknown error during dispatch");
+}
+
+function normalizeResponseForPrompt(responseJson) {
+  if (responseJson == null) return null;
+  if (typeof responseJson === "string") {
+    try {
+      return JSON.parse(responseJson);
+    } catch {
+      return { value: responseJson };
+    }
+  }
+  if (typeof responseJson === "object") {
+    return responseJson;
+  }
+  return { value: responseJson };
+}
+
+function trimResponseObject(obj, limit = 12) {
+  if (Array.isArray(obj)) {
+    return obj.slice(0, limit);
+  }
+  if (!obj || typeof obj !== "object") return obj;
+  const entries = Object.entries(obj).slice(0, limit);
+  return Object.fromEntries(entries);
+}
+
+function detectFirstImageKey(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value !== "string") continue;
+    const normalized = value.toLowerCase();
+    if (
+      normalized.startsWith("http") &&
+      (normalized.endsWith(".jpg") ||
+        normalized.endsWith(".jpeg") ||
+        normalized.endsWith(".png") ||
+        normalized.endsWith(".gif") ||
+        normalized.endsWith(".webp") ||
+        normalized.endsWith(".svg"))
+    ) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function sanitizeGeminiOutput(text) {
+  if (!text) return "";
+  return text
+    .replace(/```/g, "")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/[*_~]/g, "")
+    .trim();
+}
+
+
+// ---------------------------------------------------------------------------
+// Gemini API call wrapper — FIXED
+// ---------------------------------------------------------------------------
+async function callGemini(messages) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Gemini API key is missing.");
+
+  // 1. Initialize the official Client
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // 2. Select a VALID model
+  const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
+  const model = genAI.getGenerativeModel({ model: modelName });
+
+  // 3. Convert messages to a simple prompt string
+  // (The SDK handles simple string prompts best for this use case)
+  const prompt = messages
+    .map((m) => {
+      // If it's a system instruction, we can prepend it or pass it separately,
+      // but simpler is often better for flash models:
+      return m.role === "system" ? `**SYSTEM INSTRUCTION:** ${m.content}` : m.content;
+    })
+    .join("\n\n");
+
+  try {
+    // 4. Generate Content
+    const result = await model.generateContent(prompt);
+
+    // 5. Await the response object specifically
+    const response = await result.response;
+    const text = response.text();
+
+    if (!text) throw new Error("Gemini returned empty output.");
+
+    // Clean up markdown code blocks if present
+    return text.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  } catch (error) {
+    // Log the actual error from Google to help debugging
+    console.error("Gemini API Error details:", error);
+    throw new Error(`Gemini API Failed: ${error.message}`);
+  }
+}
+
+export async function generateTemplateFromAI({
+  campaign = null,
+  step = null,
+  responseJson,
+  lastAnswer,
+}) {
+  if (!responseJson) {
+    throw new Error("Sample API response is required for template generation.");
+  }
+
+  // 1. Safe Defaults
+  const safeCampaign = {
+    name: campaign?.name || "Unlinked API",
+    description: campaign?.description || "Generic API response",
+  };
+
+  const safeStep = {
+    prompt_text: step?.prompt_text || "No specific user prompt provided.",
+  };
+
+  // 2. Prepare the JSON context
+  // We trim the object to avoid hitting token limits with huge API responses
+  const normalized = normalizeResponseForPrompt(responseJson);
+  const trimmed = trimResponseObject(normalized, 15);
+
+  let snippet = JSON.stringify(trimmed, null, 2);
+  if (snippet.length > 2000) snippet = snippet.slice(0, 2000) + "\n...(truncated)";
+
+  // 3. Detect Image for context
+  const imageKey = detectFirstImageKey(trimmed);
+  const imageHint = imageKey
+    ? `NOTE: An image URL was detected in the field '${imageKey}'. You can refer to it as {{ response.${imageKey} }}.`
+    : "";
+
+  // 4. Construct the Prompt
+  // We combine instructions into a single clear block for Gemini
+  const systemInstruction = `
+  You are an expert WhatsApp message template designer.
+  Your goal is to write a short, engaging response based on a JSON API result.
+
+  **Constraint Checklist & Confidence Score:**
+  1. Use {{ response.fieldName }} for dynamic data.
+  2. Use {{ lastAnswer.value }} if you need to refer to what the user just said.
+  3. Keep it under 3 lines if possible.
+  4. Auto-format specific types:
+    - Arrays: {{ response.list | list }}
+    - Prices/Money: {{ response.price | currency }}
+    - Dates: {{ response.date | date }}
+  5. DO NOT include "Here is the template:" or any conversational filler. Just the template string.
+  `.trim();
+
+  const userContext = `
+  **Context:**
+  - Campaign Name: ${safeCampaign.name}
+  - Campaign Goal: ${safeCampaign.description}
+  - User's Request (Step): "${safeStep.prompt_text}"
+  - User's Last Input: "${lastAnswer ?? "N/A"}"
+
+  **API Response Data (JSON):**
+  \`\`\`json
+  ${snippet}
+  \`\`\`
+
+  ${imageHint}
+
+  **Task:**
+  Write the WhatsApp message template now.
+  `;
+
+  // 5. Send to Gemini
+  // We pass an array of messages to match the 'callGemini' structure we fixed earlier
+  const messages = [
+    { role: "system", content: systemInstruction },
+    { role: "user", content: userContext },
+  ];
+
+  return callGemini(messages);
 }
 
 export async function runTest({ endpointId, sampleVars = {}, templateId }) {

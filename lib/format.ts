@@ -1,3 +1,5 @@
+// lib/format.ts
+
 export const format = {
     currency: (n: number, code = "RM") =>
         `${code}${Number(n).toFixed(2)}`,

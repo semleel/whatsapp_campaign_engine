@@ -1,7 +1,10 @@
 // src/controllers/integrationController.js
 
 import { listLogs, seedIntegrationData } from "../services/integrationStore.js";
-import { dispatchEndpoint } from "../services/integrationService.js";
+import {
+  dispatchEndpoint,
+  generateTemplateFromAI,
+} from "../services/integrationService.js";
 import prisma from "../config/prismaClient.js";
 
 seedIntegrationData();
@@ -129,6 +132,26 @@ export async function runTest(req, res) {
       timeMs: 0,
       errorMessage: err?.message || "Failed to execute test",
       error: err?.message || "Failed to execute test",
+    });
+  }
+}
+
+export async function generateTemplate(req, res) {
+  const { campaign, step, responseJson, lastAnswer } = req.body || {};
+
+  try {
+    const template = await generateTemplateFromAI({
+      campaign,
+      step,
+      responseJson,
+      lastAnswer,
+    });
+    return res.status(200).json({ ok: true, template });
+  } catch (err) {
+    console.error("[integration:template] generation error", err);
+    return res.status(500).json({
+      ok: false,
+      error: err?.message || "Failed to generate template",
     });
   }
 }

@@ -46,8 +46,10 @@ app.use(
     credentials: true,
   })
 );
-app.use(bodyParser.json());
-app.use(express.json());
+// Increase body size limit to handle large API sample responses
+app.use(bodyParser.json({ limit: "20mb" }));
+app.use(bodyParser.urlencoded({ limit: "20mb", extended: true }));
+app.use(express.json({ limit: "20mb" }));
 
 // --- Health Check ---
 app.get("/health", (req, res) => res.json({ status: "ok" }));
