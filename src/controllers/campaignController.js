@@ -127,6 +127,12 @@ export async function listCampaigns(_req, res) {
         target_region: { select: { region_name: true } },
         campaign_keyword: { select: { keyword_id: true } },
         _count: { select: { campaign_step: true } },
+        campaign_step: {
+          select: {
+            action_type: true,
+            api: { select: { is_active: true } },
+          },
+        },
       },
       orderBy: { campaign_id: "desc" },
     });
@@ -144,6 +150,9 @@ export async function listCampaigns(_req, res) {
       end_at: campaign.end_at,
       hasKeyword: (campaign.campaign_keyword?.length ?? 0) > 0,
       hasSteps: (campaign._count?.campaign_step ?? 0) > 0,
+      hasDisabledApi: (campaign.campaign_step ?? []).some(
+        (step) => step.action_type === "api" && step.api?.is_active === false
+      ),
     }));
 
     return res.status(200).json(formatted);
@@ -1073,5 +1082,4 @@ export async function autoCheckCampaignStatuses() {
     console.error("[CampaignStatusJob] error:", err);
   }
 }
-
 

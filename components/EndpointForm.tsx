@@ -7,12 +7,96 @@ import { Api } from "@/lib/client";
 import { showCenteredAlert } from "@/lib/showAlert";
 import type { EndpointConfig, HttpMethod, ApiAuthType } from "@/lib/types";
 
+const USER_INPUT_TOKEN = /{{\s*lastAnswer\b/i;
+
+function findMissingResponseTokens(template: string) {
+  if (!template) return [];
+
+  const tokens = Array.from(
+    template.matchAll(/{{\s*([^}]+)\s*}}/g),
+    (m) => m[1].trim()
+  );
+
+  return tokens
+    .map((token) => {
+      if (token.startsWith("lastAnswer.")) return null;
+      if (token.startsWith("response.")) return null;
+
+      const [base, ...formatters] = token.split("|");
+      const trimmedBase = base.trim();
+      if (!trimmedBase) return null;
+
+      const suggestionBase = trimmedBase.includes("response.")
+        ? trimmedBase
+        : `response.${trimmedBase}`;
+      const suggestionFormatter = formatters
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .join(" | ");
+      const suggestion = suggestionFormatter
+        ? `${suggestionBase} | ${suggestionFormatter}`
+        : suggestionBase;
+
+      return {
+        token: token,
+        suggestion,
+      };
+    })
+    .filter(Boolean) as { token: string; suggestion: string }[];
+}
+
+function renderHighlightedTemplate(
+  template: string,
+  invalidTokens: { token: string }[]
+) {
+  if (!template) return <span className="text-[11px] text-muted-foreground italic">Template preview</span>;
+
+  const invalidSet = new Set(invalidTokens.map((item) => item.token));
+  const regex = /{{\s*([^}]+)\s*}}/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(template)) !== null) {
+    const [full, token] = match;
+    const start = match.index;
+    const end = regex.lastIndex;
+    if (start > lastIndex) {
+      nodes.push(template.slice(lastIndex, start));
+    }
+    const cleanToken = token.trim();
+    if (invalidSet.has(cleanToken)) {
+      nodes.push(
+        <span
+          key={start}
+          className="border-b border-dashed border-red-500 bg-red-50 text-[11px]"
+          title="Missing `response.` prefix"
+        >
+          {full}
+        </span>
+      );
+    } else {
+      nodes.push(full);
+    }
+    lastIndex = end;
+  }
+  if (lastIndex < template.length) {
+    nodes.push(template.slice(lastIndex));
+  }
+
+  return (
+    <span className="text-[11px] text-muted-foreground whitespace-pre-wrap">
+      {nodes}
+    </span>
+  );
+}
+
 type Props = {
   initial: EndpointConfig;
   submitting?: boolean;
   sampleResponse?: any;
   testingSample?: boolean;
-  onRunSample?: () => Promise<void> | void;
+  onRunSample?: (sampleVars?: Record<string, unknown>) => Promise<void> | void;
   onCancel?: () => void;
   onSubmit: (payload: EndpointConfig) => Promise<void> | void;
   campaign?: { name?: string | null; description?: string | null };
@@ -22,15 +106,18 @@ type Props = {
 
 const METHOD_OPTIONS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-function renderTemplatePreview(template: string, payload: any) {
+function renderTemplatePreview(template: string, ctx: any) {
   if (!template) return "";
+
   return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
     const path = token.trim().split(".");
-    let value: any = payload;
+    let value: any = ctx;
+
     for (const key of path) {
-      if (value == null) break;
+      if (value == null) return `{${token}}`;
       value = value[key];
     }
+
     return value == null ? `{${token}}` : String(value);
   });
 }
@@ -76,7 +163,7 @@ export default function EndpointForm({
     initial.auth_header_name || "Authorization"
   );
   const [authToken, setAuthToken] = useState(initial.auth_token || "");
-  const [isActive, setIsActive] = useState(initial.is_active ?? true);
+  const endpointIsActive = initial.is_active ?? true;
   const [headers, setHeaders] = useState<{ key: string; value: string }[]>(
     (initial.headers_json as any) || []
   );
@@ -84,14 +171,20 @@ export default function EndpointForm({
   const [responseTemplate, setResponseTemplate] = useState(
     initial.response_template ?? ""
   );
+  const missingResponseTokens = findMissingResponseTokens(responseTemplate);
   const [preview, setPreview] = useState<string | null>(null);
   const [bodyInfo, setBodyInfo] = useState<string | null>(null);
   const [autoGenerating, setAutoGenerating] = useState(false);
   const [autoGenError, setAutoGenError] = useState<string | null>(null);
+  const [simulatedLastAnswer, setSimulatedLastAnswer] = useState("");
 
   const showAuthFields = authType !== "none";
   const showBodySection = ["POST", "PUT", "PATCH"].includes(method);
   const hasSampleJson = Boolean(sampleResponse && typeof sampleResponse === "object");
+  const requiresUserInput =
+    USER_INPUT_TOKEN.test(url) ||
+    USER_INPUT_TOKEN.test(bodyTemplate);
+  const trimmedSimulatedAnswer = simulatedLastAnswer.trim();
 
   const handleAddHeader = () => {
     setHeaders((prev) => [...prev, { key: "", value: "" }]);
@@ -129,9 +222,20 @@ export default function EndpointForm({
     setPreview(rendered || "(Rendered template is empty)");
   };
 
+  const handleRunSampleClick = async () => {
+    if (!onRunSample) return;
+    const sampleVars = trimmedSimulatedAnswer
+      ? { lastAnswer: { value: trimmedSimulatedAnswer } }
+      : undefined;
+    await onRunSample(sampleVars);
+  };
+
   const handleAutoGenerate = async () => {
-    if (!hasSampleJson) {
-      setAutoGenError("Auto-generation requires a JSON sample response.");
+    const canAutoGenerate = Boolean(sampleResponse || lastAnswer);
+    if (!canAutoGenerate) {
+      setAutoGenError(
+        "Auto-generation requires a sample response or an example user answer. Run a sample test or provide a last answer."
+      );
       return;
     }
     setAutoGenerating(true);
@@ -146,7 +250,11 @@ export default function EndpointForm({
       setResponseTemplate(result.template || "");
       setPreview(result.template || "(Auto-generated template returned empty.)");
     } catch (err: any) {
-      setAutoGenError(err?.message || "Failed to generate template (Gemini).");
+      const message =
+        err?.message?.includes("Template generation requires")
+          ? "Please capture a sample API response or provide a last answer before auto-generating."
+          : err?.message || "Failed to generate template (Gemini).";
+      setAutoGenError(message);
     } finally {
       setAutoGenerating(false);
     }
@@ -170,7 +278,7 @@ export default function EndpointForm({
         "Not valid JSON. If you are using {{tokens}}, ensure they are inside string values."
       );
       await showCenteredAlert(
-        'Body template is not valid JSON. Tokens should be inside quotes, e.g. "{{last_answer.lat}}".'
+        'Body template is not valid JSON. Tokens should be inside quotes, e.g. "{{lastAnswer.lat}}".'
       );
     }
   };
@@ -225,7 +333,7 @@ export default function EndpointForm({
       auth_header_name:
         authType === "none" ? null : authHeader.trim() || "Authorization",
       auth_token: authType === "none" ? null : authToken.trim() || null,
-      is_active: isActive,
+      is_active: endpointIsActive,
       headers_json: formattedHeaders,
       body_template: showBodySection && bodyTemplate ? bodyTemplate : null,
       response_template: responseTemplate || "",
@@ -254,11 +362,10 @@ export default function EndpointForm({
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5">
             <span
-              className={`h-2 w-2 rounded-full ${
-                isActive ? "bg-emerald-500" : "bg-slate-400"
-              }`}
+              className={`h-2 w-2 rounded-full ${endpointIsActive ? "bg-emerald-500" : "bg-slate-400"
+                }`}
             />
-            {isActive ? "Active" : "Inactive"}
+            {endpointIsActive ? "Active" : "Inactive"}
           </span>
           {initial.lastupdated && (
             <span className="hidden sm:inline">
@@ -323,23 +430,16 @@ export default function EndpointForm({
               className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs"
               value={url}
               onChange={(event) => setUrl(event.target.value)}
-              placeholder="https://api.open-meteo.com/v1/forecast?latitude={{last_answer.lat}}&longitude={{last_answer.lon}}"
+              placeholder="https://api.example.com/search?q={{ lastAnswer.value }}"
             />
             <p className="text-[11px] text-muted-foreground">
-              Must start with <code className="font-mono">https://</code>. You can
-              interpolate variables with{" "}
-              <code className="font-mono">{'{{tokens}}'}</code>.
+              Must start with <code className="font-mono">https://</code>.
+              If this API depends on what the user typed, use{" "}
+              <code className="font-mono">{`{{ lastAnswer.value }}`}</code>.
             </p>
+
           </label>
-          <label className="flex items-center gap-2 text-sm font-medium md:col-span-2">
-            <input
-              type="checkbox"
-              className="rounded border"
-              checked={isActive}
-              onChange={(event) => setIsActive(event.target.checked)}
-            />
-            <span>Endpoint is active</span>
-          </label>
+
         </div>
       </section>
 
@@ -477,9 +577,10 @@ export default function EndpointForm({
                 Body template (JSON with <code className="font-mono">{'{{tokens}}'}</code>)
               </p>
               <p className="text-xs text-muted-foreground">
-                This JSON will be sent as the request body. Reference answer
-                variables (e.g., <code className="font-mono">{"{{ lastAnswer.value }}"}</code>)
-                or API response tokens to control what is sent.
+                JSON body sent to the API.
+                You may reference the user’s previous answer using{" "}
+                <code className="font-mono">{`{{ lastAnswer.value }}`}</code>.
+                All tokens must be inside quotes.
               </p>
             </div>
             <div className="flex flex-col gap-1 text-[11px] text-muted-foreground items-end">
@@ -508,7 +609,7 @@ export default function EndpointForm({
               setBodyTemplate(event.target.value);
               setBodyInfo(null);
             }}
-            placeholder='{"latitude":"{{last_answer.lat}}","longitude":"{{last_answer.lon}}"}'
+            placeholder='{"latitude":"{{lastAnswer.lat}}","longitude":"{{lastAnswer.lon}}"}'
           />
           {bodyInfo && (
             <p className="text-[11px] text-muted-foreground">{bodyInfo}</p>
@@ -517,15 +618,22 @@ export default function EndpointForm({
       )}
 
       <section className="rounded-xl border bg-background p-4 space-y-4 shadow-sm">
-        <div>
-          <p className="text-sm font-medium">Response template</p>
-          <p className="text-xs text-muted-foreground">
-            Controls what the user sees after an API step. Reference any API field
-            via <code className="font-mono">{"{{ response.field }}"}</code> or
-            refer to the previous answer with{" "}
-            <code className="font-mono">{"{{ lastAnswer.value }}"}</code>. The
-            auto-generator will infer the needed formatters for you.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Response template</p>
+            <p className="text-xs text-muted-foreground">
+              This message is sent back to the user after the API call.
+              <br />
+              • API data: <code className="font-mono">{`{{ response.field }}`}</code>
+              <br />
+              • User input: <code className="font-mono">{`{{ lastAnswer.value }}`}</code>
+            </p>
+          </div>
+          {requiresUserInput && (
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+              Requires user input
+            </span>
+          )}
         </div>
 
         <div className="flex flex-col gap-2">
@@ -534,25 +642,24 @@ export default function EndpointForm({
               type="button"
               className="rounded-md border px-3 py-1 text-xs font-semibold"
               onClick={handleAutoGenerate}
-              disabled={!hasSampleJson || autoGenerating || submitting}
+              disabled={autoGenerating || submitting}
             >
               {autoGenerating ? "Generating..." : "✨ Auto-generate Template"}
             </button>
-            <p className="text-[11px] text-muted-foreground">
-              AI inserts formatters like <code className="font-mono">|list</code>, <code className="font-mono">|date</code>, and <code className="font-mono">|number</code> automatically; focus on referencing the tokens it provides.
-            </p>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            If this endpoint is not yet attached to a campaign step, the AI will generate a neutral response template using only the API response and the last user answer.
+            AI will generate a WhatsApp-ready message using available API fields and formatters
+            like <code className="font-mono">|number</code>,{" "}
+            <code className="font-mono">|currency:myr</code>,{" "}
+            <code className="font-mono">|list</code>, and{" "}
+            <code className="font-mono">|date</code>.
           </p>
           <p className="text-[11px] text-muted-foreground">
             Gemini free tier may be rate-limited; try again later if you see an error here.
           </p>
-          {!hasSampleJson && (
-            <p className="text-[11px] text-muted-foreground">
-              Capture a JSON response by running the sample test before generating a template.
-            </p>
-          )}
+          <p className="text-[11px] text-muted-foreground">
+            Run a sample API call first so the AI knows what fields are available.
+          </p>
           {autoGenError && (
             <p className="text-[11px] text-rose-600">{autoGenError}</p>
           )}
@@ -563,9 +670,31 @@ export default function EndpointForm({
           value={responseTemplate}
           onChange={(e) => setResponseTemplate(e.target.value)}
           placeholder={
-            "Example: {{ response.status }} — {{ response.message }}\nAdd more tokens once the AI helper inserts them."
+            "Example: {{ response.status }} — {{ response.message }}"
           }
         />
+        {missingResponseTokens.length > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] text-amber-800">
+            <p className="font-semibold">⚠️ Possible template issue</p>
+            <p>
+              API fields must start with{" "}
+              <code className="font-mono">response.</code>
+            </p>
+            <p className="font-semibold mt-2 text-[12px]">Suggested fixes</p>
+            <div className="space-y-1">
+              {missingResponseTokens.map(({ token, suggestion }) => (
+                <p key={token} className="text-[11px]">
+                  <code className="font-mono">{`{{ ${token} }}`}</code>
+                  {" → "}
+                  <code className="font-mono">{`{{ ${suggestion} }}`}</code>
+                </p>
+              ))}
+            </div>
+            <div className="mt-2 rounded-md border border-dashed border-red-300 bg-red-50/70 px-2 py-1 text-[11px] text-red-700">
+              {renderHighlightedTemplate(responseTemplate, missingResponseTokens)}
+            </div>
+          </div>
+        )}
 
         {sampleResponse !== undefined && (
           <div className="grid gap-4 md:grid-cols-2 items-start">
@@ -578,13 +707,28 @@ export default function EndpointForm({
                   <button
                     type="button"
                     className="rounded-md border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-60"
-                    onClick={() => onRunSample()}
+                    onClick={handleRunSampleClick}
                     disabled={testingSample || submitting}
                   >
                     {testingSample ? "Running..." : "Run & refresh"}
                   </button>
                 )}
               </div>
+              {requiresUserInput && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Example user input
+                  </span>
+                  <input
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    placeholder="e.g. cheras"
+                    value={simulatedLastAnswer}
+                    onChange={(event) => {
+                      setSimulatedLastAnswer(event.target.value);
+                    }}
+                  />
+                </label>
+              )}
               <div className="rounded-lg border bg-muted/50 p-2 text-[11px] max-h-[240px] overflow-auto">
                 {sampleResponse ? (
                   <pre className="whitespace-pre-wrap">
@@ -594,7 +738,7 @@ export default function EndpointForm({
                   <p className="text-xs text-muted-foreground">
                     No sample yet. Click{" "}
                     <span className="font-semibold">Run &amp; refresh</span> to
-                    execute this API once and capture the response.
+                    execute this API and capture the response.
                   </p>
                 )}
               </div>

@@ -326,12 +326,6 @@ export const Api = {
       body: JSON.stringify(payload),
     }),
 
-  runIntegrationTest: (payload: TestRunPayload) =>
-    http<TestRunResult>("/api/integration/test", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
-
   // =========================================================
   // Integration -> Logs (api_log)
   // =========================================================

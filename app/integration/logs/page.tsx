@@ -7,6 +7,31 @@ import { Api } from "@/lib/client";
 import type { ApiLogEntry } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
 
+type HealthState = "green" | "amber" | "red" | "gray";
+
+const TEMPLATE_BADGE_STYLES: Record<string, string> = {
+  CLIENT_INPUT: "bg-slate-100 text-slate-800 border border-slate-200",
+  TEMPLATE_ERROR: "bg-amber-100 text-amber-800 border border-amber-200",
+  SERVICE_DOWN: "bg-rose-100 text-rose-800 border border-rose-200",
+  DISABLED: "bg-slate-200 text-slate-800 border border-slate-300",
+  UNKNOWN: "bg-rose-50 text-rose-700 border border-rose-100",
+};
+
+const HEALTH_STATE_META: Record<HealthState, { label: string; color: string }> = {
+  green: { label: "Healthy", color: "bg-emerald-500" },
+  amber: { label: "Degraded", color: "bg-amber-500" },
+  red: { label: "Failing", color: "bg-rose-500" },
+  gray: { label: "No data", color: "bg-slate-400" },
+};
+
+const formatTemplateLabel = (value?: string | null) =>
+  value ? value.replace(/_/g, " ") : "";
+
+const buildEndpointKey = (log: ApiLogEntry) =>
+  log.apiid != null
+    ? `api:${log.apiid}`
+    : log.api_url || log.endpoint || `log:${log.logid}`;
+
 const formatDateTime = (value?: string | null) => {
   if (!value) return "-";
   const date = new Date(value);
@@ -21,6 +46,7 @@ export default function LogsPage() {
   const [logs, setLogs] = useState<ApiLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedLogIds, setExpandedLogIds] = useState<Record<number, boolean>>({});
 
   const [filterEndpointId, setFilterEndpointId] = useState("");
   const [filterCampaignId, setFilterCampaignId] = useState("");
@@ -52,11 +78,50 @@ export default function LogsPage() {
         map.set(log.apiid, log);
       }
     });
-    return Array.from(map.values()).map((log) => ({
-      value: log.apiid ?? 0,
-      label: `${(log.method || "CALL").toUpperCase()} — ${log.endpoint || log.request_url || `#${log.apiid}`
-        }`,
-    }));
+    return Array.from(map.values()).map((log) => {
+      const displayName =
+        log.api_name ||
+        (log.apiid != null
+          ? `API #${log.apiid}`
+          : log.api_url || log.endpoint || "Unknown API");
+      return {
+        value: log.apiid ?? 0,
+        label: `${(log.method || "CALL").toUpperCase()} ${displayName}`,
+      };
+    });
+  }, [logs]);
+
+  const healthByEndpoint = useMemo(() => {
+    const grouped = new Map<string, ApiLogEntry[]>();
+    logs.forEach((log) => {
+      const key = buildEndpointKey(log);
+      const bucket = grouped.get(key) ?? [];
+      bucket.push(log);
+      grouped.set(key, bucket);
+    });
+
+    const result = new Map<string, HealthState>();
+    grouped.forEach((entries, key) => {
+      const lastFive = entries.slice(0, 5);
+      const lastThree = entries.slice(0, 3);
+      const allSuccess =
+        lastFive.length > 0 && lastFive.every((entry) => entry.status === "success");
+      const lastThreeErrors =
+        lastThree.length === 3 && lastThree.every((entry) => entry.status === "error");
+      const hasSuccess = entries.some((entry) => entry.status === "success");
+      const hasError = entries.some((entry) => entry.status === "error");
+      let state: HealthState = "gray";
+      if (lastThreeErrors) {
+        state = "red";
+      } else if (allSuccess) {
+        state = "green";
+      } else if (hasSuccess || hasError) {
+        state = "amber";
+      }
+      result.set(key, state);
+    });
+
+    return result;
   }, [logs]);
 
   const filteredLogs = useMemo(() => {
@@ -121,6 +186,12 @@ export default function LogsPage() {
     setFilterFrom("");
     setFilterTo("");
   };
+
+  const toggleLogDetails = (logId: number) =>
+    setExpandedLogIds((prev) => ({
+      ...prev,
+      [logId]: !prev[logId],
+    }));
 
   if (!privLoading && !canView) {
     return (
@@ -286,72 +357,124 @@ export default function LogsPage() {
             <span className="text-right">Time / Status</span>
           </div>
           <div className="divide-y">
-            {sortedLogs.map((log) => (
-              <div
-                key={log.logid}
-                className="grid grid-cols-[minmax(0,2.5fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_minmax(0,1.5fr)] gap-2 px-4 py-3 text-xs hover:bg-muted/40"
-              >
-                {/* Endpoint / details */}
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span>
-                      {log.status === "success" ? "✅" : log.status === "error" ? "⚠️" : "ℹ️"}
-                    </span>
-                    <span className="font-medium">
-                      {(log.method || "CALL").toUpperCase()}{" "}
-                      {log.endpoint || log.request_url || `#${log.apiid}`}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                    <span>Source: {log.source || "n/a"}</span>
-                    {log.stepid != null && <span>• Step #{log.stepid}</span>}
-                    {log.template_used && <span>• Template: {log.template_used}</span>}
-                  </div>
-                  {log.error_message && (
-                    <div className="mt-1 text-[11px] text-rose-600">
-                      {log.error_message}
+            {sortedLogs.map((log) => {
+              const endpointKey = buildEndpointKey(log);
+              const healthState = healthByEndpoint.get(endpointKey) ?? "gray";
+              const healthMeta = HEALTH_STATE_META[healthState];
+              const apiLabel =
+                log.api_name ||
+                (log.apiid != null
+                  ? `API #${log.apiid}`
+                  : log.api_url || log.endpoint || "Unknown API");
+              const badgeText = log.template_used ? formatTemplateLabel(log.template_used) : null;
+              const badgeClasses = log.template_used
+                ? TEMPLATE_BADGE_STYLES[log.template_used] ?? TEMPLATE_BADGE_STYLES.UNKNOWN
+                : "";
+              const hasSystemDetails = Boolean(log.system_error_message || log.template_used);
+              const isExpanded = Boolean(expandedLogIds[log.logid]);
+
+              return (
+                <div
+                  key={log.logid}
+                  className="grid grid-cols-[minmax(0,2.5fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_minmax(0,1.5fr)] gap-2 px-4 py-3 text-xs hover:bg-muted/40"
+                >
+                  <div>
+                    <div className="flex items-start gap-2">
+                      <span
+                        title={healthMeta.label}
+                        className={`inline-flex h-2.5 w-2.5 rounded-full ${healthMeta.color}`}
+                      />
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-900">
+                            {apiLabel}
+                          </span>
+                          {badgeText && (
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses}`}
+                            >
+                              {badgeText}
+                            </span>
+                          )}
+                        </div>
+                        {(log.api_url || log.request_url) && (
+                          <p className="text-[11px] text-muted-foreground">
+                            {log.api_url || log.request_url}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>Source: {log.source || "n/a"}</span>
+                      {log.stepid != null && <span>Step #{log.stepid}</span>}
+                    </div>
+                    <div className="mt-2 text-[11px] text-rose-600">
+                      <span className="font-semibold">User message:</span>{" "}
+                      {log.error_message || "-"}
+                    </div>
+                    {hasSystemDetails && (
+                      <div className="mt-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => toggleLogDetails(log.logid)}
+                          className="text-muted-foreground underline-offset-2 hover:text-slate-900"
+                        >
+                          {isExpanded ? "Hide details" : "View details"}
+                        </button>
+                        {isExpanded && (
+                          <div className="mt-2 space-y-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-700">
+                            <p>
+                              <span className="font-semibold">System error:</span>{" "}
+                              {log.system_error_message || "-"}
+                            </p>
+                            <p>
+                              <span className="font-semibold">Status code:</span>{" "}
+                              {log.response_code ?? "-"}
+                            </p>
+                            <p>
+                              <span className="font-semibold">Error type:</span>{" "}
+                              {badgeText || "Unknown"}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-                {/* Campaign */}
-                <div className="text-[11px] text-muted-foreground">
-                  {log.campaignname
-                    ? `${log.campaignname} (#${log.campaignid ?? "-"})`
-                    : log.campaignid != null
-                      ? `#${log.campaignid}`
-                      : "-"}
-                </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {log.campaignname
+                      ? `${log.campaignname} (#${log.campaignid ?? "-"})`
+                      : log.campaignid != null
+                        ? `#${log.campaignid}`
+                        : "-"}
+                  </div>
 
-                {/* Contact */}
-                <div className="text-[11px] text-muted-foreground">
-                  {log.contact_phone || "-"}
-                  {log.contactid != null && ` (#${log.contactid})`}
-                </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {log.contact_phone || "-"}
+                    {log.contactid != null && ` (#${log.contactid})`}
+                  </div>
 
-                {/* Time / status */}
-                <div className="text-right text-[11px] text-muted-foreground">
-                  <div>{formatDateTime(log.called_at)}</div>
-                  <div className="mt-1 flex justify-end gap-1">
-                    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5">
-                      <span className="text-[10px]">
-                        Code: {log.response_code ?? "-"}
+                  <div className="text-right text-[11px] text-muted-foreground">
+                    <div>{formatDateTime(log.called_at)}</div>
+                    <div className="mt-1 flex justify-end gap-1">
+                      <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5">
+                        <span className="text-[10px]">Code: {log.response_code ?? "-"}</span>
                       </span>
-                    </span>
-                    <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${log.status === "success"
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${log.status === "success"
                           ? "bg-emerald-50 text-emerald-700"
                           : log.status === "error"
                             ? "bg-rose-50 text-rose-700"
                             : "bg-slate-100 text-slate-700"
-                        }`}
-                    >
-                      {log.status ?? "-"}
-                    </span>
+                          }`}
+                      >
+                        {log.status ?? "-"}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

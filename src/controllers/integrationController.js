@@ -58,12 +58,7 @@ export async function runTest(req, res) {
   const contactId =
     vars.contact?.contactid ?? vars.contact?.id ?? vars.contact?.contact_id ?? null;
   const now = new Date();
-
-  try {
-    const result = await dispatchEndpoint(apiId, vars, {
-      log: false,
-      source: "manual_test",
-    });
+  const logSuccess = async (result) => {
     const formatted =
       result?.payload && typeof result.payload.formattedText === "string"
         ? result.payload.formattedText
@@ -88,22 +83,28 @@ export async function runTest(req, res) {
         called_at: now,
       },
     });
-
     const responseJson = {
       raw: result.payload ?? null,
       formatted,
     };
-    return res.status(200).json({
+    return {
       ok: true,
       status: result.status,
       timeMs: result.duration,
       responseJson,
       raw: responseJson.raw,
       formatted: responseJson.formatted,
-    });
-  } catch (err) {
-    console.error("[integration:test] dispatch error", err);
+    };
+  };
 
+  const performDispatch = async (varsToUse) =>
+    dispatchEndpoint(apiId, varsToUse, {
+      log: false,
+      source: "manual_test",
+    });
+
+  const handleErrorLog = async (err) => {
+    console.error("[integration:test] dispatch error", err);
     try {
       await prisma.api_log.create({
         data: {
@@ -114,7 +115,7 @@ export async function runTest(req, res) {
           request_url: null,
           request_body: null,
           response_body: null,
-          response_code: 500,
+          response_code: err?.status || 500,
           status: "error",
           error_message: err?.message || "Unknown error",
           step_id: null,
@@ -125,14 +126,22 @@ export async function runTest(req, res) {
     } catch (logErr) {
       console.warn("[integration:test] failed to write api_log for error:", logErr?.message || logErr);
     }
+  };
 
-    return res.status(500).json({
-      ok: false,
-      status: 500,
-      timeMs: 0,
-      errorMessage: err?.message || "Failed to execute test",
-      error: err?.message || "Failed to execute test",
-    });
+  try {
+    const result = await performDispatch(vars);
+    const payload = await logSuccess(result);
+    return res.status(200).json(payload);
+  } catch (err) {
+    if (err?.code === "API_DISABLED") {
+      return res.status(400).json({
+        error: "This API is disabled and cannot be tested.",
+      });
+    }
+    await handleErrorLog(err);
+    const errorMessage =
+      err?.message || "Remote API call failed while running this endpoint.";
+    return res.status(502).json({ error: errorMessage });
   }
 }
 

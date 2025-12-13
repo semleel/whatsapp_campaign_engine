@@ -84,7 +84,7 @@ export default function EditEndpointPage() {
     };
   }, [id, canView, privLoading]);
 
-  const handleRunSample = async () => {
+  const handleRunSample = async (sampleVars?: Record<string, unknown>) => {
     if (!initial?.apiid) return;
     setTestingSample(true);
     setError(null);
@@ -92,7 +92,7 @@ export default function EditEndpointPage() {
     try {
       const res = await Api.runTest({
         endpointId: initial.apiid,
-        sampleVars: {},
+        sampleVars: sampleVars ?? {},
       });
 
       const raw =
