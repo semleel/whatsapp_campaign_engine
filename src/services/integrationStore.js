@@ -19,6 +19,24 @@ function deriveResponseCode(entry) {
   return null;
 }
 
+function parseResponseBody(raw) {
+  if (raw == null) {
+    return { payload: null, systemError: null };
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return {
+        payload: parsed?.payload ?? null,
+        systemError: parsed?.systemError ?? null,
+      };
+    } catch {
+      return { payload: raw, systemError: null };
+    }
+  }
+  return { payload: raw, systemError: null };
+}
+
 export async function appendLog(entry) {
   const responseCode = deriveResponseCode(entry);
   const status =
@@ -28,6 +46,27 @@ export async function appendLog(entry) {
         ? "success"
         : entry?.meta?.statusText || null;
   const calledAt = entry?.ts ? new Date(entry.ts) : new Date();
+
+  const normalizedError = entry?.meta?.normalizedError;
+  const userMessage =
+    normalizedError?.userMessage || entry?.error || entry?.message || null;
+  const errorType =
+    normalizedError?.type || entry?.meta?.template || entry?.meta?.templateUsed || null;
+  const systemMessage =
+    normalizedError?.systemMessage || entry?.meta?.systemMessage || null;
+  const responsePayload =
+    entry?.meta?.responsePayload ??
+    entry?.meta?.response ??
+    entry?.meta?.payload ??
+    entry?.meta?.responseBody ??
+    null;
+  const responseBody =
+    responsePayload != null || systemMessage != null
+      ? JSON.stringify({
+        payload: responsePayload ?? null,
+        systemError: systemMessage,
+      })
+      : null;
 
   try {
     await prisma.api_log.create({
@@ -43,12 +82,12 @@ export async function appendLog(entry) {
         step_id: entry?.meta?.stepId ?? null,
         request_url: entry?.meta?.requestUrl ?? null,
         request_body: entry?.meta?.requestBody ?? null,
-        response_body: entry?.meta?.responseBody ?? null,
+        response_body: responseBody,
         response_code: responseCode,
         status,
-        error_message: entry?.error || entry?.message || null,
+        error_message: userMessage,
         source: entry?.source || entry?.meta?.source || "internal",
-        template_used: entry?.meta?.template ?? entry?.meta?.templateUsed ?? null,
+        template_used: errorType,
         called_at: calledAt,
       },
     });
@@ -68,28 +107,35 @@ export async function listLogs(limit = 100) {
     },
   });
 
-  return rows.map((row) => ({
-    logid: row.log_id,
-    apiid: row.api_id,
-    campaignid: row.campaign_id,
-    campaignname: row.campaign?.campaign_name ?? null,
-    campaignsessionid: row.campaign_session_id,
-    contactid: row.contact_id,
-    contact_phone: row.contact?.phone_num ?? null,
-    request_url: row.request_url,
-    request_body: row.request_body,
-    response_body: row.response_body,
-    response_code: row.response_code,
-    status: row.status,
-    error_message: row.error_message,
-    called_at: row.called_at?.toISOString() ?? new Date().toISOString(),
-    endpoint: row.request_url || row.api?.url || null,
-    status_code: row.response_code,
-    method: row.api?.method || null,
-    path: null,
-    createdat: row.called_at?.toISOString() ?? null,
-    stepid: row.step_id,
-    source: row.source,
-    template_used: row.template_used,
-  }));
+  return rows.map((row) => {
+    const parsedResponse = parseResponseBody(row.response_body);
+    return {
+      logid: row.log_id,
+      apiid: row.api_id,
+      campaignid: row.campaign_id,
+      campaignsessionid: row.campaign_session_id,
+      contactid: row.contact_id,
+      api_name: row.api?.name ?? null,
+      api_url: row.api?.url ?? row.request_url ?? null,
+      system_error_message: parsedResponse.systemError,
+      response_payload: parsedResponse.payload,
+      campaignname: row.campaign?.campaign_name ?? null,
+      contact_phone: row.contact?.phone_num ?? null,
+      request_url: row.request_url,
+      request_body: row.request_body,
+      response_body: row.response_body,
+      response_code: row.response_code,
+      status: row.status,
+      error_message: row.error_message,
+      called_at: row.called_at?.toISOString() ?? new Date().toISOString(),
+      endpoint: row.request_url || row.api?.url || null,
+      status_code: row.response_code,
+      method: row.api?.method || null,
+      path: null,
+      createdat: row.called_at?.toISOString() ?? null,
+      stepid: row.step_id,
+      source: row.source,
+      template_used: row.template_used,
+    };
+  });
 }

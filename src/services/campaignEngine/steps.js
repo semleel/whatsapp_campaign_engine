@@ -1,3 +1,5 @@
+// src/services/campaignEngine/steps.js
+
 import prisma from "../../config/prismaClient.js";
 import { dispatchEndpoint } from "../integrationService.js";
 import { ensureSessionStep, resolveStepContent, isLanguageSelectorStep, updateContactLanguageForSession } from "./session.js";
@@ -9,6 +11,8 @@ import {
   extractChoiceCodeFromPayload,
   extractLocationFromPayload,
 } from "./helpers.js";
+import { normalizeApiError } from "./apiErrorHelper.js";
+import { log, warn, error } from "../../utils/logger.js";
 
 export async function runChoiceStep({
   contact,
@@ -39,15 +43,18 @@ export async function runChoiceStep({
         choices.find((c) => (c.label || "").trim().toLowerCase() === lc) ||
         choices.find((c) => String(c.choice_id || "").toLowerCase() === lc);
       if (!matchedChoice) {
-        console.warn("[ENGINE] No matching choice for interactive reply", {
-          selectedCode: lc,
-          available: choices.map((c) => ({
-            id: c.choice_id,
-            code: c.choice_code,
-            label: c.label,
-            next_step_id: c.next_step_id,
-          })),
-        });
+        warn(
+          "[ENGINE] No matching choice for interactive reply",
+          JSON.stringify({
+            selectedCode: lc,
+            available: choices.map((c) => ({
+              id: c.choice_id,
+              code: c.choice_code,
+              label: c.label,
+              next_step_id: c.next_step_id,
+            })),
+          })
+        );
       }
     }
   } else {
@@ -70,19 +77,22 @@ export async function runChoiceStep({
     },
   });
 
-  console.log("[ENGINE] Choice reply processed", {
-    step_id: step.step_id,
-    selectedCode,
-    incomingText,
-    matchedChoice: matchedChoice
-      ? {
+  log(
+    "[ENGINE] Choice reply processed",
+    JSON.stringify({
+      step_id: step.step_id,
+      selectedCode,
+      incomingText,
+      matchedChoice: matchedChoice
+        ? {
           id: matchedChoice.choice_id,
           code: matchedChoice.choice_code,
           label: matchedChoice.label,
           next_step_id: matchedChoice.next_step_id,
         }
-      : null,
-  });
+        : null,
+    })
+  );
 
   if (!isValid) {
     const msg =
@@ -132,11 +142,14 @@ export async function runChoiceStep({
 
   const targetStepId = matchedChoice.next_step_id;
 
-  console.log("[ENGINE] Choice routing", {
-    step_id: step.step_id,
-    targetStepId,
-    is_end: step.is_end_step,
-  });
+  log(
+    "[ENGINE] Choice routing",
+    JSON.stringify({
+      step_id: step.step_id,
+      targetStepId,
+      is_end: step.is_end_step,
+    })
+  );
 
   if (!targetStepId) {
     await prisma.campaign_session.update({
@@ -160,11 +173,14 @@ export async function runChoiceStep({
   });
 
   if (!nextStep) {
-    console.error("[ENGINE] Target step not found for choice", {
-      targetStepId,
-      step_id: step.step_id,
-      campaign_id: step.campaign_id,
-    });
+    error(
+      "[ENGINE] Target step not found for choice",
+      JSON.stringify({
+        targetStepId,
+        step_id: step.step_id,
+        campaign_id: step.campaign_id,
+      })
+    );
   }
 
   await prisma.campaign_session.update({
@@ -283,13 +299,46 @@ export async function runInputStep({ contact, session, step, incomingText, type,
   return runStepAndReturnMessages({ contact, session, step: nextStep });
 }
 
-export async function runApiStep({ contact, session, step, lastAnswer, contentContext = null }) {
+function logApiFailure(normalizedError, err, { step, api, status }) {
+  const apiName = api?.name || `API ${api?.apiId ?? ""}`.trim() || "API";
+  const context = {
+    stepId: step?.step_id ?? null,
+    apiId: api?.apiId ?? null,
+    apiName,
+    status,
+    type: normalizedError.type,
+    error: err?.message ?? null,
+  };
+  const details = JSON.stringify(context);
+  const message =
+    normalizedError.systemMessage || err?.message || "API call failed";
+  if (normalizedError.logLevel === "warn") {
+    warn("[flowEngine] API error", message, details);
+  } else {
+    error("[flowEngine] API error", message, details);
+  }
+}
+
+export async function runApiStep({
+  contact,
+  session,
+  step,
+  lastAnswer,
+  contentContext = null,
+}) {
   await ensureSessionStep(session, step.step_id);
+
   if (!step.api_id) {
-    console.warn("[flowEngine] API step has no api_id", { stepId: step.step_id });
+    warn(
+      "[flowEngine] API step has no api_id",
+      JSON.stringify({ stepId: step.step_id })
+    );
     return { outbound: [], nextStepId: step.next_step_id };
   }
 
+  /* -------------------------------------------------
+   * 1. Resolve lastAnswer (same logic you already had)
+   * ------------------------------------------------- */
   let effectiveLastAnswer = lastAnswer || null;
 
   if (!effectiveLastAnswer && session?.campaign_session_id) {
@@ -318,6 +367,7 @@ export async function runApiStep({ contact, session, step, lastAnswer, contentCo
         const args = keywordMeta.args || "";
         const rawText = keywordMeta.rawText || "";
         const keywordOnly = keywordMeta.keyword || "";
+
         effectiveLastAnswer = {
           session_id: session.campaign_session_id ?? null,
           campaign_id: session.campaign_id ?? null,
@@ -337,101 +387,134 @@ export async function runApiStep({ contact, session, step, lastAnswer, contentCo
     lastAnswer: effectiveLastAnswer,
   };
 
+  /* -------------------------------------------------
+   * 2. IMMEDIATELY send prompt_text (UX FIX)
+   * ------------------------------------------------- */
+  const outbound = [];
+
+  if (step.prompt_text && step.prompt_text.trim()) {
+    outbound.push(
+      withStepContext({
+        base: {
+          to: contact.phone_num,
+          content: step.prompt_text,
+        },
+        step,
+        session,
+        contact,
+        contentContext,
+      })
+    );
+  }
+
+  /* -------------------------------------------------
+   * 3. Call API (can be slow)
+   * ------------------------------------------------- */
   let result = null;
   let ok = false;
   let status = 500;
   let apiPayload;
-  let apiError;
+  let normalizedError = null;
+  let apiInfo = { apiId: step.api_id };
+  let formattedText = null;
+  let templateError = null;
 
   try {
     result = await dispatchEndpoint(step.api_id, vars, {
       source: "campaign_step",
       stepId: step.step_id,
     });
+
+    apiInfo = result?.api ?? { apiId: result?.apiId ?? step.api_id };
     ok = !!result?.ok;
     status = result?.status ?? status;
     apiPayload = result?.payload;
+    formattedText =
+      apiPayload && typeof apiPayload.formattedText === "string"
+        ? apiPayload.formattedText
+        : null;
+    templateError = result?.templateError ?? null;
   } catch (err) {
-    apiError = err?.message || "API call failed";
-    console.error("[flowEngine] API step failed", {
-      stepId: step.step_id,
-      apiId: step.api_id,
-      error: apiError,
+    status = err?.status ?? status;
+    normalizedError = normalizeApiError({
+      err,
+      status,
+      api: apiInfo,
+      step,
     });
+    logApiFailure(normalizedError, err, { step, api: apiInfo, status });
+    outbound.push({
+      to: contact.phone_num,
+      content: normalizedError.userMessage,
+    });
+    ok = false;
   }
 
-  const outbound = [];
-  const introText = (step.prompt_text || "").trim();
-  const formattedText =
-    apiPayload && typeof apiPayload.formattedText === "string"
-      ? apiPayload.formattedText
-      : null;
-
-  let mainText = null;
-
-  if (formattedText) {
-    mainText = formattedText;
-  } else if (!introText) {
-    mainText = ok ? "Done." : "Sorry, something went wrong.";
-  } else {
-    mainText = introText;
-  }
-
-  if (introText && formattedText) {
-    outbound.push(
-      withStepContext({
-        base: {
-          to: contact.phone_num,
-          content: introText,
-        },
+  /* -------------------------------------------------
+   * 4. Send API result OR error_message
+   * ------------------------------------------------- */
+  if (!normalizedError) {
+    if (ok && !templateError && formattedText) {
+      outbound.push(
+        withStepContext({
+          base: {
+            to: contact.phone_num,
+            content: formattedText,
+          },
+          step,
+          session,
+          contact,
+          contentContext,
+        })
+      );
+    } else {
+      normalizedError = normalizeApiError({
+        err: templateError ?? null,
+        status,
+        api: apiInfo,
         step,
-        session,
-        contact,
-      })
-    );
-  }
-
-  if (mainText || step.media_url) {
-    const mediaPayload = buildMediaWaPayload(step);
-    outbound.push(
-      withStepContext({
-        base: {
-          to: contact.phone_num,
-          content: mainText || "",
-          ...(mediaPayload ? { waPayload: mediaPayload } : {}),
-        },
+      });
+      logApiFailure(normalizedError, templateError, {
         step,
-        session,
-        contact,
-      })
-    );
+        api: apiInfo,
+        status,
+      });
+      outbound.push({
+        to: contact.phone_num,
+        content: normalizedError.userMessage,
+      });
+      ok = false;
+    }
   }
 
+  /* -------------------------------------------------
+   * 5. Decide next step
+   * ------------------------------------------------- */
   const hasFailureStep = !!step.failure_step_id;
-  const targetStepId = ok
+  const resolvedOk = ok && !normalizedError;
+  const targetStepId = resolvedOk
     ? step.next_step_id
     : hasFailureStep
       ? step.failure_step_id
       : null;
 
-  if (!ok && !hasFailureStep && step.error_message) {
-    outbound.push({
-      to: contact.phone_num,
-      content: step.error_message,
-    });
+  const integrationMeta = {
+    apiId: apiInfo.apiId ?? step.api_id,
+    ok: resolvedOk,
+    status,
+    type: normalizedError?.type ?? "SUCCESS",
+    ...(apiPayload !== undefined ? { payload: apiPayload } : {}),
+  };
+  if (normalizedError) {
+    integrationMeta.error = normalizedError.systemMessage;
+    integrationMeta.userMessage = normalizedError.userMessage;
   }
 
   return {
     outbound,
     nextStepId: targetStepId,
     integration: {
-      lastApi: {
-        apiId: step.api_id,
-        ok,
-        status,
-        ...(apiPayload !== undefined ? { payload: apiPayload } : {}),
-        ...(apiError ? { error: apiError } : {}),
-      },
+      lastApi: integrationMeta,
     },
   };
 }
@@ -568,14 +651,17 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         prompt_text: resolvedPrompt,
         media_url: resolvedMediaUrl,
       });
-      console.log("[ENGINE] Sending step", {
-        step_id: current.step_id,
-        campaign_id: current.campaign_id,
-        action: current.action_type,
-        has_text: !!(resolvedPrompt && resolvedPrompt.trim()),
-        media_url: resolvedMediaUrl || null,
-        media_payload_type: mediaPayload?.type || null,
-      });
+      log(
+        "[ENGINE] Sending step",
+        JSON.stringify({
+          step_id: current.step_id,
+          campaign_id: current.campaign_id,
+          action: current.action_type,
+          has_text: !!(resolvedPrompt && resolvedPrompt.trim()),
+          media_url: resolvedMediaUrl || null,
+          media_payload_type: mediaPayload?.type || null,
+        })
+      );
       outbound.push(
         withStepContext({
           base: {

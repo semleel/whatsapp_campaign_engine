@@ -597,6 +597,15 @@ export default function CampaignStepsPage() {
         setValidationError("API failure routing must point to a valid step.");
         return;
       }
+      if (step.action_type === "api") {
+        const api = apis.find((a) => a.api_id === step.api_id);
+        if (api && api.is_active === false) {
+          setValidationError(
+            `Step ${step.step_number} uses a disabled API (${api.name}). Please select an active API.`
+          );
+          return;
+        }
+      }
       if (step.action_type === "choice") {
         const badChoice = (step.campaign_step_choice || []).find(
           (c) => c.next_step_id && !idSet.has(c.next_step_id)
@@ -752,6 +761,9 @@ export default function CampaignStepsPage() {
                             typeof s.api_id === "number"
                               ? apis.find((api) => api.api_id === s.api_id) || null
                               : null;
+
+                          const isApiInactive =
+                            apiForStep && apiForStep.is_active === false;
 
                           return (
                             <SortableStepRow
@@ -1058,6 +1070,16 @@ export default function CampaignStepsPage() {
                                       </label>
                                     )}
 
+                                    {isApiInactive && (
+                                      <div className="md:col-span-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                        ⚠️ The API{" "}"
+                                        <b>{apiForStep?.name ?? `#${s.api_id}`}</b>"{" "}
+                                        is currently <b>disabled</b>.
+                                        <br />
+                                        This step will fail at runtime unless you select another API.
+                                      </div>
+                                    )}
+
                                     {s.action_type === "api" && (
                                       <div className="grid gap-3 md:grid-cols-2">
                                         <label className="space-y-1 text-sm font-medium">
@@ -1117,10 +1139,11 @@ export default function CampaignStepsPage() {
                                                 error_message: e.target.value || null,
                                               })
                                             }
-                                            placeholder="Displayed when the API call fails."
+                                            placeholder="Shown when the user's input is invalid or not found (e.g. wrong city name)."
                                           />
                                           <p className="text-[11px] text-muted-foreground">
-                                            Optional fallback message shown when the API fails.
+                                            Optional. Used only for <b>user input errors (4xx)</b>.
+                                            System errors (API down, disabled, template issues) use automatic messages.
                                           </p>
                                         </label>
                                         <div className="md:col-span-2 space-y-2 text-sm">
@@ -1253,6 +1276,11 @@ export default function CampaignStepsPage() {
                                   <div className="text-xs text-muted-foreground truncate">
                                     {s.step_code || "No code"}
                                   </div>
+                                  {isApiInactive && (
+                                    <div className="mt-1 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                      Disabled API
+                                    </div>
+                                  )}
                                   <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
                                     <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5">
                                       {s.template_source_id

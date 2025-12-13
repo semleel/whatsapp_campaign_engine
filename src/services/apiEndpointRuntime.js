@@ -50,6 +50,7 @@ export async function getRuntimeEndpoint(endpointId) {
       headerName: apiRow.auth_header_name || undefined,
       tokenRef: apiRow.auth_token || undefined,
     },
+    isActive: apiRow.is_active !== false,
     timeoutMs: 8000,
     retries: 0,
     backoffMs: 0,

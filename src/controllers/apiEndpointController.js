@@ -2,6 +2,18 @@
 
 import prisma from "../config/prismaClient.js";
 
+function lintTemplateTokens(template = "") {
+  if (!template) return [];
+  return Array.from(template.matchAll(/{{\s*([^}]+)\s*}}/g))
+    .map((match) => match[1].trim())
+    .filter((token) => {
+      if (!token) return false;
+      if (token.startsWith("response.")) return false;
+      if (token.startsWith("lastAnswer.")) return false;
+      return true;
+    });
+}
+
 function ensureHttps(url) {
   if (!/^https:\/\//i.test(url || "")) {
     throw new Error("URL must start with https://");
@@ -28,7 +40,6 @@ function normalizeEndpointPayload(body = {}) {
     typeof body.body_template === "string" ? body.body_template : null;
   const responseTemplate =
     typeof body.response_template === "string" ? body.response_template : null;
-
   return {
     name: String(body.name || "").trim(),
     description:
@@ -121,6 +132,14 @@ export async function createEndpoint(req, res) {
     return res.status(400).json({ error: err.message });
   }
 
+  const lintTokens = lintTemplateTokens(normalized.response_template);
+  if (lintTokens.length > 0) {
+    console.warn(
+      "[template:lint] response_template contains fields without response.*",
+      { tokens: lintTokens }
+    );
+  }
+
   try {
     const created = await prisma.api.create({ data: normalized });
     return res.status(201).json(mapApiToEndpointConfig(created));
@@ -151,6 +170,14 @@ export async function updateEndpoint(req, res) {
     normalized = normalizeEndpointPayload(req.body);
   } catch (err) {
     return res.status(400).json({ error: err.message });
+  }
+
+  const lintTokens = lintTemplateTokens(normalized.response_template);
+  if (lintTokens.length > 0) {
+    console.warn(
+      "[template:lint] response_template contains fields without response.*",
+      { tokens: lintTokens, apiId: id }
+    );
   }
 
   try {

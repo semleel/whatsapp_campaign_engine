@@ -1,3 +1,5 @@
+// app/campaign/page.tsx
+
 "use client";
 
 import Link from "next/link";
@@ -18,6 +20,7 @@ interface Campaign {
   end_at?: string | null;
   hasKeyword?: boolean;
   hasSteps?: boolean;
+  hasDisabledApi?: boolean;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -264,10 +267,12 @@ export default function CampaignsPage() {
                 const allowArchive = canArchive && !isRunning;
                 const missingKeyword = c.hasKeyword === false;
                 const missingSteps = c.hasSteps === false;
-                const hasWarning = missingKeyword || missingSteps;
+                const hasDisabledApi = c.hasDisabledApi === true;
+                const hasWarning = missingKeyword || missingSteps || hasDisabledApi;
                 const warningText = [
                   missingKeyword ? "Missing keyword" : null,
                   missingSteps ? "Missing steps" : null,
+                  hasDisabledApi ? "Uses disabled API" : null,
                 ]
                   .filter(Boolean)
                   .join(" | ");
@@ -319,6 +324,14 @@ export default function CampaignsPage() {
                                     className="rounded border border-amber-200 px-2 py-1 text-amber-800 hover:bg-amber-50"
                                   >
                                     Add steps
+                                  </Link>
+                                )}
+                                {hasDisabledApi && (
+                                  <Link
+                                    href={`/campaign/${c.campaignid}/steps`}
+                                    className="rounded border border-amber-200 px-2 py-1 text-amber-800 hover:bg-amber-50"
+                                  >
+                                    Review API steps
                                   </Link>
                                 )}
                               </div>

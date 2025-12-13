@@ -4,6 +4,7 @@ import { URL } from "url";
 import { appendLog } from "./integrationStore.js";
 import prisma from "../config/prismaClient.js";
 import { getRuntimeEndpoint } from "./apiEndpointRuntime.js";
+import { normalizeApiError } from "./campaignEngine/apiErrorHelper.js";
 import { log as appLog, warn as appWarn } from "../utils/logger.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -18,13 +19,28 @@ function resolvePath(data, path) {
 
 export function renderTemplateString(input, context = {}) {
   if (!input || typeof input !== "string") return input;
-  return input.replace(PLACEHOLDER, (_, token) => {
+
+  let hasMissing = false;
+
+  const output = input.replace(PLACEHOLDER, (_, token) => {
     const [rawPath, formatter] = token.split("|").map((part) => part.trim());
     const value = resolvePath(context, rawPath);
-    if (value === undefined || value === null) return "";
-    if (!formatter) return toPlainString(value);
-    return applyFormatter(value, formatter);
+
+    if (value === undefined || value === null) {
+      hasMissing = true;
+      return "";
+    }
+
+    return formatter ? applyFormatter(value, formatter) : toPlainString(value);
   });
+
+  if (hasMissing) {
+    const err = new Error("TEMPLATE_MISSING_FIELD");
+    err.code = "TEMPLATE_MISSING_FIELD";
+    throw err;
+  }
+
+  return output;
 }
 
 function toPlainString(value) {
@@ -43,19 +59,64 @@ function toPlainString(value) {
 }
 
 function applyFormatter(value, formatter) {
-  const normalized = (formatter || "").toLowerCase().trim();
+  const rawFormatter = (formatter || "").trim();
+  const [method, argRaw] = rawFormatter.split(":").map((s) => s.trim());
+
+  const normalized = method.toLowerCase();
+  const arg = argRaw?.toUpperCase();
+  const numVal = Number(value) || 0;
+
   switch (normalized) {
-    case "currency":
-      return new Intl.NumberFormat("en-MY", {
+    case "currency": {
+      const currencyCode = arg === "USD" ? "USD" : "MYR";
+      const locale = currencyCode === "USD" ? "en-US" : "en-MY";
+
+      return new Intl.NumberFormat(locale, {
         style: "currency",
-        currency: "MYR",
-      }).format(Number(value) || 0);
+        currency: currencyCode,
+      }).format(numVal);
+    }
+
     case "number":
-      return new Intl.NumberFormat("en-MY").format(Number(value) || 0);
+      return new Intl.NumberFormat("en-MY").format(numVal);
+
+    case "times":
+      return numVal * arg;
+
+    case "divided_by":
+      // Prevent division by zero
+      return arg !== 0 ? numVal / arg : numVal;
+
+    case "plus":
+      return numVal + arg;
+
+    case "minus":
+      return numVal - arg;
+
     case "date":
-      return new Date(value).toLocaleDateString("en-MY");
+      // expects milliseconds (JS Date)
+      return new Date(Number(value)).toLocaleDateString("en-MY");
+
+    case "date_unix":
+      // unix seconds -> ms
+      return new Date(Number(value) * 1000).toLocaleDateString("en-MY");
+
+    case "date_time_unix":
+      return new Date(Number(value) * 1000).toLocaleString("en-MY", {
+        hour12: false,
+      });
+
+    case "upper":
+      return String(value ?? "").toUpperCase();
+
+    case "lower":
+      return String(value ?? "").toLowerCase();
+
     case "list":
-      return Array.isArray(value) ? value.map((item) => toPlainString(item)).join(", ") : toPlainString(value);
+      return Array.isArray(value)
+        ? value.map((item) => toPlainString(item)).join(", ")
+        : toPlainString(value);
+
     default:
       return toPlainString(value);
   }
@@ -66,26 +127,59 @@ function normalizeLastAnswer(rawAnswer) {
     return { raw: null, value: null };
   }
 
-  const rawValue =
-    typeof rawAnswer === "object" && "user_input_raw" in rawAnswer
-      ? rawAnswer.user_input_raw
-      : rawAnswer;
+  // ✅ CASE 1: Admin test sends { value: "cheras" }
+  if (typeof rawAnswer === "object" && "value" in rawAnswer) {
+    const v = rawAnswer.value;
+    return {
+      raw: v,
+      value: typeof v === "string" ? v.trim() : v,
+    };
+  }
 
-  let parsedValue = rawValue;
-  if (typeof rawValue === "string") {
-    const trimmed = rawValue.trim();
-    try {
-      parsedValue = JSON.parse(trimmed);
-    } catch {
-      parsedValue = trimmed;
-    }
+  // ✅ CASE 2: Campaign response row (WhatsApp runtime)
+  if (typeof rawAnswer === "object" && "user_input_raw" in rawAnswer) {
+    const v = rawAnswer.user_input_raw;
+    return {
+      raw: v,
+      value: typeof v === "string" ? v.trim() : v,
+    };
+  }
+
+  // ✅ CASE 3: Plain string
+  if (typeof rawAnswer === "string") {
+    return {
+      raw: rawAnswer,
+      value: rawAnswer.trim(),
+    };
   }
 
   return {
-    raw: rawValue ?? "",
-    value: parsedValue ?? "",
+    raw: rawAnswer,
+    value: rawAnswer,
   };
 }
+
+function buildTemplateResponse(responseBody) {
+  if (
+    responseBody &&
+    typeof responseBody === "object" &&
+    !Array.isArray(responseBody)
+  ) {
+    const keys = Object.keys(responseBody);
+    if (keys.length === 1) {
+      const singleValue = responseBody[keys[0]];
+      if (singleValue && typeof singleValue === "object") {
+        return { ...responseBody, data: singleValue };
+      }
+    }
+    return responseBody;
+  }
+  if (responseBody != null) {
+    return { value: responseBody };
+  }
+  return {};
+}
+
 
 function ensureHttps(url) {
   if (!/^https:\/\//i.test(url)) {
@@ -161,6 +255,19 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
 
   const endpointNumericId = endpoint.id ?? endpoint.api_id ?? Number(endpointId);
 
+  const apiMeta = {
+    apiId: endpointNumericId ?? endpointId,
+    name: endpoint.name,
+    isActive: endpoint.is_active ?? endpoint.isActive ?? true,
+  };
+  // HARD BLOCK disabled API
+  if (apiMeta.isActive === false && source !== "manual_test") {
+    const err = new Error("API_DISABLED");
+    err.code = "API_DISABLED";
+    err.apiId = endpointId;
+    throw err;
+  }
+
   // If response_template is not hydrated in the runtime cache, fetch from DB once.
   if (!endpoint.response_template && endpointNumericId) {
     try {
@@ -176,9 +283,19 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     }
   }
 
+  const normalizedTemplate = endpoint.response_template
+    ? String(endpoint.response_template).trim()
+    : "";
+  if (!normalizedTemplate) {
+    const err = new Error("Response template is empty");
+    err.code = "TEMPLATE_EMPTY";
+    throw err;
+  }
+  endpoint = { ...endpoint, response_template: normalizedTemplate };
+
   const resolvedVars = { ...vars };
   const lastAnswerContext = normalizeLastAnswer(
-    resolvedVars.lastAnswer ?? resolvedVars.last_answer ?? null
+    resolvedVars.lastAnswer ?? null
   );
 
   const localStepId =
@@ -194,6 +311,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
       value: lastAnswerContext.value,
     },
   };
+
   const url = buildUrl(endpoint, requestContext);
   const method = endpoint.method || "GET";
   const headers = {
@@ -270,40 +388,25 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     null;
 
   let lastError = null;
-  let lastResult = null;
 
   for (let i = 0; i <= retries; i += 1) {
     try {
       const result = await attempt();
-      lastResult = result;
-
-      if (!result.ok) {
-        lastError = new Error(`Remote responded with status ${result.status}`);
-        if (i < retries) {
-          await wait(backoffMs || 0);
-          continue;
-        }
-        break;
-      }
 
       const responseBody = result.payload;
+      const responseNormalized = buildTemplateResponse(responseBody);
 
-      // ---- Response templating (Formatter) ----
+      // ---- Response templating ----
       let formattedText = null;
-      if (endpoint.response_template) {
-        const responsePayload =
-          responseBody && typeof responseBody === "object"
-            ? responseBody
-            : responseBody != null
-              ? { value: responseBody }
-              : {};
+      let templateError = null;
 
+      if (result.ok && endpoint.response_template) {
         const ctx = {
           lastAnswer: {
             raw: lastAnswerContext.raw,
             value: lastAnswerContext.value,
           },
-          response: responsePayload,
+          response: responseNormalized,
         };
 
         try {
@@ -313,6 +416,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
             "[integration] response_template render failed:",
             err?.message || err
           );
+          templateError = err;
         }
       }
 
@@ -323,9 +427,11 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
         apiId: endpointNumericId ?? endpointId,
         requestBody: body,
         payload: {
-          response: responseBody,
+          response: responseNormalized,
           ...(formattedText ? { formattedText } : {}),
         },
+        api: apiMeta,
+        templateError,
       };
 
       if (shouldLog) {
@@ -358,6 +464,11 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
         }
       }
 
+      if (!result.ok && i < retries) {
+        await wait(backoffMs || 0);
+        continue;
+      }
+
       return successResponse;
     } catch (err) {
       lastError = err;
@@ -369,39 +480,38 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     }
   }
 
-  if (shouldLog) {
-    try {
-      await prisma.api_log.create({
-        data: {
-          api_id: endpointNumericId ? Number(endpointNumericId) : null,
-          campaign_id: campaignId,
-          campaign_session_id: sessionId,
-          contact_id: contactId,
-          step_id: localStepId,
-          request_url: url,
-          request_body: bodyString,
-          response_body:
-            lastResult && typeof lastResult.payload === "string"
-              ? lastResult.payload
-              : lastResult?.payload != null
-                ? JSON.stringify(lastResult.payload)
-                : null,
-          response_code: lastResult?.status ?? 500,
-          status: "error",
-          error_message: lastError?.message || "Unknown error during dispatch",
-          source,
-          called_at: new Date(),
-        },
-      });
-    } catch (logErr) {
-      appWarn?.(
-        "[integration] failed to write api_log (error):",
-        logErr?.message || logErr
-      );
+  if (lastError) {
+    if (shouldLog) {
+      try {
+        await prisma.api_log.create({
+          data: {
+            api_id: endpointNumericId ? Number(endpointNumericId) : null,
+            campaign_id: campaignId,
+            campaign_session_id: sessionId,
+            contact_id: contactId,
+            step_id: localStepId,
+            request_url: url,
+            request_body: bodyString,
+            response_body: null,
+            response_code: null,
+            status: "error",
+            error_message: lastError?.message || "Unknown error during dispatch",
+            source,
+            called_at: new Date(),
+          },
+        });
+      } catch (logErr) {
+        appWarn?.(
+          "[integration] failed to write api_log (error):",
+          logErr?.message || logErr
+        );
+      }
     }
+    throw lastError;
   }
 
-  throw lastError || new Error("Unknown error during dispatch");
+  // In case we somehow exit the loop without returning or erroring,
+  throw new Error("Unknown error during dispatch");
 }
 
 function normalizeResponseForPrompt(responseJson) {
@@ -510,7 +620,9 @@ export async function generateTemplateFromAI({
   lastAnswer,
 }) {
   if (!responseJson) {
-    throw new Error("Sample API response is required for template generation.");
+    throw new Error(
+      "Template generation requires a sample API response or sample user input."
+    );
   }
 
   // 1. Safe Defaults
@@ -541,17 +653,76 @@ export async function generateTemplateFromAI({
   // We combine instructions into a single clear block for Gemini
   const systemInstruction = `
   You are an expert WhatsApp message template designer.
-  Your goal is to write a short, engaging response based on a JSON API result.
+  Your goal is to write a short, clear WhatsApp message template based on a JSON API response.
 
-  **Constraint Checklist & Confidence Score:**
-  1. Use {{ response.fieldName }} for dynamic data.
-  2. Use {{ lastAnswer.value }} if you need to refer to what the user just said.
-  3. Keep it under 3 lines if possible.
-  4. Auto-format specific types:
-    - Arrays: {{ response.list | list }}
-    - Prices/Money: {{ response.price | currency }}
-    - Dates: {{ response.date | date }}
-  5. DO NOT include "Here is the template:" or any conversational filler. Just the template string.
+  ====================
+  TEMPLATE RULES
+  ====================
+  1. Always use {{ response.* }} to access API data.
+  2. If the API response is wrapped in a single root object, prefer:
+    → {{ response.data.fieldName }}
+  3. If the API response is flat, use:
+    → {{ response.fieldName }}
+
+  ====================
+  FORMATTERS
+  ====================
+  Use formatters when appropriate.
+
+  • Currency:
+    - If the field name contains "usd", use:
+      {{ response.price_usd | currency:usd }}
+    - If the field name contains "myr", use:
+      {{ response.price_myr | currency:myr }}
+    - If currency is unclear, default to:
+      {{ response.price | currency }}
+
+  • Numbers:
+    {{ response.value | number }}
+
+  • Math:
+    - Multiply: {{ response.val | times: 10 }}
+    - Divide: {{ response.val | divided_by: 10 }}
+    - Add: {{ response.val | plus: 5 }}
+    - Subtract: {{ response.val | minus: 2 }}
+
+  • Lists:
+    {{ response.items | list }}
+
+  • Dates & Time (IMPORTANT):
+    - UNIX timestamp (seconds, DATE ONLY):
+      {{ response.time | date_unix }}
+    - UNIX timestamp (seconds, DATE + TIME):
+      {{ response.time | date_time_unix }}
+    - JS timestamp (milliseconds):
+      {{ response.time | date }}
+
+    👉 Use **date_time_unix** when showing "last updated", "updated at", or any real-time data.
+    👉 Use **date_unix** only when time is NOT important.
+
+  • Text:
+    - Uppercase: {{ response.symbol | upper }}
+    - Lowercase: {{ response.symbol | lower }}
+
+  ====================
+  FORMATTING & STYLE (CRITICAL)
+  ====================
+  - HEADERS: Use *Bold* and Emojis for titles (e.g., 📈 *Price Update*).
+  - LABELS: Bold keys for readability (e.g., *USD:* {{ response.usd }}).
+  - SPACING: Always leave an empty line between header, body, and lists.
+  - LISTS: Use hyphens (-) or bullet points (•).
+  - ID/CODES: Use monospaced font for IDs if applicable (e.g., \`{{ response.id }}\`).
+
+  ====================
+  CONSTRAINTS
+  ====================
+  - Keep the message concise.
+  - Use {{ lastAnswer.value }} only if it adds clarity.
+  - NEVER invent fields.
+  - NEVER guess keys.
+  - NEVER use dynamic keys.
+  - NEVER explain the template.
+  - Output ONLY the final template text.
   `.trim();
 
   const userContext = `
@@ -602,6 +773,7 @@ export async function runTest({ endpointId, sampleVars = {}, templateId }) {
         endpointId,
         status: result.status,
         duration: result.duration,
+        responsePayload: result.payload,
       },
     });
 
@@ -615,20 +787,34 @@ export async function runTest({ endpointId, sampleVars = {}, templateId }) {
       },
     };
   } catch (error) {
+    const normalizedError = normalizeApiError({
+      err: error,
+      status: error?.status ?? 502,
+      api: { apiId },
+      step: {},
+    });
+
     appendLog({
       id: `${ts}-${Math.random().toString(36).slice(2, 6)}`,
       ts,
       level: "error",
       source: "integration:test",
-      message: error.message,
-      meta: { endpointId, sampleVars },
+      message: normalizedError.userMessage,
+      error: normalizedError.userMessage,
+      meta: {
+        endpointId,
+        sampleVars,
+        normalizedError,
+        status: error?.status ?? 500,
+      },
     });
 
     return {
       ok: false,
-      status: 500,
+      status: error?.status ?? 500,
       timeMs: 0,
-      errorMessage: error.message || "Failed to execute test",
+      errorMessage:
+        normalizedError.userMessage || error.message || "Failed to execute test",
     };
   }
 }

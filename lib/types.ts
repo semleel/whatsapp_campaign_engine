@@ -13,19 +13,20 @@ export type ApiAuthType = "none" | "bearer_header" | "api_key_header";
 
 // api table
 export type EndpointConfig = {
-    apiid?: number; // DB: api_id (PK)
-    name: string; // DB: name
-    description: string | null; // DB: description
-    response_template?: string | null; // DB: response_template
-    method: HttpMethod | string; // DB: method (e.g. 'GET', 'POST')
-    url: string; // DB: url (full https://... path)
-    auth_type: ApiAuthType; // DB: auth_type
-    auth_header_name: string | null; // DB: auth_header_name
-    auth_token: string | null; // DB: auth_token
-    is_active: boolean; // DB: is_active
-    lastupdated?: string | null; // DB: last_updated (ISO string)
-    headers_json?: { key: string; value: string }[]; // DB: headers_json
-    body_template?: string | null; // DB: body_template (stringified JSON or raw body)
+    apiid?: number;
+    name: string;
+    description: string | null;
+    method: HttpMethod;
+    url: string;
+    auth_type: ApiAuthType;
+    auth_header_name: string | null;
+    auth_token: string | null;
+    is_active: boolean;
+    headers_json?: { key: string; value: string }[];
+    body_template?: string | null;
+    response_template?: string | null;
+    lastupdated?: string | null;
+    input_hint?: string | null;
 };
 
 // api_log table (for viewing logs in UI, if you want)
@@ -35,6 +36,8 @@ export interface ApiLogEntry {
     campaignid: number | null;
     campaignsessionid: number | null;
     contactid: number | null;
+    api_name?: string | null;
+    api_url?: string | null;
 
     campaignname?: string | null;
     contact_phone?: string | null;
@@ -43,6 +46,9 @@ export interface ApiLogEntry {
     request_body: string | null;
     response_body: string | null;
     response_code: number | null;
+
+    system_error_message?: string | null;
+    response_payload?: unknown;
 
     status: string | null; // e.g. 'success', 'error', 'timeout'
     error_message: string | null;
@@ -159,7 +165,9 @@ export interface LogEntry {
 // Simple test runner for endpoints (frontend tool, not DB)
 export interface TestRunPayload {
     endpointId: string | number;
-    sampleVars?: Record<string, unknown>;
+    sampleVars?: {
+        lastAnswer?: { value: string };
+    };
 }
 
 export interface TestRunResult {
@@ -225,6 +233,9 @@ export interface CampaignListItem {
     camstatusid: number | null;
     start_at?: string | null;
     end_at?: string | null;
+    hasKeyword?: boolean;
+    hasSteps?: boolean;
+    hasDisabledApi?: boolean;
 }
 
 export interface CampaignDetail {

@@ -24,14 +24,15 @@ export default function TestRunner({
   const [varsText, setVarsText] = useState(
     JSON.stringify(
       {
-        lastAnswer: { user_input_raw: "INTJ" },
+        lastAnswer: { user_input_raw: "USER_ANSWER" },
         contact: { phonenum: "60123456789" },
-        campaign: { code: "RAYA2025" },
+        campaign: { code: "CAMPAIGN_KEYWORD" },
       },
       null,
       2
     )
   );
+  const [simulatedInput, setSimulatedInput] = useState("USER_ANSWER");
   const [result, setResult] = useState<TestRunResult | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -217,12 +218,47 @@ export default function TestRunner({
               </div>
             </div>
 
+            <label className="space-y-1 text-sm">
+              <span>Simulated user answer</span>
+              <input
+                className="w-full rounded-md border bg-card px-3 py-2 text-sm"
+                placeholder="Type what a user would send"
+                value={simulatedInput}
+                onChange={(event) => {
+                  setSimulatedInput(event.target.value);
+                  try {
+                    const parsed = varsText ? JSON.parse(varsText) : {};
+                    const next = {
+                      ...parsed,
+                      lastAnswer: {
+                        ...(parsed.lastAnswer || {}),
+                        user_input_raw: event.target.value,
+                      },
+                    };
+                    setVarsText(JSON.stringify(next, null, 2));
+                  } catch {
+                    // ignore invalid JSON, let user fix manually
+                  }
+                }}
+              />
+            </label>
+
             <textarea
               className="h-48 w-full rounded-md border bg-card px-3 py-2 font-mono text-xs"
               value={varsText}
               onChange={(e) => {
                 setVarsText(e.target.value);
                 setVarsInfo(null);
+                try {
+                  const parsed = e.target.value ? JSON.parse(e.target.value) : {};
+                  const nextSimulated =
+                    typeof parsed?.lastAnswer?.user_input_raw === "string"
+                      ? parsed.lastAnswer.user_input_raw
+                      : "";
+                  setSimulatedInput(nextSimulated);
+                } catch {
+                  // ignore invalid JSON, let user fix manually
+                }
               }}
             />
 
