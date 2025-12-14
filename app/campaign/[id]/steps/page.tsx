@@ -34,26 +34,39 @@ import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 
 type TemplateListItem = {
   content_id: number;
-  contentid?: number;
   title: string;
   type: string | null;
   lang: string | null;
   status: string | null;
-  media_url?: string | null;
   description?: string | null;
   body?: string | null;
   placeholders?: Record<string, unknown> | null;
+  media_url?: string | null;
   is_deleted?: boolean | null;
-  isdeleted?: boolean | null;
   expires_at?: string | null;
-  expiresat?: string | null;
+};
+
+type TemplateMenuOption = {
+  title?: string | null;
+  label?: string | null;
+  name?: string | null;
+};
+
+type TemplateMenuSection = {
+  title?: string | null;
+  options?: TemplateMenuOption[];
+  rows?: TemplateMenuOption[];
 };
 
 type StepFormState = CampaignStepWithChoices & {
   message_mode?: "custom" | "template";
   local_id: string;
   client_id: number;
+  choice_mode?: "branch" | "sequential";
 };
+
+const resolveChoiceMode = (step?: StepFormState | null): "branch" | "sequential" =>
+  step?.choice_mode === "sequential" ? "sequential" : "branch";
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
 
@@ -136,16 +149,15 @@ function renderFormattedLines(text?: string | null, placeholder = "No prompt yet
   });
 }
 
-const getTemplateId = (template: TemplateListItem) =>
-  template.content_id ?? template.contentid ?? null;
+const getTemplateId = (template: TemplateListItem) => template.content_id ?? null;
 
 const isTemplateActiveForSteps = (template: TemplateListItem) => {
   const normalize = (val?: string | null) =>
     (val || "")
       .toLowerCase()
       .replace(/[\s-]+/g, "_");
-  const isDeleted = (template.is_deleted ?? template.isdeleted) === true;
-  const expiresRaw = template.expires_at ?? template.expiresat;
+  const isDeleted = template.is_deleted === true;
+  const expiresRaw = template.expires_at;
   const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
   const isExpired =
     expiresAt && !Number.isNaN(expiresAt.getTime()) ? expiresAt.getTime() < Date.now() : false;
@@ -177,6 +189,7 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
   template_source_id: null,
   message_mode: "custom",
   campaign_step_choice: [],
+  choice_mode: "branch",
 });
 
 type SortableStepRowProps = {
@@ -298,6 +311,7 @@ export default function CampaignStepsPage() {
         client_id: ((step as any).client_id ?? step.step_id) ?? -(index + 1),
         step_number: index + 1,
         campaign_step_choice: step.campaign_step_choice || [],
+        choice_mode: step.choice_mode === "sequential" ? "sequential" : "branch",
         input_type: inputType,
         expected_input: expected,
         template: (step as any).template ?? null,
@@ -317,11 +331,7 @@ export default function CampaignStepsPage() {
           Api.listApis(),
           (Api as any).listTemplates?.({}) ?? Api.listTemplates?.({}),
         ]);
-        setCampaignName(
-          (stepsRes.campaign as any).campaignname ||
-          (stepsRes.campaign as any).campaign_name ||
-          ""
-        );
+        setCampaignName((stepsRes.campaign as any).campaign_name || "");
         const mapped = mapStepsForUi(stepsRes.steps || []);
         setSteps(mapped);
         setExpandedIndex(mapped.length ? 0 : null);
@@ -444,7 +454,7 @@ export default function CampaignStepsPage() {
       if (!tmpl) return;
 
       const body: string = tmpl.body ?? "";
-      const mediaUrl: string | null = tmpl.media_url ?? tmpl.mediaurl ?? null;
+      const mediaUrl: string | null = tmpl.media_url ?? null;
       const buttons = (tmpl as any).buttons || (tmpl as any).menu;
       const normalizedType = ((tmpl as any).type || "").toString().toLowerCase();
 
@@ -504,7 +514,7 @@ export default function CampaignStepsPage() {
               return {
                 ...s,
                 message_mode: "template",
-                template_source_id: tmpl.content_id ?? tmpl.contentid ?? templateId,
+                template_source_id: tmpl.content_id ?? templateId,
                 prompt_text: body,
                 media_url: mediaUrl ?? null,
                 action_type: nextAction,
@@ -607,12 +617,22 @@ export default function CampaignStepsPage() {
         }
       }
       if (step.action_type === "choice") {
-        const badChoice = (step.campaign_step_choice || []).find(
-          (c) => c.next_step_id && !idSet.has(c.next_step_id)
-        );
-        if (badChoice) {
-          setValidationError("Each choice must jump to a valid step or be left blank.");
-          return;
+        const mode = resolveChoiceMode(step);
+        if (mode === "sequential") {
+          if (!step.next_step_id || !idSet.has(step.next_step_id)) {
+            setValidationError(
+              "This step must have a Next Step configured when using “Continue to next step”."
+            );
+            return;
+          }
+        } else {
+          const badChoice = (step.campaign_step_choice || []).find(
+            (c) => c.next_step_id && !idSet.has(c.next_step_id)
+          );
+          if (badChoice) {
+            setValidationError("Each choice must jump to a valid step or be left blank.");
+            return;
+          }
         }
       }
     }
@@ -628,6 +648,7 @@ export default function CampaignStepsPage() {
           failure_step_id: s.action_type === "api" ? s.failure_step_id ?? null : null,
           is_end_step: !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
+          choice_mode: s.action_type === "choice" ? (s.choice_mode ?? "branch") : undefined,
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
@@ -654,7 +675,9 @@ export default function CampaignStepsPage() {
   const activeStepNumber = activeStep?.step_number ?? null;
   const nextLabel = (() => {
     if (!activeStep) return "";
-    if (activeStep.action_type === "choice") return "Per choice";
+    if (activeStep.action_type === "choice") {
+      return resolveChoiceMode(activeStep) === "sequential" ? "Next step" : "Per choice";
+    }
     if (activeStep.is_end_step) return "END";
     const target = findStepByRef(activeStep.next_step_id);
     return formatStepLabel(target) ?? "Jump (missing target)";
@@ -667,6 +690,16 @@ export default function CampaignStepsPage() {
         return formatStepLabel(target) ?? "None";
       })()
       : "-";
+  const activeChoiceMode = resolveChoiceMode(activeStep);
+  const templateMenu =
+    activeStep?.template_source_id &&
+    activeStep?.template?.placeholders &&
+    typeof activeStep.template.placeholders === "object"
+      ? ((activeStep.template.placeholders as any).menu as { sections?: TemplateMenuSection[] } | null)
+      : null;
+  const templateMenuSections = Array.isArray(templateMenu?.sections)
+    ? (templateMenu.sections as TemplateMenuSection[])
+    : [];
   const activeApi =
     activeStep?.api_id && typeof activeStep.api_id === "number"
       ? apis.find((api) => api.api_id === activeStep.api_id) ?? null
@@ -765,6 +798,23 @@ export default function CampaignStepsPage() {
                           const isApiInactive =
                             apiForStep && apiForStep.is_active === false;
 
+                          const choiceMode = resolveChoiceMode(s);
+                          const isSequentialChoice = s.action_type === "choice" && choiceMode === "sequential";
+                          const targetSteps = steps.filter((st) => st.local_id !== s.local_id);
+                          const handleChoiceModeChange = (mode: "branch" | "sequential") => {
+                            const patch: Partial<StepFormState> = { choice_mode: mode };
+                            if (mode === "sequential") {
+                              patch.is_end_step = false;
+                              if (!s.next_step_id && targetSteps.length) {
+                                const candidate = targetSteps[0];
+                                patch.next_step_id = candidate.step_id || candidate.client_id || null;
+                              }
+                            } else {
+                              patch.next_step_id = null;
+                            }
+                            updateStep(idx, patch);
+                          };
+
                           return (
                             <SortableStepRow
                               key={s.local_id}
@@ -806,6 +856,7 @@ export default function CampaignStepsPage() {
                                             if (nextAction === "choice") {
                                               extra.next_step_id = null;
                                               extra.is_end_step = false;
+                                              extra.choice_mode = "branch";
                                             }
 
                                             updateStep(idx, {
@@ -841,7 +892,7 @@ export default function CampaignStepsPage() {
                                       </label>
 
                                       {/* Step-level jump configuration (NOT for choice steps) */}
-                                      {s.action_type !== "choice" && (
+                                      {s.action_type !== "choice" ? (
                                         <div className="space-y-2 text-sm font-medium md:col-span-2">
                                           <span>On success</span>
                                           <div className="space-y-2 text-sm font-normal text-muted-foreground">
@@ -916,7 +967,40 @@ export default function CampaignStepsPage() {
                                             </label>
                                           </div>
                                         </div>
-                                      )}
+                                      ) : isSequentialChoice ? (
+                                        <div className="space-y-2 text-sm font-medium md:col-span-2">
+                                          <span>On success</span>
+                                          <select
+                                            className="w-full rounded border px-3 py-2"
+                                            value={s.next_step_id ?? ""}
+                                            onChange={(e) => {
+                                              const val = e.target.value ? Number(e.target.value) : null;
+                                              updateStep(idx, {
+                                                next_step_id: val,
+                                                is_end_step: false,
+                                              });
+                                            }}
+                                            required
+                                          >
+                                            <option value="">Select a target step</option>
+                                            {steps
+                                              .filter((st) => st.local_id !== s.local_id)
+                                              .map((st) => {
+                                                const value = st.step_id || st.client_id;
+                                                const labelText =
+                                                  st.prompt_text?.trim() || st.step_code || "Untitled step";
+                                                return (
+                                                  <option key={`${st.local_id}-target`} value={value}>
+                                                    {`Step ${st.step_number} – ${labelText}`}
+                                                  </option>
+                                                );
+                                              })}
+                                          </select>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Routing is handled by the step’s Next Step setting.
+                                          </p>
+                                        </div>
+                                      ) : null}
                                     </div>
 
                                     <div className="space-y-2 rounded-md border px-3 py-2">
@@ -1164,104 +1248,178 @@ export default function CampaignStepsPage() {
                                     )}
 
                                     {s.action_type === "choice" && (
-                                      <div className="space-y-3 border-t pt-3">
-                                        <div className="flex items-center justify-between">
-                                          <h4 className="text-sm font-semibold">Choices</h4>
-                                          <button
-                                            type="button"
-                                            onClick={() => addChoice(idx)}
-                                            className="text-xs rounded border px-2 py-1 hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
-                                            disabled={(s.campaign_step_choice?.length ?? 0) >= 3}
-                                          >
-                                            Add choice
-                                          </button>
-                                        </div>
-                                        <div className="space-y-3">
-                                          {s.campaign_step_choice?.length ? (
-                                            s.campaign_step_choice.map((choice, cidx) => (
-                                              <div key={choice.choice_id || cidx} className="rounded border p-3 space-y-2">
-                                                <div className="flex justify-end">
-                                                  <button
-                                                    type="button"
-                                                    onClick={() => removeChoice(idx, cidx)}
-                                                    className="text-xs text-rose-600 hover:text-rose-700"
-                                                  >
-                                                    Remove
-                                                  </button>
-                                                </div>
-                                                <div className="grid gap-2 md:grid-cols-2">
-                                                  <label className="text-sm font-medium space-y-1">
-                                                    <span>Code</span>
-                                                    <input
-                                                      type="text"
-                                                      value={choice.choice_code || ""}
-                                                      onChange={(e) =>
-                                                        updateChoice(idx, cidx, { choice_code: e.target.value })
-                                                      }
-                                                      className="w-full rounded border px-3 py-2"
-                                                      placeholder="e.g. YES"
-                                                    />
-                                                  </label>
-                                                  <label className="text-sm font-medium space-y-1">
-                                                    <span>Label</span>
-                                                    <input
-                                                      type="text"
-                                                      value={choice.label || ""}
-                                                      onChange={(e) =>
-                                                        updateChoice(idx, cidx, { label: e.target.value })
-                                                      }
-                                                      className="w-full rounded border px-3 py-2"
-                                                      placeholder="Displayed to user"
-                                                    />
-                                                  </label>
-                                                </div>
-                                                <div className="grid gap-2 md:grid-cols-2 items-center">
-                                                  <label className="text-sm font-medium space-y-1">
-                                                    <span>Next step (within this campaign)</span>
-                                                    <select
-                                                      className="w-full rounded border px-3 py-2"
-                                                      value={choice.next_step_id ?? ""}
-                                                      onChange={(e) =>
-                                                        updateChoice(idx, cidx, {
-                                                          next_step_id: e.target.value ? Number(e.target.value) : null,
-                                                        })
-                                                      }
-                                                    >
-                                                      <option value="">Select a target step</option>
-                                                      {steps
-                                                        .filter((st) => st.local_id !== s.local_id)
-                                                        .map((st) => {
-                                                          const value = st.step_id || st.client_id;
-                                                          const labelText =
-                                                            st.prompt_text?.trim() ||
-                                                            st.step_code ||
-                                                            "Untitled step";
-                                                          return (
-                                                            <option key={`${st.local_id}-choice-target`} value={value}>
-                                                              {`Step ${st.step_number} – ${labelText}`}
-                                                            </option>
-                                                          );
-                                                        })}
-                                                    </select>
-                                                  </label>
-                                                  <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
-                                                    <input
-                                                      type="checkbox"
-                                                      checked={!!choice.is_correct}
-                                                      onChange={(e) =>
-                                                        updateChoice(idx, cidx, { is_correct: e.target.checked })
-                                                      }
-                                                      className="h-4 w-4"
-                                                    />
-                                                    Mark as correct
-                                                  </label>
-                                                </div>
+                                      <div className="space-y-4 border-t pt-3">
+                                        <div className="space-y-3 rounded-lg border bg-muted/5 p-3 text-sm">
+                                          <div className="font-semibold">Choice behavior</div>
+                                          <div className="grid gap-2 text-left text-sm">
+                                            <label
+                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
+                                              htmlFor={`choice-mode-branch-${idx}`}
+                                            >
+                                              <input
+                                                id={`choice-mode-branch-${idx}`}
+                                                type="radio"
+                                                name={`choice-mode-${idx}`}
+                                                value="branch"
+                                                checked={choiceMode === "branch"}
+                                                onChange={() => handleChoiceModeChange("branch")}
+                                                className="mt-1 h-4 w-4"
+                                              />
+                                              <div>
+                                                <span className="font-semibold">Branch by selected option</span>
+                                                <p className="text-xs text-muted-foreground">
+                                                  Each option can route to a different step.
+                                                </p>
                                               </div>
-                                            ))
-                                          ) : (
-                                            <p className="text-xs text-muted-foreground">No choices yet.</p>
-                                          )}
+                                            </label>
+                                            <label
+                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
+                                              htmlFor={`choice-mode-seq-${idx}`}
+                                            >
+                                              <input
+                                                id={`choice-mode-seq-${idx}`}
+                                                type="radio"
+                                                name={`choice-mode-${idx}`}
+                                                value="sequential"
+                                                checked={choiceMode === "sequential"}
+                                                onChange={() => handleChoiceModeChange("sequential")}
+                                                className="mt-1 h-4 w-4"
+                                              />
+                                              <div>
+                                                <span className="font-semibold">Continue to next step</span>
+                                                <p className="text-xs text-muted-foreground">
+                                                  User selection is recorded, then flow continues automatically.
+                                                </p>
+                                              </div>
+                                            </label>
+                                          </div>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            This controls how the campaign proceeds after the user makes a selection.
+                                          </p>
                                         </div>
+                                        {choiceMode === "branch" ? (
+                                          <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                              <h4 className="text-sm font-semibold">Choices</h4>
+                                              <button
+                                                type="button"
+                                                onClick={() => addChoice(idx)}
+                                                className="text-xs rounded border px-2 py-1 hover:bg-muted disabled:opacity-60 disabled:cursor-not-allowed"
+                                                disabled={(s.campaign_step_choice?.length ?? 0) >= 3}
+                                              >
+                                                Add choice
+                                              </button>
+                                            </div>
+                                            <div className="space-y-3">
+                                              {s.campaign_step_choice?.length ? (
+                                                s.campaign_step_choice.map((choice, cidx) => (
+                                                  <div
+                                                    key={choice.choice_id || cidx}
+                                                    className="rounded border p-3 space-y-2"
+                                                  >
+                                                    <div className="flex justify-end">
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => removeChoice(idx, cidx)}
+                                                        className="text-xs text-rose-600 hover:text-rose-700"
+                                                      >
+                                                        Remove
+                                                      </button>
+                                                    </div>
+                                                    <div className="grid gap-2 md:grid-cols-2">
+                                                      <label className="text-sm font-medium space-y-1">
+                                                        <span>Code</span>
+                                                        <input
+                                                          type="text"
+                                                          value={choice.choice_code || ""}
+                                                          onChange={(e) =>
+                                                            updateChoice(idx, cidx, { choice_code: e.target.value })
+                                                          }
+                                                          className="w-full rounded border px-3 py-2"
+                                                          placeholder="e.g. YES"
+                                                        />
+                                                      </label>
+                                                      <label className="text-sm font-medium space-y-1">
+                                                        <span>Label</span>
+                                                        <input
+                                                          type="text"
+                                                          value={choice.label || ""}
+                                                          onChange={(e) =>
+                                                            updateChoice(idx, cidx, { label: e.target.value })
+                                                          }
+                                                          className="w-full rounded border px-3 py-2"
+                                                          placeholder="Displayed to user"
+                                                        />
+                                                      </label>
+                                                    </div>
+                                                    <div className="grid gap-2 md:grid-cols-2 items-center">
+                                                      <label className="text-sm font-medium space-y-1">
+                                                        <span>Next step (within this campaign)</span>
+                                                        <select
+                                                          className={`w-full rounded border px-3 py-2 ${
+                                                            isSequentialChoice
+                                                              ? "cursor-not-allowed bg-muted/40 text-muted-foreground"
+                                                              : ""
+                                                          }`}
+                                                          value={choice.next_step_id ?? ""}
+                                                          onChange={(e) =>
+                                                            updateChoice(idx, cidx, {
+                                                              next_step_id: e.target.value ? Number(e.target.value) : null,
+                                                            })
+                                                          }
+                                                          disabled={isSequentialChoice}
+                                                          aria-disabled={isSequentialChoice}
+                                                        >
+                                                          <option value="">Select a target step</option>
+                                                          {steps
+                                                            .filter((st) => st.local_id !== s.local_id)
+                                                            .map((st) => {
+                                                              const value = st.step_id || st.client_id;
+                                                              const labelText =
+                                                                st.prompt_text?.trim() ||
+                                                                st.step_code ||
+                                                                "Untitled step";
+                                                              return (
+                                                                <option
+                                                                  key={`${st.local_id}-choice-target`}
+                                                                  value={value}
+                                                                >
+                                                                  {`Step ${st.step_number} – ${labelText}`}
+                                                                </option>
+                                                              );
+                                                            })}
+                                                        </select>
+                                                      </label>
+                                                      <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
+                                                        <input
+                                                          type="checkbox"
+                                                          checked={!!choice.is_correct}
+                                                          onChange={(e) =>
+                                                            updateChoice(idx, cidx, { is_correct: e.target.checked })
+                                                          }
+                                                          className="h-4 w-4"
+                                                        />
+                                                        Mark as correct
+                                                      </label>
+                                                    </div>
+                                                  </div>
+                                                ))
+                                              ) : (
+                                                <p className="text-xs text-muted-foreground">No choices yet.</p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
+                                            <p className="font-semibold">
+                                              Choices are defined by the template or user input.
+                                            </p>
+                                            <p>
+                                              In sequential mode, the flow always continues to the configured next
+                                              step.
+                                            </p>
+                                          </div>
+                                        )}
                                       </div>
                                     )}
 
@@ -1305,7 +1463,9 @@ export default function CampaignStepsPage() {
                                 </td>
                                 <td className="px-3 py-2 text-muted-foreground">
                                   {s.action_type === "choice"
-                                    ? "Per choice"
+                                    ? resolveChoiceMode(s) === "sequential"
+                                      ? "Next step"
+                                      : "Per choice"
                                     : s.is_end_step
                                       ? "END"
                                       : (() => {
@@ -1442,19 +1602,64 @@ export default function CampaignStepsPage() {
               </div>
 
               {activeStep.action_type === "choice" && (
-                <div className="space-y-1">
-                  {(activeStep.campaign_step_choice || []).length ? (
-                    (activeStep.campaign_step_choice || []).map((c, idx) => (
-                      <button
-                        key={`${c.choice_id || idx}`}
-                        type="button"
-                        className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
-                      >
-                        {c.label || c.choice_code || `Option ${idx + 1}`}
-                      </button>
-                    ))
+                <div className="space-y-2">
+                  {activeChoiceMode === "branch" ? (
+                    (activeStep.campaign_step_choice || []).length ? (
+                      (activeStep.campaign_step_choice || []).map((c, idx) => (
+                        <button
+                          key={`${c.choice_id || idx}`}
+                          type="button"
+                          className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
+                        >
+                          {c.label || c.choice_code || `Option ${idx + 1}`}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-xs text-muted-foreground">Choices will appear here.</p>
+                    )
                   ) : (
-                    <p className="text-xs text-muted-foreground">Choices will appear here.</p>
+                    <>
+                      {templateMenuSections.length ? (
+                        <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-2 text-xs text-muted-foreground">
+                      {templateMenuSections.map((section, secIdx) => {
+                        const sectionTitle = (section?.title || "").trim();
+                        const rows: TemplateMenuOption[] = Array.isArray(section?.options)
+                          ? section.options
+                          : Array.isArray(section?.rows)
+                            ? section.rows
+                            : [];
+                        return (
+                          <div key={`menu-section-${secIdx}`} className="space-y-1">
+                            <p className="font-semibold text-foreground">
+                                  {sectionTitle ? `[ ${sectionTitle} ]` : `[ Section ${secIdx + 1} ]`}
+                                </p>
+                                <ul className="list-disc space-y-1 pl-4 text-[11px] font-medium text-foreground">
+                                  {rows.length
+                                    ? rows.map((row: TemplateMenuOption, rowIdx: number) => {
+                                        const label =
+                                          (row?.title || row?.label || row?.name || "").trim() ||
+                                          `Option ${rowIdx + 1}`;
+                                        return <li key={`menu-row-${secIdx}-${rowIdx}`}>{label}</li>;
+                                      })
+                                    : (
+                                      <li className="text-[11px] text-muted-foreground">
+                                        No options defined.
+                                      </li>
+                                    )}
+                                </ul>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Choices are defined by the template or user input.
+                        </p>
+                      )}
+                      <p className="text-[11px] italic text-muted-foreground">
+                        User selection will be recorded and the flow continues automatically.
+                      </p>
+                    </>
                   )}
                 </div>
               )}

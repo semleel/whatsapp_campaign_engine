@@ -275,6 +275,7 @@ export type ActionType = "message" | "choice" | "input" | "api" | "end";
 export type ExpectedInput = "none" | "choice" | "text" | "number" | "email" | "location";
 export type InputType = "text" | "number" | "email" | "location";
 export type ValidationMode = "none" | "numeric" | "email";
+export type ChoiceMode = "branch" | "sequential";
 
 export type CampaignStep = {
     step_id: number;
@@ -312,6 +313,7 @@ export type CampaignStepWithChoices = CampaignStep & {
     input_type?: InputType | null;
     template?: TemplateDetail | null;
     validation_mode?: ValidationMode;
+    choice_mode?: ChoiceMode;
     campaign_step_choice: CampaignStepChoice[];
 };
 

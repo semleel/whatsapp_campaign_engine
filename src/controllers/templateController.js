@@ -79,8 +79,14 @@ const fallbackCreate = async (data) => {
   const values = [];
   Object.entries(data).forEach(([key, val], idx) => {
     cols.push(key);
-    placeholders.push(`$${idx + 1}`);
-    values.push(normalizeForSql(val));
+
+    if (key === "placeholders") {
+      placeholders.push(`$${idx + 1}::jsonb`);
+      values.push(val === null ? null : JSON.stringify(val));
+    } else {
+      placeholders.push(`$${idx + 1}`);
+      values.push(normalizeForSql(val));
+    }
   });
   // eslint-disable-next-line no-restricted-syntax
   const rows = await prisma.$queryRawUnsafe(
@@ -96,23 +102,29 @@ const fallbackCreate = async (data) => {
 const fallbackUpdate = async (id, data) => {
   const sets = [];
   const values = [];
+
   Object.entries(data).forEach(([key, val], idx) => {
-    sets.push(`${key} = $${idx + 1}`);
-    values.push(normalizeForSql(val));
+    if (key === "placeholders") {
+      sets.push(`${key} = $${idx + 1}::jsonb`);
+      values.push(val === null ? null : JSON.stringify(val));
+    } else {
+      sets.push(`${key} = $${idx + 1}`);
+      values.push(normalizeForSql(val));
+    }
   });
+
   values.push(id);
 
-  // eslint-disable-next-line no-restricted-syntax
-  const rows = await prisma.$queryRawUnsafe(
+  return prisma.$queryRawUnsafe(
     `UPDATE content
      SET ${sets.join(", ")}
      WHERE content_id = $${values.length}
      RETURNING content_id, title, type, status, lang, body, media_url, placeholders,
                created_at, updated_at, expires_at, is_deleted`,
-    ...values,
+    ...values
   );
-  return rows?.[0] || null;
 };
+
 
 const ensureJsonOrNull = (value) => {
   if (value == null || value === "") return null;
@@ -157,12 +169,12 @@ export const mapContentToResponse = (content) => {
   const parsedPlaceholders =
     typeof content.placeholders === "string"
       ? (() => {
-          try {
-            return JSON.parse(content.placeholders);
-          } catch {
-            return content.placeholders;
-          }
-        })()
+        try {
+          return JSON.parse(content.placeholders);
+        } catch {
+          return content.placeholders;
+        }
+      })()
       : content.placeholders ?? null;
 
   return {
@@ -208,8 +220,8 @@ const normalizeTemplatePayload = (body = {}) => {
     bodyProvided && typeof body.body === "string"
       ? body.body
       : bodyProvided
-      ? ""
-      : undefined;
+        ? ""
+        : undefined;
   const expiresRaw = body.expires_at ?? body.expiresAt ?? body.expiresat;
 
   return {
@@ -660,10 +672,10 @@ export async function getTemplatesOverview(_req, res) {
         const id = Number(row.template_source_id ?? row.template_sourceid ?? row.content_id);
         const usageCount = Number(
           row._count?._all ??
-            row._count?.template_source_id ??
-            row.usage_count ??
-            row.count ??
-            0,
+          row._count?.template_source_id ??
+          row.usage_count ??
+          row.count ??
+          0,
         );
         if (Number.isNaN(id) || !templateMap.has(id)) return null;
         const tpl = templateMap.get(id);
