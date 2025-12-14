@@ -147,6 +147,7 @@ model campaign_step {
   error_message                                                         String?
   media_url                                                             String?
   template_source_id                                                    Int?
+  choice_mode                                                           String                 @default("branch") @db.VarChar(20)
   campaign_response                                                     campaign_response[]
   campaign_session                                                      campaign_session[]
   api                                                                   api?                   @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)

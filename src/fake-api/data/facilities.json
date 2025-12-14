@@ -1,0 +1,17 @@
+{
+    "Library": [
+        "Discussion Room",
+        "Individual Study Room"
+    ],
+    "Club House": [
+        "Gym",
+        "Swimming Pool",
+        "Snooker",
+        "Squash"
+    ],
+    "Sports Complex": [
+        "Badminton",
+        "Pickleball",
+        "Tennis"
+    ]
+}

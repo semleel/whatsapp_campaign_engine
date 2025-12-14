@@ -5,11 +5,12 @@ import { dispatchEndpoint } from "../integrationService.js";
 import { ensureSessionStep, resolveStepContent, isLanguageSelectorStep, updateContactLanguageForSession } from "./session.js";
 import { SUPPORTED_LANG_CODES } from "./constants.js";
 import {
-  buildChoiceMessage,
+  buildChoicePromptMessage,
   withStepContext,
   buildMediaWaPayload,
   extractChoiceCodeFromPayload,
   extractLocationFromPayload,
+  extractInteractiveTitleFromPayload,
 } from "./helpers.js";
 import { normalizeApiError } from "./apiErrorHelper.js";
 import { log, warn, error } from "../../utils/logger.js";
@@ -33,6 +34,18 @@ export async function runChoiceStep({
 
   let matchedChoice = null;
   let selectedCode = null;
+  const placeholders =
+    contentContext?.placeholders && typeof contentContext.placeholders === "object"
+      ? contentContext.placeholders
+      : null;
+  const interactiveType =
+    (placeholders?.interactiveType || "").toString().toLowerCase();
+  const hasMenuTemplate = interactiveType === "menu" && !!placeholders?.menu;
+  const normalizedChoiceMode = (step.choice_mode || "branch").toString().toLowerCase();
+  const isSequentialMode = normalizedChoiceMode === "sequential";
+  const interactiveTitle = extractInteractiveTitleFromPayload(payload) || "";
+  const rawResponseText = incomingText || interactiveTitle || "";
+  const normalizedResponseText = rawResponseText.trim();
 
   if (type === "button" || type === "list") {
     selectedCode = extractChoiceCodeFromPayload(payload);
@@ -58,31 +71,41 @@ export async function runChoiceStep({
       }
     }
   } else {
-    const text = (incomingText || "").toLowerCase();
+    const text = rawResponseText.toLowerCase();
     matchedChoice =
       choices.find((c) => (c.choice_code || "").toLowerCase() === text) ||
       choices.find((c) => (c.label || "").trim().toLowerCase() === text);
   }
 
-  const isValid = !!matchedChoice;
+  const isValid = isSequentialMode ? normalizedResponseText.length > 0 : !!matchedChoice;
 
   await prisma.campaign_response.create({
     data: {
       session_id: session.campaign_session_id,
       campaign_id: session.campaign_id,
       step_id: step.step_id,
-      choice_id: matchedChoice ? matchedChoice.choice_id : null,
-      user_input_raw: incomingText,
+      choice_id: !isSequentialMode && matchedChoice ? matchedChoice.choice_id : null,
+      user_input_raw: rawResponseText,
       is_valid: isValid,
     },
   });
+
+  if ((type === "button" || type === "list") && normalizedResponseText) {
+    session.last_choice = {
+      value: normalizedResponseText,
+      label: normalizedResponseText,
+      source: type === "list" ? "menu" : "button",
+      template_content_id: step.template_source_id ?? null,
+    };
+  }
 
   log(
     "[ENGINE] Choice reply processed",
     JSON.stringify({
       step_id: step.step_id,
+      choiceMode: normalizedChoiceMode,
       selectedCode,
-      incomingText,
+      incomingText: rawResponseText,
       matchedChoice: matchedChoice
         ? {
           id: matchedChoice.choice_id,
@@ -98,8 +121,14 @@ export async function runChoiceStep({
     const msg =
       step.error_message ||
       "Sorry, I didn't get that. Please choose one of the options below.";
+    const rePromptMessage = buildChoicePromptMessage({
+      contact,
+      prompt: promptText,
+      choices,
+      contentContext,
+    });
     const rePrompt = withStepContext({
-      base: buildChoiceMessage(contact, promptText, choices),
+      base: rePromptMessage,
       step,
       session,
       contact,
@@ -140,12 +169,21 @@ export async function runChoiceStep({
     }
   }
 
-  const targetStepId = matchedChoice.next_step_id;
+  if (isSequentialMode && hasMenuTemplate && !step.next_step_id) {
+    const errMsg = `[ENGINE] Sequential menu step ${step.step_id} requires next_step_id`;
+    error(errMsg);
+    throw new Error(errMsg);
+  }
+
+  const targetStepId = isSequentialMode
+    ? step.next_step_id
+    : matchedChoice?.next_step_id;
 
   log(
     "[ENGINE] Choice routing",
     JSON.stringify({
       step_id: step.step_id,
+      choiceMode: normalizedChoiceMode,
       targetStepId,
       is_end: step.is_end_step,
     })
@@ -609,10 +647,15 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
           where: { step_id: current.step_id },
           orderBy: { choice_id: "asc" },
         });
-        const listMessage = buildChoiceMessage(contact, resolvedPrompt, choices);
+        const promptMessage = buildChoicePromptMessage({
+          contact,
+          prompt: resolvedPrompt,
+          choices,
+          contentContext,
+        });
         outbound.push(
           withStepContext({
-            base: listMessage,
+            base: promptMessage,
             step: current,
             session,
             contact,

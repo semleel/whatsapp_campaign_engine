@@ -1,3 +1,5 @@
+// src/services/campaignEngine/helpers.js
+
 export function inferMediaType(url, fallback = "image") {
   if (!url) return fallback;
   const lower = url.toLowerCase();
@@ -145,6 +147,105 @@ export function buildChoiceMessage(contact, prompt, choices) {
   };
 }
 
+function buildMenuRows(menuSections) {
+  if (!Array.isArray(menuSections)) return [];
+  return menuSections
+    .map((section, sectionIdx) => {
+      if (!section) return null;
+      const rows =
+        Array.isArray(section.options) && section.options.length
+          ? section.options
+              .map((opt, optionIdx) => {
+                if (!opt) return null;
+                const title = (opt.title || "").trim();
+                if (!title) return null;
+                const rowId =
+                  (opt.id && String(opt.id)) || `sec-${sectionIdx}-opt-${optionIdx + 1}`;
+                return {
+                  id: rowId,
+                  title,
+                  description:
+                    opt.description && typeof opt.description === "string"
+                      ? opt.description.trim()
+                      : undefined,
+                };
+              })
+              .filter(Boolean)
+          : [];
+      if (!rows.length) return null;
+      const sectionTitle =
+        typeof section.title === "string" ? section.title.trim() : "";
+      return {
+        title: sectionTitle || undefined,
+        rows,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function buildTemplateMenuMessage(contact, prompt, menu) {
+  const safePrompt = prompt || "Please choose an option:";
+  if (!menu || typeof menu !== "object") {
+    return {
+      to: contact.phone_num,
+      content: safePrompt,
+    };
+  }
+
+  const sections = buildMenuRows(menu.sections);
+  if (!sections.length) {
+    return {
+      to: contact.phone_num,
+      content: safePrompt,
+    };
+  }
+
+  const optionLines = sections.flatMap((section) => {
+    const sectionHeader = section.title ? [`${section.title}`] : [];
+    const rows = section.rows.map((row) =>
+      `${row.title}${row.description ? ` — ${row.description}` : ""}`
+    );
+    return [...sectionHeader, ...rows];
+  });
+  const fallbackText = `${safePrompt}\n\n${optionLines.join("\n")}`;
+
+  return {
+    to: contact.phone_num,
+    content: fallbackText,
+    waPayload: {
+      type: "interactive",
+      interactive: {
+        type: "list",
+        body: { text: safePrompt },
+        action: {
+          button: (menu.buttonLabel || "View options").trim() || "View options",
+          sections,
+        },
+      },
+    },
+  };
+}
+
+export function buildChoicePromptMessage({
+  contact,
+  prompt,
+  choices,
+  contentContext,
+}) {
+  const placeholders =
+    contentContext?.placeholders && typeof contentContext.placeholders === "object"
+      ? contentContext.placeholders
+      : null;
+  const interactiveType =
+    (placeholders?.interactiveType || "").toString().toLowerCase();
+  const isMenu = interactiveType === "menu" || !!placeholders?.menu;
+  if (isMenu && placeholders?.menu) {
+    return buildTemplateMenuMessage(contact, prompt, placeholders.menu);
+  }
+
+  return buildChoiceMessage(contact, prompt, choices);
+}
+
 export function extractChoiceCodeFromPayload(payload) {
   try {
     const entry = payload?.entry?.[0];
@@ -162,6 +263,27 @@ export function extractChoiceCodeFromPayload(payload) {
     return null;
   } catch (e) {
     console.error("[ENGINE] extractChoiceCodeFromPayload error", e);
+    return null;
+  }
+}
+
+export function extractInteractiveTitleFromPayload(payload) {
+  try {
+    const entry = payload?.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const msg = value?.messages?.[0];
+    if (!msg || msg.type !== "interactive") return null;
+    const interactive = msg.interactive;
+    if (interactive?.type === "button_reply") {
+      return interactive.button_reply?.title || null;
+    }
+    if (interactive?.type === "list_reply") {
+      return interactive.list_reply?.title || null;
+    }
+    return null;
+  } catch (e) {
+    console.error("[ENGINE] extractInteractiveTitleFromPayload error", e);
     return null;
   }
 }
