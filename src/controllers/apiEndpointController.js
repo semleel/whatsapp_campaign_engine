@@ -206,10 +206,16 @@ export async function deleteEndpoint(req, res) {
       return res.status(404).json({ error: "Endpoint not found" });
     }
 
-    await prisma.api.update({
-      where: { api_id: id },
-      data: { is_active: false, last_updated: new Date() },
-    });
+    await prisma.$transaction([
+      prisma.api_log.deleteMany({ where: { api_id: id } }),
+      prisma.campaign_step.updateMany({
+        where: { api_id: id },
+        data: { api_id: null },
+      }),
+      prisma.api.delete({
+        where: { api_id: id },
+      }),
+    ]);
     return res.json({ success: true });
   } catch (err) {
     console.error("[integration:endpoints] delete error:", err);

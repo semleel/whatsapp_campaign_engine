@@ -28,6 +28,7 @@ import type {
   CampaignStepWithChoices,
   ApiListItem,
   InputType,
+  ChoiceConfig,
 } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
@@ -63,10 +64,178 @@ type StepFormState = CampaignStepWithChoices & {
   local_id: string;
   client_id: number;
   choice_mode?: "branch" | "sequential";
+  choice_source?: "manual" | "api";
+  choice_config?: ChoiceConfig | null;
 };
 
 const resolveChoiceMode = (step?: StepFormState | null): "branch" | "sequential" =>
   step?.choice_mode === "sequential" ? "sequential" : "branch";
+
+type TemplateChoice = {
+  id?: string | number | null;
+  label: string;
+  __key?: string;
+};
+
+const normalizeChoiceLabel = (source: Record<string, any> | null | undefined, fallback: string) => {
+  const candidate =
+    source?.label ??
+    source?.text ??
+    source?.title ??
+    source?.name ??
+    source?.value ??
+    source?.choice_code ??
+    fallback;
+  const normalized =
+    candidate === null || typeof candidate === "undefined"
+      ? fallback
+      : `${candidate}`.trim();
+  return normalized || fallback;
+};
+
+const extractChoicesFromTemplate = (
+  placeholders?: Record<string, any> | null
+): TemplateChoice[] => {
+  if (!placeholders || typeof placeholders !== "object") return [];
+
+  const normalizedChoices: TemplateChoice[] = [];
+
+  const pushChoice = (choice: Record<string, any> | null | undefined) => {
+    const fallbackIndex = normalizedChoices.length + 1;
+    const id =
+      choice?.id ??
+      choice?.choice_id ??
+      choice?.code ??
+      choice?.value ??
+      choice?.name ??
+      null;
+
+    normalizedChoices.push({
+      id,
+      label: normalizeChoiceLabel(choice, `Option ${fallbackIndex}`),
+      __key: `tmpl-${id ?? fallbackIndex}`,
+    });
+  };
+
+  const buttonChoices = Array.isArray(placeholders.buttons)
+    ? placeholders.buttons
+    : Array.isArray(placeholders.choices)
+      ? placeholders.choices
+      : [];
+
+  buttonChoices.forEach(pushChoice);
+
+  const menu = placeholders.menu as { sections?: TemplateMenuSection[] } | null;
+  const menuSections: TemplateMenuSection[] = Array.isArray(menu?.sections)
+    ? menu.sections
+    : [];
+
+  menuSections.forEach((section) => {
+    const rows: TemplateMenuOption[] = Array.isArray(section?.options)
+      ? section.options
+      : Array.isArray(section?.rows)
+        ? section.rows
+        : [];
+
+    rows.forEach(pushChoice);
+  });
+
+  return normalizedChoices;
+};
+
+const createChoiceConfig = (): ChoiceConfig => ({
+  response_path: "",
+  label_field: "",
+  value_field: "",
+  next_step_map: {},
+});
+
+const ensureChoiceConfig = (config?: ChoiceConfig | null): ChoiceConfig =>
+  config ?? createChoiceConfig();
+
+const parseApiSampleResponse = (template?: string | null) => {
+  if (!template) return null;
+  try {
+    return JSON.parse(template);
+  } catch {
+    return null;
+  }
+};
+
+const resolveApiPathValue = (data: unknown, path?: string | null) => {
+  if (!path) return data;
+  const segments = path
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  let current = data;
+  for (const segment of segments) {
+    if (current && typeof current === "object") {
+      current = (current as Record<string, any>)[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+};
+
+const collectResponseArrayPaths = (
+  data: unknown,
+  prefix = ""
+): { path: string; label: string }[] => {
+  const gathered: { path: string; label: string }[] = [];
+  if (Array.isArray(data)) {
+    gathered.push({ path: prefix, label: prefix || "response" });
+  }
+  if (data && typeof data === "object") {
+    Object.entries(data).forEach(([key, value]) => {
+      const nextPrefix = prefix ? `${prefix}.${key}` : key;
+      gathered.push(...collectResponseArrayPaths(value, nextPrefix));
+    });
+  }
+  return gathered;
+};
+
+const getSampleItems = (data: unknown, path?: string | null) => {
+  const resolved = resolveApiPathValue(data, path);
+  return Array.isArray(resolved) ? resolved : [];
+};
+
+const getFieldOptionsFromItems = (items: unknown[]) => {
+  const firstObject = items.find((item) => item && typeof item === "object");
+  if (!firstObject) return [];
+  return Array.from(new Set(Object.keys(firstObject as Record<string, any>)));
+};
+
+const toPreviewString = (value: unknown, fallback: string) => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(value);
+};
+
+const deriveApiPreviewChoices = (data: unknown, config: ChoiceConfig) => {
+  const items = getSampleItems(data, config.response_path);
+  if (!items.length) return [];
+  return items.map((item, idx) => {
+    const fallbackValue = `choice_${idx + 1}`;
+    const rawValue =
+      resolveApiPathValue(item, config.value_field) ??
+      resolveApiPathValue(item, config.label_field) ??
+      item;
+    const value = toPreviewString(rawValue, fallbackValue);
+    const fallbackLabel = `Option ${idx + 1}`;
+    const rawLabel =
+      resolveApiPathValue(item, config.label_field) ?? rawValue ?? fallbackLabel;
+    const label = toPreviewString(rawLabel, fallbackLabel);
+    return { value, label };
+  });
+};
 
 const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
 
@@ -190,6 +359,8 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
   message_mode: "custom",
   campaign_step_choice: [],
   choice_mode: "branch",
+  choice_source: "manual",
+  choice_config: null,
 });
 
 type SortableStepRowProps = {
@@ -290,9 +461,11 @@ export default function CampaignStepsPage() {
     const rawSteps = [...(apiSteps || [])].sort((a, b) => a.step_number - b.step_number);
 
     return rawSteps.map((step, index) => {
+      const normalizedAction =
+        ["message", "choice", "input", "api"].includes(step.action_type) ? step.action_type : "message";
       let inputType: InputType | null = null;
       let expected = step.expected_input;
-      if (step.action_type === "input") {
+      if (normalizedAction === "input") {
         if (step.expected_input === "number" || step.expected_input === "email") {
           inputType = step.expected_input as InputType;
         } else {
@@ -312,12 +485,15 @@ export default function CampaignStepsPage() {
         step_number: index + 1,
         campaign_step_choice: step.campaign_step_choice || [],
         choice_mode: step.choice_mode === "sequential" ? "sequential" : "branch",
+        choice_source: step.choice_source === "api" ? "api" : "manual",
+        choice_config: step.choice_config ?? null,
         input_type: inputType,
         expected_input: expected,
         template: (step as any).template ?? null,
         template_source_id: (step as any).template_source_id ?? null,
         message_mode:
           (step as any).message_mode ?? ((step as any).template_source_id ? "template" : "custom"),
+        action_type: normalizedAction,
       };
     });
   };
@@ -467,12 +643,7 @@ export default function CampaignStepsPage() {
         }
       }
 
-      const extractedChoices: any[] =
-        Array.isArray(placeholders?.buttons) && placeholders.buttons.length
-          ? placeholders.buttons
-          : Array.isArray(placeholders?.choices)
-            ? placeholders.choices
-            : [];
+      const extractedChoices = extractChoicesFromTemplate(placeholders);
       const fallbackText =
         (placeholders?.fallback as string) ||
         (placeholders?.fallbackText as string) ||
@@ -524,24 +695,17 @@ export default function CampaignStepsPage() {
                     ? ((placeholders?.inputType as InputType) || s.input_type || "text")
                     : s.input_type,
                 campaign_step_choice: shouldSeedChoices
-                  ? extractedChoices.map((c: any, idx: number) => ({
+                  ? extractedChoices.map((c, idx) => ({
                     choice_id: 0,
                     campaign_id: s.campaign_id,
                     step_id: s.step_id || 0,
                     choice_code:
-                      (c.id as string) ||
-                      (c.code as string) ||
-                      (c.choice_code as string) ||
-                      (c.text as string) ||
-                      (c.label as string) ||
-                      `CHOICE_${idx + 1}`,
-                    label:
-                      (c.label as string) ||
-                      (c.text as string) ||
-                      (c.title as string) ||
-                      `Option ${idx + 1}`,
+                      c.id !== null && typeof c.id !== "undefined"
+                        ? `${c.id}`
+                        : `CHOICE_${idx + 1}`,
+                    label: c.label,
                     next_step_id: null,
-                    is_correct: typeof c.is_correct === "boolean" ? c.is_correct : null,
+                    is_correct: null,
                   }))
                   : s.campaign_step_choice,
                 error_message:
@@ -603,11 +767,11 @@ export default function CampaignStepsPage() {
           return;
         }
       }
-      if (step.action_type === "api" && step.failure_step_id && !idSet.has(step.failure_step_id)) {
+      if (step.api_id && step.failure_step_id && !idSet.has(step.failure_step_id)) {
         setValidationError("API failure routing must point to a valid step.");
         return;
       }
-      if (step.action_type === "api") {
+      if (step.api_id) {
         const api = apis.find((a) => a.api_id === step.api_id);
         if (api && api.is_active === false) {
           setValidationError(
@@ -642,13 +806,19 @@ export default function CampaignStepsPage() {
       const payload = steps.map((s, idx) => {
         const { message_mode, template, local_id, ...rest } = s as StepFormState & { template?: any };
         const mode = resolveMessageMode(s);
+        const usesApi = ["message", "choice", "api"].includes(s.action_type);
+        const resolvedApiId = usesApi ? s.api_id ?? null : null;
+        const resolvedFailureStepId = resolvedApiId ? s.failure_step_id ?? null : null;
         return {
           ...rest,
+          api_id: resolvedApiId,
           next_step_id: s.action_type === "choice" ? null : s.is_end_step ? null : s.next_step_id ?? null,
-          failure_step_id: s.action_type === "api" ? s.failure_step_id ?? null : null,
+          failure_step_id: resolvedFailureStepId,
           is_end_step: !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
           choice_mode: s.action_type === "choice" ? (s.choice_mode ?? "branch") : undefined,
+          choice_source: s.action_type === "choice" ? (s.choice_source ?? "manual") : undefined,
+          choice_config: s.action_type === "choice" ? s.choice_config ?? null : null,
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
@@ -683,7 +853,7 @@ export default function CampaignStepsPage() {
     return formatStepLabel(target) ?? "Jump (missing target)";
   })();
   const failureLabel =
-    activeStep?.action_type === "api"
+    activeStep?.api_id
       ? (() => {
         const target = findStepByRef(activeStep.failure_step_id);
         if (activeStep.failure_step_id && !target) return "Missing target";
@@ -814,6 +984,79 @@ export default function CampaignStepsPage() {
                             }
                             updateStep(idx, patch);
                           };
+                          const choiceSource = s.choice_source === "api" ? "api" : "manual";
+                          const parsedChoiceConfig = ensureChoiceConfig(s.choice_config);
+                          const apiSampleResponse = parseApiSampleResponse(apiForStep?.response_template ?? null);
+                          const responseArrayPaths = apiSampleResponse
+                            ? collectResponseArrayPaths(apiSampleResponse)
+                            : [];
+                          const responsePath =
+                            parsedChoiceConfig.response_path || responseArrayPaths[0]?.path || "";
+                          const sampleItems = apiSampleResponse
+                            ? getSampleItems(apiSampleResponse, responsePath)
+                            : [];
+                          const fieldOptions = getFieldOptionsFromItems(sampleItems);
+                          const selectedLabelField = parsedChoiceConfig.label_field || fieldOptions[0] || "";
+                          const selectedValueField = parsedChoiceConfig.value_field || fieldOptions[0] || "";
+                          const apiPreviewChoices = deriveApiPreviewChoices(apiSampleResponse, parsedChoiceConfig);
+                          const nextStepMap = parsedChoiceConfig.next_step_map ?? {};
+                          const handleChoiceSourceChange = (source: "manual" | "api") => {
+                            const patch: Partial<StepFormState> = { choice_source: source };
+                            if (source === "api" && !s.choice_config) {
+                              patch.choice_config = createChoiceConfig();
+                            }
+                            updateStep(idx, patch);
+                          };
+                          const handleApiEndpointChange = (value: string) => {
+                            const apiIdValue = value ? Number(value) : null;
+                            updateStep(idx, {
+                              api_id: apiIdValue,
+                              choice_config: apiIdValue ? createChoiceConfig() : null,
+                            });
+                          };
+                          const handleApiResponsePathChange = (value: string) => {
+                            const baseConfig = ensureChoiceConfig(s.choice_config);
+                            const itemsForPath = apiSampleResponse
+                              ? getSampleItems(apiSampleResponse, value)
+                              : [];
+                            const fallbackField = itemsForPath.length
+                              ? getFieldOptionsFromItems(itemsForPath)[0]
+                              : "";
+                            updateStep(idx, {
+                              choice_config: {
+                                ...baseConfig,
+                                response_path: value,
+                                label_field: fallbackField || baseConfig.label_field,
+                                value_field: fallbackField || baseConfig.value_field,
+                                next_step_map: {},
+                              },
+                            });
+                          };
+                          const handleApiFieldChange = (
+                            field: "label_field" | "value_field",
+                            value: string
+                          ) => {
+                            const baseConfig = ensureChoiceConfig(s.choice_config);
+                            updateStep(idx, {
+                              choice_config: {
+                                ...baseConfig,
+                                [field]: value,
+                                ...(field === "value_field" ? { next_step_map: {} } : {}),
+                              },
+                            });
+                          };
+                          const handleApiNextStepChange = (choiceValue: string, stepId: number | null) => {
+                            const baseConfig = ensureChoiceConfig(s.choice_config);
+                            updateStep(idx, {
+                              choice_config: {
+                                ...baseConfig,
+                                next_step_map: {
+                                  ...(baseConfig.next_step_map || {}),
+                                  [choiceValue]: stepId,
+                                },
+                              },
+                            });
+                          };
 
                           return (
                             <SortableStepRow
@@ -844,11 +1087,10 @@ export default function CampaignStepsPage() {
                                             const nextAction = e.target.value as ActionType;
                                             const nextInputType =
                                               nextAction === "input" ? s.input_type || "text" : null;
-                                            const extra: Partial<CampaignStepWithChoices> = {
-                                              api_id: nextAction === "api" ? s.api_id : null,
-                                            };
+                                            const extra: Partial<CampaignStepWithChoices> = {};
 
-                                            if (nextAction !== "api") {
+                                            if (nextAction === "input") {
+                                              extra.api_id = null;
                                               extra.failure_step_id = null;
                                               extra.error_message = null;
                                             }
@@ -857,6 +1099,10 @@ export default function CampaignStepsPage() {
                                               extra.next_step_id = null;
                                               extra.is_end_step = false;
                                               extra.choice_mode = "branch";
+                                              extra.choice_source = "manual";
+                                              extra.choice_config = null;
+                                            } else {
+                                              extra.choice_config = null;
                                             }
 
                                             updateStep(idx, {
@@ -965,7 +1211,7 @@ export default function CampaignStepsPage() {
                                               />
                                               <span>End campaign</span>
                                             </label>
-                                          </div>
+                                            </div>
                                         </div>
                                       ) : isSequentialChoice ? (
                                         <div className="space-y-2 text-sm font-medium md:col-span-2">
@@ -1297,8 +1543,43 @@ export default function CampaignStepsPage() {
                                             This controls how the campaign proceeds after the user makes a selection.
                                           </p>
                                         </div>
-                                        {choiceMode === "branch" ? (
-                                          <div className="space-y-3">
+                                        <div className="space-y-2 rounded-md border bg-muted/5 px-3 py-2 text-sm">
+                                          <div className="flex items-center justify-between">
+                                            <p className="text-sm font-semibold">Choice source</p>
+                                            <div className="flex flex-wrap gap-4 text-sm">
+                                              <label className="inline-flex items-center gap-2">
+                                                <input
+                                                  type="radio"
+                                                  name={`choice-source-${idx}`}
+                                                  value="manual"
+                                                  checked={choiceSource === "manual"}
+                                                  onChange={() => handleChoiceSourceChange("manual")}
+                                                  className="h-3 w-3"
+                                                />
+                                                <span>Manual entry</span>
+                                              </label>
+                                              <label className="inline-flex items-center gap-2">
+                                                <input
+                                                  type="radio"
+                                                  name={`choice-source-${idx}`}
+                                                  value="api"
+                                                  checked={choiceSource === "api"}
+                                                  onChange={() => handleChoiceSourceChange("api")}
+                                                  className="h-3 w-3"
+                                                />
+                                                <span>API-driven</span>
+                                              </label>
+                                            </div>
+                                          </div>
+                                          <p className="text-xs text-muted-foreground">
+                                            {choiceSource === "manual"
+                                              ? "Enter each option manually or seed them from a template."
+                                              : "Select an API endpoint that returns choices for this step."}
+                                          </p>
+                                        </div>
+                                        {choiceSource === "manual" ? (
+                                          choiceMode === "branch" ? (
+                                            <div className="space-y-3">
                                             <div className="flex items-center justify-between">
                                               <h4 className="text-sm font-semibold">Choices</h4>
                                               <button
@@ -1409,8 +1690,8 @@ export default function CampaignStepsPage() {
                                               )}
                                             </div>
                                           </div>
-                                        ) : (
-                                          <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
+                                          ) : (
+                                            <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
                                             <p className="font-semibold">
                                               Choices are defined by the template or user input.
                                             </p>
@@ -1419,7 +1700,212 @@ export default function CampaignStepsPage() {
                                               step.
                                             </p>
                                           </div>
-                                        )}
+                                          )
+                                        ) : (
+                                          <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-2 text-sm text-muted-foreground">
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                              <label className="space-y-1 text-sm font-medium">
+                                                <span>API</span>
+                                                <select
+                                                  className="w-full rounded border px-3 py-2"
+                                                  value={s.api_id ?? ""}
+                                                  onChange={(e) => handleApiEndpointChange(e.target.value)}
+                                                >
+                                                  <option value="">Select API</option>
+                                                  {apis
+                                                    .filter((api) => api.is_active !== false)
+                                                    .map((api) => (
+                                                      <option key={api.api_id} value={api.api_id}>
+                                                        {api.name}
+                                                      </option>
+                                                    ))}
+                                                </select>
+                                              </label>
+                                              <label className="space-y-1 text-sm font-medium">
+                                                <span>Failure step</span>
+                                                <select
+                                                  className="w-full rounded border px-3 py-2"
+                                                  value={s.failure_step_id ?? ""}
+                                                  onChange={(e) =>
+                                                    updateStep(idx, {
+                                                      failure_step_id: e.target.value ? Number(e.target.value) : null,
+                                                    })
+                                                  }
+                                                >
+                                                  <option value="">None</option>
+                                                  {steps.map((st) => {
+                                                    const value = st.step_id || st.client_id;
+                                                    return (
+                                                      <option key={`fail-${st.local_id}`} value={value}>
+                                                        {`Step ${st.step_number} - ${st.step_code || st.prompt_text || "Step"}`}
+                                                      </option>
+                                                    );
+                                                  })}
+                                                </select>
+                                              </label>
+                                            </div>
+                                            <label className="space-y-1 text-sm font-medium">
+                                              <span>Error message</span>
+                                              <textarea
+                                                className="w-full rounded border px-3 py-2 text-xs font-mono"
+                                                rows={3}
+                                                value={s.error_message ?? ""}
+                                                onChange={(e) =>
+                                                  updateStep(idx, {
+                                                    error_message: e.target.value || null,
+                                                  })
+                                                }
+                                                placeholder="Shown when the API response cannot be parsed."
+                                              />
+                                              <p className="text-[11px] text-muted-foreground">
+                                                Optional. System errors use automatic responses.
+                                              </p>
+                                            </label>
+                                            <div className="space-y-2 text-sm">
+                                              <p className="text-[11px] font-semibold text-muted-foreground">
+                                                Response template (read-only)
+                                              </p>
+                                              {apiForStep?.response_template ? (
+                                                <pre className="rounded bg-background px-2 py-1 text-[11px] whitespace-pre-wrap border">
+                                                  {apiForStep.response_template}
+                                                </pre>
+                                              ) : (
+                                                <p className="text-xs text-muted-foreground">
+                                                  Select an API to preview its response template.
+                                                </p>
+                                              )}
+                                            </div>
+                                            <label className="space-y-1 text-sm font-medium">
+                                              <span>Response array path</span>
+                                              <input
+                                                type="text"
+                                                className="w-full rounded border px-3 py-2"
+                                                value={responsePath}
+                                                onChange={(e) => handleApiResponsePathChange(e.target.value)}
+                                                placeholder="e.g. data.items"
+                                              />
+                                              {responseArrayPaths.length ? (
+                                                <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                                  <span className="font-semibold">Detected arrays:</span>
+                                                  {responseArrayPaths.map((item) => (
+                                                    <button
+                                                      key={item.path}
+                                                      type="button"
+                                                      onClick={() => handleApiResponsePathChange(item.path)}
+                                                      className="rounded-full border px-2 py-0.5 text-xs font-semibold text-primary"
+                                                    >
+                                                      {item.label || item.path}
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              ) : null}
+                                            </label>
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                              <label className="space-y-1 text-sm font-medium">
+                                                <span>Label field</span>
+                                                <select
+                                                  className="w-full rounded border px-3 py-2"
+                                                  value={selectedLabelField}
+                                                  onChange={(e) => handleApiFieldChange("label_field", e.target.value)}
+                                                  disabled={!fieldOptions.length}
+                                                >
+                                                  <option value="">Choose a field</option>
+                                                  {fieldOptions.map((field) => (
+                                                    <option key={field} value={field}>
+                                                      {field}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </label>
+                                              <label className="space-y-1 text-sm font-medium">
+                                                <span>Value field</span>
+                                                <select
+                                                  className="w-full rounded border px-3 py-2"
+                                                  value={selectedValueField}
+                                                  onChange={(e) => handleApiFieldChange("value_field", e.target.value)}
+                                                  disabled={!fieldOptions.length}
+                                                >
+                                                  <option value="">Choose a field</option>
+                                                  {fieldOptions.map((field) => (
+                                                    <option key={field} value={field}>
+                                                      {field}
+                                                    </option>
+                                                  ))}
+                                                </select>
+                                              </label>
+                                            </div>
+                                            <div className="space-y-2 rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
+                                              <p className="font-semibold text-[11px]">Sample choices</p>
+                                              {apiPreviewChoices.length ? (
+                                                <div className="flex flex-wrap gap-2">
+                                                  {apiPreviewChoices.map((choice) => (
+                                                    <span
+                                                      key={`${choice.value}-${choice.label}`}
+                                                      className="rounded-full border px-3 py-1 text-[11px] text-foreground bg-muted/40"
+                                                    >
+                                                      {choice.label}
+                                                    </span>
+                                                  ))}
+                                                </div>
+                                              ) : (
+                                                <p className="text-xs text-muted-foreground">
+                                                  Configure the response path and fields to preview options.
+                                                </p>
+                                              )}
+                                            </div>
+                                            {choiceMode === "branch" ? (
+                                              <div className="space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                  <p className="text-sm font-semibold">Routing per option</p>
+                                                  <p className="text-[11px] text-muted-foreground">
+                                                    Map each API choice to a target step.
+                                                  </p>
+                                                </div>
+                                                {apiPreviewChoices.length ? (
+                                                  apiPreviewChoices.map((choice, choiceIdx) => (
+                                                    <div
+                                                      key={`api-choice-${choiceIdx}`}
+                                                      className="space-y-1 rounded border px-3 py-2"
+                                                    >
+                                                      <p className="text-[11px] text-muted-foreground">
+                                                        {choice.label}
+                                                      </p>
+                                                      <select
+                                                        className="w-full rounded border px-3 py-2 text-sm"
+                                                        value={nextStepMap[choice.value] ?? ""}
+                                                        onChange={(e) =>
+                                                          handleApiNextStepChange(
+                                                            choice.value,
+                                                            e.target.value ? Number(e.target.value) : null
+                                                          )
+                                                        }
+                                                      >
+                                                        <option value="">No next step selected</option>
+                                                        {targetSteps.map((st) => {
+                                                          const value = st.step_id || st.client_id;
+                                                          const labelText =
+                                                            st.prompt_text?.trim() || st.step_code || "Untitled step";
+                                                          return (
+                                                            <option key={`${st.local_id}-api-choice-${choiceIdx}`} value={value}>
+                                                              {`Step ${st.step_number} – ${labelText}`}
+                                                            </option>
+                                                          );
+                                                        })}
+                                                      </select>
+                                                    </div>
+                                                  ))
+                                                ) : (
+                                                  <p className="text-xs text-muted-foreground">
+                                                    Choices will appear once an API and response path are configured.
+                                                  </p>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              <p className="text-xs text-muted-foreground">
+                                                Sequential mode relies on the step Next Step after the API execution.
+                                              </p>
+                                            )}
+                                          </div>
                                       </div>
                                     )}
 
@@ -1474,14 +1960,14 @@ export default function CampaignStepsPage() {
                                         return label ? `Jump (${label})` : "Jump (missing target)";
                                       })()}
                                 </td>
-                                <td className="px-3 py-2 text-muted-foreground">
-                                  {(() => {
-                                    if (s.action_type !== "api") return "-";
-                                    if (!s.failure_step_id) return "None";
-                                    const target = findStepByRef(s.failure_step_id);
-                                    return formatStepLabel(target) ?? "Missing target";
-                                  })()}
-                                </td>
+                                  <td className="px-3 py-2 text-muted-foreground">
+                                    {(() => {
+                                      if (!s.api_id) return "-";
+                                      if (!s.failure_step_id) return "None";
+                                      const target = findStepByRef(s.failure_step_id);
+                                      return formatStepLabel(target) ?? "Missing target";
+                                    })()}
+                                  </td>
 
                               </>
                             </SortableStepRow>
@@ -1679,7 +2165,7 @@ export default function CampaignStepsPage() {
                 </div>
               )}
 
-              {activeStep.action_type === "api" && (
+              {activeStep?.api_id && (
                 <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-2">
                   <p>Calls API: {activeStep.api_id ? `#${activeStep.api_id}` : "Not selected"}</p>
                   <p>On failure: {failureLabel}</p>

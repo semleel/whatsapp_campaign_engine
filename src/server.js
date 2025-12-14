@@ -20,8 +20,7 @@ import { log, error } from "./utils/logger.js";
 
 
 // --- Fake API Routes ---
-import mbtiApi from "./fake-api/mbti.js";
-import facilityApi from "./fake-api/facility.js";
+import fakeApiRoutes from "./fake-api/routes/index.js";
 
 dotenv.config();
 
@@ -55,9 +54,7 @@ app.use(express.json({ limit: "20mb" }));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 // --- Fake API Routes for Testing ---
-app.use("/fake/mbti", mbtiApi);
-app.use("/fake/facility", facilityApi);
-
+app.use("/fake", fakeApiRoutes);
 
 // --- Environment Variables ---
 const PORT = config.server.port || process.env.PORT || 3000;

@@ -271,11 +271,18 @@ export type CampaignUpdatePayload = {
 };
 
 // Campaign engine enums/types
-export type ActionType = "message" | "choice" | "input" | "api" | "end";
+export type ActionType = "message" | "choice" | "input" | "api";
 export type ExpectedInput = "none" | "choice" | "text" | "number" | "email" | "location";
 export type InputType = "text" | "number" | "email" | "location";
 export type ValidationMode = "none" | "numeric" | "email";
 export type ChoiceMode = "branch" | "sequential";
+
+export type ChoiceConfig = {
+    response_path?: string;
+    label_field?: string;
+    value_field?: string;
+    next_step_map?: Record<string, number | null>;
+};
 
 export type CampaignStep = {
     step_id: number;
@@ -314,6 +321,8 @@ export type CampaignStepWithChoices = CampaignStep & {
     template?: TemplateDetail | null;
     validation_mode?: ValidationMode;
     choice_mode?: ChoiceMode;
+    choice_source?: "manual" | "api";
+    choice_config?: ChoiceConfig | null;
     campaign_step_choice: CampaignStepChoice[];
 };
 

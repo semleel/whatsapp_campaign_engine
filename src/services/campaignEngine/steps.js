@@ -15,6 +15,152 @@ import {
 import { normalizeApiError } from "./apiErrorHelper.js";
 import { log, warn, error } from "../../utils/logger.js";
 
+const CHOICE_SOURCE_MANUAL = "manual";
+const CHOICE_SOURCE_API = "api";
+const DEFAULT_CHOICE_CONFIG = {
+  response_path: "",
+  label_field: "",
+  value_field: "",
+  next_step_map: {},
+};
+
+const normalizeChoiceConfig = (config) => {
+  if (!config || typeof config !== "object") {
+    return { ...DEFAULT_CHOICE_CONFIG };
+  }
+  const rawMap = config.next_step_map && typeof config.next_step_map === "object" ? config.next_step_map : {};
+  const nextStepMap = {};
+  Object.entries(rawMap).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") {
+      nextStepMap[String(key)] = null;
+      return;
+    }
+    const parsed = Number(value);
+    nextStepMap[String(key)] = Number.isNaN(parsed) ? null : parsed;
+  });
+
+  return {
+    response_path: typeof config.response_path === "string" ? config.response_path : "",
+    label_field: typeof config.label_field === "string" ? config.label_field : "",
+    value_field: typeof config.value_field === "string" ? config.value_field : "",
+    next_step_map: nextStepMap,
+  };
+};
+
+const resolveNestedValue = (data, path) => {
+  if (!path || typeof path !== "string") return data;
+  const segments = path
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  let current = data;
+  for (const segment of segments) {
+    if (current == null || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[segment];
+  }
+  return current;
+};
+
+const ensureArray = (value) => (Array.isArray(value) ? value : []);
+
+const toPlainString = (value, fallback = "") => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "object") {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+  return String(value);
+};
+
+const resolveNextStepFromMap = (map, key) => {
+  if (!map || typeof map !== "object") return null;
+  const raw = map[String(key)];
+  if (raw === null || raw === undefined || raw === "") return null;
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const extractArrayFromResponse = (response, path) => {
+  if (response == null) return [];
+  const resolved = resolveNestedValue(response, path);
+  return ensureArray(resolved);
+};
+
+const buildApiRuntimeChoices = (response, config, isBranchMode) => {
+  const items = extractArrayFromResponse(response, config.response_path);
+  return items.map((item, idx) => {
+    const fallbackValue = `choice_${idx + 1}`;
+    const rawValue =
+      resolveNestedValue(item, config.value_field) ??
+      resolveNestedValue(item, config.label_field) ??
+      item;
+    const choiceCode = toPlainString(rawValue, fallbackValue);
+    const fallbackLabel = `Option ${idx + 1}`;
+    const rawLabel =
+      resolveNestedValue(item, config.label_field) ?? rawValue ?? fallbackLabel;
+    const label = toPlainString(rawLabel, fallbackLabel);
+    const nextStepId = isBranchMode
+      ? resolveNextStepFromMap(config.next_step_map, choiceCode)
+      : null;
+    return {
+      choice_code: choiceCode,
+      label,
+      next_step_id: nextStepId,
+    };
+  });
+};
+
+const fetchApiChoicePayload = async ({ step, contact, session }) => {
+  if (!step?.api_id) {
+    return { response: null, error: new Error("Missing API for choice step") };
+  }
+  try {
+    const vars = {
+      contact,
+      campaign: session?.campaign || { campaign_id: session?.campaign_id },
+      session,
+      lastAnswer: null,
+    };
+    const result = await dispatchEndpoint(step.api_id, vars, {
+      source: "campaign_choice",
+      stepId: step.step_id,
+    });
+    return { response: result?.payload?.response ?? null, error: null };
+  } catch (err) {
+    warn(
+      "[ENGINE] Choice API fetch failed",
+      JSON.stringify({
+        step_id: step?.step_id ?? null,
+        campaign_id: session?.campaign_id ?? null,
+        error: err?.message ?? err,
+      })
+    );
+    return { response: null, error: err };
+  }
+};
+
+const resolveRuntimeChoices = async ({ step, contact, session, isBranchMode }) => {
+  const normalizedSource = (step.choice_source || CHOICE_SOURCE_MANUAL)
+    .toString()
+    .toLowerCase();
+  if (normalizedSource === CHOICE_SOURCE_API) {
+    const config = normalizeChoiceConfig(step.choice_config);
+    const { response, error } = await fetchApiChoicePayload({ step, contact, session });
+    const choices = buildApiRuntimeChoices(response, config, isBranchMode);
+    return { choices, error, source: CHOICE_SOURCE_API };
+  }
+  const choices = await prisma.campaign_step_choice.findMany({
+    where: { step_id: step.step_id },
+    orderBy: { choice_id: "asc" },
+  });
+  return { choices, error: null, source: CHOICE_SOURCE_MANUAL };
+};
+
 export async function runChoiceStep({
   contact,
   session,
@@ -27,13 +173,6 @@ export async function runChoiceStep({
   const contentContext = await resolveStepContent(session, step);
   const promptText = contentContext?.body ?? step.prompt_text;
 
-  const choices = await prisma.campaign_step_choice.findMany({
-    where: { step_id: step.step_id },
-    orderBy: { choice_id: "asc" },
-  });
-
-  let matchedChoice = null;
-  let selectedCode = null;
   const placeholders =
     contentContext?.placeholders && typeof contentContext.placeholders === "object"
       ? contentContext.placeholders
@@ -46,6 +185,40 @@ export async function runChoiceStep({
   const interactiveTitle = extractInteractiveTitleFromPayload(payload) || "";
   const rawResponseText = incomingText || interactiveTitle || "";
   const normalizedResponseText = rawResponseText.trim();
+
+  const normalizedIsBranch = normalizedChoiceMode === "branch";
+  const { choices: availableChoices, error: choiceError, source: runtimeChoiceSource } =
+    await resolveRuntimeChoices({
+      step,
+      contact,
+      session,
+      isBranchMode: normalizedIsBranch,
+    });
+  const choices = availableChoices || [];
+
+  if (runtimeChoiceSource === CHOICE_SOURCE_API && choiceError && !choices.length) {
+    const errorMessage =
+      step.error_message ||
+      "Sorry, this choice is temporarily unavailable. Please try again in a moment.";
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: { current_step_id: step.step_id, last_active_at: new Date() },
+    });
+    return {
+      outbound: [
+        withStepContext({
+          base: { to: contact.phone_num, content: errorMessage },
+          step,
+          session,
+          contact,
+          contentContext,
+        }),
+      ],
+    };
+  }
+
+  let matchedChoice = null;
+  let selectedCode = null;
 
   if (type === "button" || type === "list") {
     selectedCode = extractChoiceCodeFromPayload(payload);
@@ -84,7 +257,10 @@ export async function runChoiceStep({
       session_id: session.campaign_session_id,
       campaign_id: session.campaign_id,
       step_id: step.step_id,
-      choice_id: !isSequentialMode && matchedChoice ? matchedChoice.choice_id : null,
+      choice_id:
+        runtimeChoiceSource === CHOICE_SOURCE_MANUAL && !isSequentialMode && matchedChoice
+          ? matchedChoice.choice_id
+          : null,
       user_input_raw: rawResponseText,
       is_valid: isValid,
     },
@@ -93,7 +269,7 @@ export async function runChoiceStep({
   if ((type === "button" || type === "list") && normalizedResponseText) {
     session.last_choice = {
       value: normalizedResponseText,
-      label: normalizedResponseText,
+      label: matchedChoice?.label ?? normalizedResponseText,
       source: type === "list" ? "menu" : "button",
       template_content_id: step.template_source_id ?? null,
     };
@@ -104,15 +280,16 @@ export async function runChoiceStep({
     JSON.stringify({
       step_id: step.step_id,
       choiceMode: normalizedChoiceMode,
+      choiceSource: runtimeChoiceSource,
       selectedCode,
       incomingText: rawResponseText,
       matchedChoice: matchedChoice
         ? {
-          id: matchedChoice.choice_id,
-          code: matchedChoice.choice_code,
-          label: matchedChoice.label,
-          next_step_id: matchedChoice.next_step_id,
-        }
+            id: matchedChoice.choice_id,
+            code: matchedChoice.choice_code,
+            label: matchedChoice.label,
+            next_step_id: matchedChoice.next_step_id,
+          }
         : null,
     })
   );
@@ -175,9 +352,7 @@ export async function runChoiceStep({
     throw new Error(errMsg);
   }
 
-  const targetStepId = isSequentialMode
-    ? step.next_step_id
-    : matchedChoice?.next_step_id;
+  const targetStepId = isSequentialMode ? step.next_step_id : matchedChoice?.next_step_id;
 
   log(
     "[ENGINE] Choice routing",
@@ -642,20 +817,25 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         data: { current_step_id: current.step_id, last_active_at: new Date() },
       });
 
-      if (current.action_type === "choice") {
-        const choices = await prisma.campaign_step_choice.findMany({
-          where: { step_id: current.step_id },
-          orderBy: { choice_id: "asc" },
-        });
-        const promptMessage = buildChoicePromptMessage({
+    if (current.action_type === "choice") {
+      const normalizedChoiceMode = (current.choice_mode || "branch").toString().toLowerCase();
+      const isBranchMode = normalizedChoiceMode === "branch";
+      const { choices: availableChoices, error: choiceError, source: runtimeChoiceSource } =
+        await resolveRuntimeChoices({
+          step: current,
           contact,
-          prompt: resolvedPrompt,
-          choices,
-          contentContext,
+          session,
+          isBranchMode,
         });
+      const choices = availableChoices || [];
+
+      if (runtimeChoiceSource === CHOICE_SOURCE_API && choiceError && !choices.length) {
+        const errorMessage =
+          current.error_message ||
+          "Sorry, this choice is temporarily unavailable. Please try again in a moment.";
         outbound.push(
           withStepContext({
-            base: promptMessage,
+            base: { to: contact.phone_num, content: errorMessage },
             step: current,
             session,
             contact,
@@ -664,6 +844,24 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         );
         return { outbound };
       }
+
+      const promptMessage = buildChoicePromptMessage({
+        contact,
+        prompt: resolvedPrompt,
+        choices,
+        contentContext,
+      });
+      outbound.push(
+        withStepContext({
+          base: promptMessage,
+          step: current,
+          session,
+          contact,
+          contentContext,
+        })
+      );
+      return { outbound };
+    }
 
       if (resolvedPrompt || resolvedMediaUrl) {
         const mediaPayload = buildMediaWaPayload({
