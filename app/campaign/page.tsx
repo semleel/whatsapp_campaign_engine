@@ -116,9 +116,19 @@ export default function CampaignsPage() {
     }
   };
 
-  const handleToggleActive = async (id: number, current?: boolean | null) => {
+  const handleToggleActive = async (
+    id: number,
+    current?: boolean | null,
+    status?: string | null
+  ) => {
     if (!canUpdate) {
       setErrorMessage("You do not have permission to update campaigns.");
+      return;
+    }
+    if ((status || "").toLowerCase() === "expired") {
+      const message = "Expired campaigns cannot be reactivated.";
+      await showCenteredAlert(message);
+      setErrorMessage(message);
       return;
     }
     const next = !current;
@@ -132,6 +142,9 @@ export default function CampaignsPage() {
     } catch (err) {
       console.error(err);
       setErrorMessage(
+        err instanceof Error ? err.message : "Failed to update active state."
+      );
+      await showCenteredAlert(
         err instanceof Error ? err.message : "Failed to update active state."
       );
     }
@@ -359,7 +372,13 @@ export default function CampaignsPage() {
                     <td className="px-3 py-2">
                       <button
                         type="button"
-                        onClick={() => handleToggleActive(c.campaignid, c.is_active)}
+                        onClick={() =>
+                          handleToggleActive(
+                            c.campaignid,
+                            c.is_active,
+                            c.currentstatus
+                          )
+                        }
                         disabled={!canUpdate}
                         className={`relative h-6 w-11 overflow-hidden rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${
                           c.is_active ? "bg-emerald-500 border-emerald-600" : "bg-slate-200 border-slate-300"
