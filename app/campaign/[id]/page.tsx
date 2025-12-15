@@ -112,12 +112,19 @@ export default function CampaignDetailPage() {
   };
 
   // Add keyword for this campaign - with pre-check like create page
-  const handleAddKeyword = async () => {
-    const raw = keywordDraft.trim().toLowerCase();
-    if (!raw || !id) return;
+const handleAddKeyword = async () => {
+  const raw = keywordDraft.trim().toLowerCase();
+  if (!raw || !id) return;
 
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
+      return;
+    }
+
+    if (!KEYWORD_PATTERN.test(raw)) {
+      setKeywordMessage(
+        "Keyword must be a single word containing only letters and numbers (no spaces or symbols)."
+      );
       return;
     }
 
