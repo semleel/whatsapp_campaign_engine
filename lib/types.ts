@@ -190,6 +190,11 @@ export interface TestRunResult {
     errorMessage?: string;
 }
 
+export type ApiPreviewResponse = {
+    data: any;
+    truncated?: boolean;
+};
+
 export type GenerateTemplatePayload = {
     campaign?: {
         name?: string | null;

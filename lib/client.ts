@@ -124,6 +124,7 @@ import type {
   CampaignWithStepsResponse,
   CampaignStepWithChoices,
   ApiListItem,
+  ApiPreviewResponse,
   KeywordEntry,
   KeywordListItem,
   KeywordCheckResponse,
@@ -200,6 +201,8 @@ export const Api = {
     }),
 
   listApis: () => http<ApiListItem[]>(`/api/integration/apis`),
+  previewApi: (apiId: number | string) =>
+    http<ApiPreviewResponse>(`/api/integration/apis/${apiId}/preview`),
 
   // =========================================================
   // Integration → update API response_template

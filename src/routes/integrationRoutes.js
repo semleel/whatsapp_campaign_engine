@@ -3,6 +3,7 @@
 import express from "express";
 import {
   getIntegrationLogs,
+  previewApi,
   runTest,
   updateApiTemplate,
   generateTemplate,
@@ -54,6 +55,7 @@ router.post(
 );
 router.get("/logs", requirePrivilege("integration", "view"), getIntegrationLogs);
 router.get("/apis", requirePrivilege("integration", "view"), listApis);
+router.get("/apis/:id/preview", requirePrivilege("integration", "view"), previewApi);
 router.put("/apis/:id/template", requirePrivilege("integration", "update"), updateApiTemplate);
 
 export default router;

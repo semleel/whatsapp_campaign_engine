@@ -23,6 +23,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Api } from "@/lib/client";
+import InteractiveOptionsWizard from "@/components/integration/InteractiveOptionsWizard";
 import type {
   ActionType,
   CampaignStepChoice,
@@ -72,6 +73,24 @@ type StepFormState = CampaignStepWithChoices & {
 
 const resolveChoiceMode = (step?: StepFormState | null): "branch" | "sequential" =>
   step?.choice_mode === "sequential" ? "sequential" : "branch";
+
+const getStepMetaKey = (step?: StepFormState | null): string | null => {
+  if (!step) return null;
+  const identifier = step.client_id ?? step.step_id ?? step.local_id;
+  if (typeof identifier === "number" || typeof identifier === "string") {
+    return String(identifier);
+  }
+  return null;
+};
+
+const deriveInteractionConfigFromCount = (
+  count: number
+): Pick<InteractionConfig, "type" | "max_items"> => {
+  if (count <= 3) {
+    return { type: "buttons", max_items: Math.max(1, Math.min(count, 3)) };
+  }
+  return { type: "menu", max_items: Math.min(count, 10) };
+};
 
 type TemplateChoice = {
   id?: string | number | null;
@@ -338,6 +357,12 @@ export default function CampaignStepsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStepIndex, setWizardStepIndex] = useState(0);
+  const [wizardTargetStepIndex, setWizardTargetStepIndex] = useState<number | null>(null);
+  const [interactionPreviewInfo, setInteractionPreviewInfo] = useState<
+    Record<string, { response_path: string; count: number }>
+  >({});
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -398,6 +423,7 @@ export default function CampaignStepsPage() {
         const mapped = mapStepsForUi(stepsRes.steps || []);
         setSteps(mapped);
         setExpandedIndex(mapped.length ? 0 : null);
+        setInteractionPreviewInfo({});
         setApis(apiRes || []);
         setTemplates((templateRes as any) || []);
       } catch (err) {
@@ -410,6 +436,55 @@ export default function CampaignStepsPage() {
       }
     })();
   }, [id, privLoading, canView]);
+
+  const openWizardForStep = (stepIndex: number) => {
+    setWizardTargetStepIndex(stepIndex);
+    setWizardStepIndex(0);
+    setWizardOpen(true);
+  };
+
+  const closeWizard = () => {
+    setWizardOpen(false);
+    setWizardStepIndex(0);
+    setWizardTargetStepIndex(null);
+  };
+
+  const handleWizardApply = (config: InteractionConfig) => {
+    if (wizardTargetStepIndex === null) return;
+    updateStep(wizardTargetStepIndex, { interaction_config: config });
+  };
+
+  const handleWizardCandidateMeta = (meta: { response_path: string; count: number }) => {
+    if (wizardTargetStepIndex === null) return;
+    const targetStep = steps[wizardTargetStepIndex];
+    if (!targetStep) return;
+    const metaKey = getStepMetaKey(targetStep);
+    if (!metaKey) return;
+    setInteractionPreviewInfo((prev) => ({ ...prev, [metaKey]: meta }));
+  };
+
+  const removePreviewMetaForStep = (step: StepFormState) => {
+    const metaKey = getStepMetaKey(step);
+    if (!metaKey) return;
+    setInteractionPreviewInfo((prev) => {
+      if (!prev[metaKey]) return prev;
+      const next = { ...prev };
+      delete next[metaKey];
+      return next;
+    });
+  };
+
+  const resolveInteractionConfigForSave = (step: StepFormState) => {
+    const config = step.interaction_config;
+    if (!config) return null;
+    const metaKey = getStepMetaKey(step);
+    const meta = metaKey ? interactionPreviewInfo[metaKey] : undefined;
+    if (meta && meta.response_path === config.response_path) {
+      const computed = deriveInteractionConfigFromCount(meta.count);
+      return { ...config, ...computed };
+    }
+    return config;
+  };
 
   const summarizeChoices = (step: StepFormState) => {
     if (!step.campaign_step_choice?.length) return "-";
@@ -721,7 +796,7 @@ export default function CampaignStepsPage() {
           is_end_step: s.action_type === "choice" ? false : !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
           choice_mode: s.action_type === "choice" ? (s.choice_mode ?? "branch") : undefined,
-          interaction_config: s.interaction_config ?? null,
+          interaction_config: resolveInteractionConfigForSave(s),
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
@@ -730,6 +805,7 @@ export default function CampaignStepsPage() {
       const mapped = mapStepsForUi(res.steps || []);
       setSteps(mapped);
       setExpandedIndex(mapped.length ? 0 : null);
+      setInteractionPreviewInfo({});
       await showCenteredAlert("Steps saved.");
       await router.push("/campaign");
       return;
@@ -791,6 +867,7 @@ export default function CampaignStepsPage() {
   const previewHintText = activeStep?.interaction_config
     ? "API response will be converted to buttons/menu at runtime."
     : "Manual choices shown.";
+  const wizardTargetStep = wizardTargetStepIndex !== null ? steps[wizardTargetStepIndex] : null;
 
   if (!privLoading && !canView) {
     return (
@@ -902,34 +979,18 @@ export default function CampaignStepsPage() {
                             }
                             updateStep(idx, patch);
                           };
-                          const defaultInteractionConfig: InteractionConfig = {
-                            type: "none",
-                            max_items: undefined,
-                            response_path: "",
-                            save_to: "",
-                          };
-                          const resolvedInteractionConfig: InteractionConfig = {
-                            type: s.interaction_config?.type ?? defaultInteractionConfig.type,
-                            max_items:
-                              typeof s.interaction_config?.max_items === "number"
-                                ? s.interaction_config.max_items
-                                : defaultInteractionConfig.max_items,
-                            response_path: s.interaction_config?.response_path ?? "",
-                            save_to: s.interaction_config?.save_to ?? "",
-                          };
                           const interactionEnabled = Boolean(s.interaction_config);
                           const handleInteractionToggle = (enabled: boolean) => {
-                            updateStep(idx, {
-                              interaction_config: enabled ? resolvedInteractionConfig : null,
-                            });
-                          };
-                          const handleInteractionChange = (changes: Partial<InteractionConfig>) => {
-                            updateStep(idx, {
-                              interaction_config: {
-                                ...(s.interaction_config ?? defaultInteractionConfig),
-                                ...changes,
-                              },
-                            });
+                            if (!enabled) {
+                              updateStep(idx, {
+                                interaction_config: null,
+                              });
+                              removePreviewMetaForStep(s);
+                              return;
+                            }
+                            if (!s.interaction_config) {
+                              openWizardForStep(idx);
+                            }
                           };
                           const handleApiEndpointChange = (value: string) => {
                             const apiIdValue = value ? Number(value) : null;
@@ -938,6 +999,11 @@ export default function CampaignStepsPage() {
                               interaction_config: apiIdValue ? s.interaction_config : null,
                             });
                           };
+                          const stepMetaKey = getStepMetaKey(s);
+                          const previewMeta =
+                            stepMetaKey && interactionPreviewInfo[stepMetaKey]
+                              ? interactionPreviewInfo[stepMetaKey]
+                              : null;
 
                           return (
                             <SortableStepRow
@@ -1408,9 +1474,7 @@ export default function CampaignStepsPage() {
                                     {s.action_type === "choice" && (
                                       <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-3 text-sm">
                                         <div className="flex items-center justify-between">
-                                          <p className="text-sm font-semibold">
-                                            Convert API response to interactive options
-                                          </p>
+                                          <p className="text-sm font-semibold">Interactive options</p>
                                           <label className="inline-flex items-center gap-2 text-sm">
                                             <input
                                               type="checkbox"
@@ -1422,94 +1486,56 @@ export default function CampaignStepsPage() {
                                             <span>{interactionEnabled ? "Enabled" : "Disabled"}</span>
                                           </label>
                                         </div>
-                                        <p className="text-[11px] text-muted-foreground">
-                                          API responses will be converted to {interactionEnabled
-                                            ? resolvedInteractionConfig.type === "menu"
-                                              ? "a menu"
-                                              : "buttons"
-                                            : "buttons"} at runtime.
-                                        </p>
-                                        {interactionEnabled ? (
-                                          <div className="grid gap-3 md:grid-cols-2 text-sm">
-                                            <label className="space-y-1 font-medium">
-                                              <span>Interaction type</span>
-                                              <select
-                                                className="w-full rounded border px-3 py-2"
-                                                value={resolvedInteractionConfig.type}
-                                                onChange={(e) =>
-                                                  handleInteractionChange({
-                                                    type: e.target.value as InteractionConfig["type"],
-                                                  })
-                                                }
-                                              >
-                                                <option value="buttons">Buttons (max 3)</option>
-                                                <option value="menu">Menu (max 10)</option>
-                                              </select>
-                                            </label>
-                                            <label className="space-y-1 font-medium">
-                                              <span>Max items</span>
-                                              <input
-                                                type="number"
-                                                min={1}
-                                                max={10}
-                                                className="w-full rounded border px-3 py-2"
-                                                value={resolvedInteractionConfig.max_items ?? ""}
-                                                onChange={(e) =>
-                                                  handleInteractionChange({
-                                                    max_items: e.target.value ? Number(e.target.value) : undefined,
-                                                  })
-                                                }
-                                              />
-                                              <p className="text-[11px] text-muted-foreground">
-                                                Limit between 1 and 10.
-                                              </p>
-                                            </label>
-                                            <label className="space-y-1 font-medium md:col-span-2">
-                                              <span>API response path</span>
-                                              <input
-                                                type="text"
-                                                className="w-full rounded border px-3 py-2 font-mono text-xs"
-                                                value={resolvedInteractionConfig.response_path ?? ""}
-                                                onChange={(e) =>
-                                                  handleInteractionChange({
-                                                    response_path: e.target.value || undefined,
-                                                  })
-                                                }
-                                                placeholder="e.g. facilities or time_slots"
-                                              />
-                                              <p className="text-[11px] text-muted-foreground">
-                                                Path in API response JSON to convert into interactive options.
-                                              </p>
-                                            </label>
-                                            <label className="space-y-1 font-medium md:col-span-2">
-                                              <span>Save user selection as</span>
-                                              <input
-                                                type="text"
-                                                className="w-full rounded border px-3 py-2 font-mono text-xs"
-                                                value={resolvedInteractionConfig.save_to ?? ""}
-                                                onChange={(e) =>
-                                                  handleInteractionChange({
-                                                    save_to: e.target.value || undefined,
-                                                  })
-                                                }
-                                                placeholder="e.g. facility, time_slot"
-                                              />
-                                              <p className="text-[11px] text-muted-foreground">
-                                                The selected value will be stored in session and can be used in APIs as:
-                                                <br />
-                                                <code className="font-mono">{"{{ session.<key> }}"}</code>
-                                              </p>
-                                              <p className="text-[11px] text-muted-foreground">
-                                                If empty, system auto-maps this step to the next required API field.
-                                              </p>
-                                            </label>
+                                        <div className="space-y-2 rounded-lg border border-border bg-background/70 px-3 py-2 text-xs">
+                                          <div className="flex items-center justify-between">
+                                            <span>Shows</span>
+                                            <span className="font-semibold text-foreground">
+                                              {s.interaction_config?.response_path || "Not set"}
+                                            </span>
                                           </div>
-                                        ) : (
-                                          <p className="text-[11px] text-muted-foreground">
-                                            Toggle on to convert the API response into interactive buttons or a
-                                            menu.
-                                          </p>
-                                        )}
+                                          <div className="flex items-center justify-between">
+                                            <span>Saves as</span>
+                                            <span className="font-semibold text-foreground">
+                                              {s.interaction_config?.save_to || "Not set"}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center justify-between">
+                                            <span>Mode</span>
+                                            <span className="font-semibold text-foreground">
+                                              {s.interaction_config
+                                                ? s.interaction_config.type === "buttons"
+                                                  ? `Buttons · max ${s.interaction_config.max_items ?? 3}`
+                                                  : `Menu · max ${s.interaction_config.max_items ?? 10}`
+                                                : "Not configured"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        <div className="flex flex-col gap-2 pt-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => openWizardForStep(idx)}
+                                            disabled={!s.api_id}
+                                            className={`inline-flex items-center justify-center rounded-md border border-primary bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20 ${!s.api_id ? "opacity-50 cursor-not-allowed" : ""}`}
+                                          >
+                                            {interactionEnabled ? "Edit interactive options" : "Configure interactive options"}
+                                          </button>
+                                          {!interactionEnabled && (
+                                            <p className="text-xs text-muted-foreground">
+                                              Toggle on to convert the API response into interactive buttons or a menu.
+                                            </p>
+                                          )}
+                                          {interactionEnabled && (!s.interaction_config?.response_path || !s.interaction_config?.save_to) && (
+                                            <p className="text-xs text-rose-600">
+                                              Configure a response path and save key in the wizard before enabling
+                                              interactive options.
+                                            </p>
+                                          )}
+                                          {interactionEnabled && previewMeta && previewMeta.count > 10 && (
+                                            <p className="text-xs text-amber-600">
+                                              Only the first 10 options will be shown at runtime.
+                                            </p>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
 
@@ -1992,6 +2018,16 @@ export default function CampaignStepsPage() {
           )}
         </aside>
       </div>
+      <InteractiveOptionsWizard
+        open={wizardOpen}
+        onClose={closeWizard}
+        apiId={wizardTargetStep?.api_id ?? null}
+        initial={wizardTargetStep?.interaction_config ?? null}
+        onApply={handleWizardApply}
+        initialStepIndex={wizardStepIndex}
+        onStepChange={(stepIndex) => setWizardStepIndex(stepIndex)}
+        onPreviewCandidate={handleWizardCandidateMeta}
+      />
     </div>
   );
 }
