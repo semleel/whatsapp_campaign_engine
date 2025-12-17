@@ -1,4 +1,5 @@
 import React from "react";
+import { formatBodyLines } from "@/lib/whatsappFormatter";
 
 export type PreviewButton =
   | { type: "quick_reply"; label: string }
@@ -31,111 +32,30 @@ const mediaTypeFromUrl = (
 ): PreviewData["mediaType"] => {
   if (explicit && explicit !== "none") return explicit;
   if (!url) return "none";
-  const lower = url.toLowerCase();
-  if (/\.(jpe?g|png|gif|webp)$/i.test(lower)) return "image";
-  if (/\.(mp4|mov|webm)$/i.test(lower)) return "video";
-  if (/\.(pdf|docx?|xlsx?|pptx?)$/i.test(lower)) return "document";
-  return "document";
-};
+  const normalized = url.toLowerCase();
 
-const INLINE_FORMATTERS = [
-  {
-    regex: /(\{\{.*?\}\})/g,
-    wrap: (content: string, key: string) => (
-      <span key={key} className="text-emerald-600 font-semibold">
-        {content}
-      </span>
-    ),
-  },
-  {
-    regex: /```([^`]+)```/g,
-    wrap: (content: string, key: string) => (
-      <code
-        key={key}
-        className="rounded bg-slate-100 px-1 text-[11px] font-mono text-slate-600"
-      >
-        {content}
-      </code>
-    ),
-  },
-  {
-    regex: /`([^`]+)`/g,
-    wrap: (content: string, key: string) => (
-      <code
-        key={key}
-        className="rounded bg-slate-100 px-1 text-[11px] font-mono text-slate-600"
-      >
-        {content}
-      </code>
-    ),
-  },
-  {
-    regex: /\*(?!\s)([^*]+?)\*(?!\s)/g,
-    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
-  },
-  {
-    regex: /_(?!\s)([^_]+?)_(?!\s)/g,
-    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
-  },
-  {
-    regex: /~(?!\s)([^~]+?)~(?!\s)/g,
-    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
-  },
-];
+  if (/\.(mp4|mov|webm)(\?.*)?$/i.test(normalized)) return "video";
 
-function formatLine(line: string, keyPrefix: string) {
-  let segments: React.ReactNode[] = [line];
+  if (
+    /\.(pdf|docx?|xlsx?|pptx?)(\?.*)?$/i.test(normalized) ||
+    /(?:^|[/?&])[a-z0-9\-_]+(?:\.|%2[eE])(?:pdf|docx?|xlsx?|pptx?)(?:$|[?&])/i.test(
+      normalized
+    )
+  ) {
+    return "document";
+  }
 
-  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
-    const next: React.ReactNode[] = [];
+  if (
+    /\.(jpe?g|png|gif|webp)(\?.*)?$/i.test(normalized) ||
+    /gstatic\.com|googleusercontent\.com/i.test(normalized) ||
+    /imgix\.net|images\.amazon\.com|cdn\.instagram\.com|pbs\.twimg\.com/i.test(
+      normalized
+    )
+  ) {
+    return "image";
+  }
 
-    segments.forEach((seg, segIdx) => {
-      if (typeof seg !== "string") {
-        next.push(seg);
-        return;
-      }
-
-      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(seg)) !== null) {
-        if (match.index > lastIndex) {
-          next.push(seg.slice(lastIndex, match.index));
-        }
-
-        next.push(
-          fmt.wrap(
-            match[1],
-            `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`
-          )
-        );
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < seg.length) {
-        next.push(seg.slice(lastIndex));
-      }
-    });
-
-    segments = next;
-  });
-
-  return segments;
-}
-
-const formatBodyLines = (body?: string) => {
-  const lines = (body ? body.split("\n") : ["Body text here"]).map((line) =>
-    line || "\u00A0"
-  );
-  return lines.map((line, idx) => (
-    <p
-      key={`line-${idx}`}
-      className="leading-relaxed text-sm text-slate-700 before:block"
-    >
-      {formatLine(line, `line-${idx}`)}
-    </p>
-  ));
+  return "image";
 };
 
 const TemplatePreviewPanel: React.FC<{ preview: PreviewData }> = ({ preview }) => {

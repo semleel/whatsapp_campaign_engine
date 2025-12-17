@@ -34,6 +34,7 @@ import type {
 } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
+import { renderFormattedLines } from "@/lib/whatsappFormatter";
 
 type TemplateListItem = {
   content_id: number;
@@ -202,77 +203,6 @@ const looksLikeImage = (url?: string | null) =>
 const looksLikeVideo = (url?: string | null) => !!url && /\.(mp4|mov|avi|mkv|webm)$/i.test(url);
 const looksLikeDocument = (url?: string | null) =>
   !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)$/i.test(url);
-
-const INLINE_FORMATTERS: { regex: RegExp; wrap: (content: string, key: string) => React.ReactNode }[] =
-  [
-    {
-      regex: /```([^`]+)```/g,
-      wrap: (content, key) => (
-        <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-          {content}
-        </code>
-      ),
-    },
-    {
-      regex: /`([^`]+)`/g,
-      wrap: (content, key) => (
-        <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-          {content}
-        </code>
-      ),
-    },
-    { regex: /\*(?!\s)([^*]+?)\*(?!\s)/g, wrap: (c, key) => <strong key={key}>{c}</strong> },
-    { regex: /_(?!\s)([^_]+?)_(?!\s)/g, wrap: (c, key) => <em key={key}>{c}</em> },
-    { regex: /~(?!\s)([^~]+?)~(?!\s)/g, wrap: (c, key) => <s key={key}>{c}</s> },
-  ];
-
-function formatWhatsAppLine(line: string, keyPrefix: string) {
-  let segments: React.ReactNode[] = [line];
-
-  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
-    const next: React.ReactNode[] = [];
-
-    segments.forEach((seg, segIdx) => {
-      if (typeof seg !== "string") {
-        next.push(seg);
-        return;
-      }
-
-      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(seg)) !== null) {
-        if (match.index > lastIndex) {
-          next.push(seg.slice(lastIndex, match.index));
-        }
-
-        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < seg.length) {
-        next.push(seg.slice(lastIndex));
-      }
-    });
-
-    segments = next;
-  });
-
-  return segments;
-}
-
-function renderFormattedLines(text?: string | null, placeholder = "No prompt yet.") {
-  const lines = text ? text.split("\n") : [placeholder];
-  return lines.map((line, idx) => {
-    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
-    return (
-      <p key={`line-${idx}`} className="whitespace-pre-wrap">
-        {content}
-      </p>
-    );
-  });
-}
 
 const getTemplateId = (template: TemplateListItem) => template.content_id ?? null;
 

@@ -127,29 +127,6 @@ const TYPE_OPTIONS = ["All", "message", "choice", "api", "input"];
 const LANG_OPTIONS = ["All", "EN", "MY", "CN"];
 const PAGE_SIZE_OPTIONS = [8, 12, 20];
 
-const INLINE_FORMATTERS = [
-  {
-    regex: /\*\*(.+?)\*\*/g,
-    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
-  },
-  {
-    regex: /\*(.+?)\*/g,
-    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
-  },
-  {
-    regex: /~~(.+?)~~/g,
-    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
-  },
-  {
-    regex: /`([^`]+)`/g,
-    wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px]">
-        {content}
-      </code>
-    ),
-  },
-];
-
 const normalizeStatus = (status?: string | null) => {
   const value = (status || "").trim();
   if (!value) return "Active";
@@ -199,51 +176,6 @@ function ensureMenu(existing: any): TemplateMenu | null {
     buttonLabel: (existing.buttonLabel || "Main Menu").toString(),
     sections,
   };
-}
-
-function formatWhatsAppLine(line: string, keyPrefix: string) {
-  let segments: React.ReactNode[] = [line];
-
-  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
-    const next: React.ReactNode[] = [];
-
-    segments.forEach((seg, segIdx) => {
-      if (typeof seg !== "string") {
-        next.push(seg);
-        return;
-      }
-
-      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(seg)) !== null) {
-        if (match.index > lastIndex) {
-          next.push(seg.slice(lastIndex, match.index));
-        }
-
-        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < seg.length) {
-        next.push(seg.slice(lastIndex));
-      }
-    });
-
-    segments = next;
-  });
-
-  return segments;
-}
-
-function renderFormattedLines(text: string, placeholder: string) {
-  const lines = text ? text.split("\n") : [placeholder];
-
-  return lines.map((line, idx) => {
-    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
-    return <p key={`line-${idx}`}>{content}</p>;
-  });
 }
 
 const formatUsageMessage = (count: number) =>

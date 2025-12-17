@@ -181,87 +181,6 @@ function validateMenu(menu: TemplateMenu | null): string | null {
   return null;
 }
 
-const INLINE_FORMATTERS = [
-  // Monospace block: ```text```
-  {
-    regex: /```([^`]+)```/g,
-    wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-        {content}
-      </code>
-    ),
-  },
-  // Inline code: `text`
-  {
-    regex: /`([^`]+)`/g,
-    wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-        {content}
-      </code>
-    ),
-  },
-  // Bold: *text*
-  {
-    regex: /\*(?!\s)([^*]+?)\*(?!\s)/g,
-    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
-  },
-  // Italic: _text_
-  {
-    regex: /_(?!\s)([^_]+?)_(?!\s)/g,
-    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
-  },
-  // Strikethrough: ~text~
-  {
-    regex: /~(?!\s)([^~]+?)~(?!\s)/g,
-    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
-  },
-];
-
-function formatWhatsAppLine(line: string, keyPrefix: string) {
-  let segments: React.ReactNode[] = [line];
-
-  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
-    const next: React.ReactNode[] = [];
-
-    segments.forEach((seg, segIdx) => {
-      if (typeof seg !== "string") {
-        next.push(seg);
-        return;
-      }
-
-      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(seg)) !== null) {
-        if (match.index > lastIndex) {
-          next.push(seg.slice(lastIndex, match.index));
-        }
-
-        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < seg.length) {
-        next.push(seg.slice(lastIndex));
-      }
-    });
-
-    segments = next;
-  });
-
-  return segments;
-}
-
-function renderFormattedLines(text: string, placeholder: string) {
-  const lines = text ? text.split("\n") : [placeholder];
-
-  return lines.map((line, idx) => {
-    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
-    return <p key={`line-${idx}`}>{content}</p>;
-  });
-}
-
 // Initial form factory so we can reuse it
 function createEmptyForm(): TemplateForm {
   return {
@@ -744,8 +663,6 @@ export default function ContentCreatePage() {
       setSubmitting(false);
     }
   };
-
-  const previewBody = form.body.trim() || "Body text here";
 
   const quickReplyCount = form.buttons.filter((b) => b.type === "quick_reply").length;
 
