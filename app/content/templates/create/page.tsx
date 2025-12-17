@@ -5,6 +5,9 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import TemplatePreviewPanel, {
+  PreviewData,
+} from "@/components/TemplatePreviewPanel";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
@@ -45,7 +48,7 @@ type TemplateMenu = {
   sections: TemplateMenuSection[];
 };
 
-type TemplateActionType = "choice" | "message" | "input" | "api";
+type TemplateActionType = "choice" | "message" | "input";
 
 type TemplateForm = {
   title: string;
@@ -55,8 +58,6 @@ type TemplateForm = {
   body: string;
   mediaurl: string; // URL only
   expiresat: string;
-
-  footerText: string;
   buttons: TemplateButton[];
   interactiveType: TemplateInteractiveType;
   menu: TemplateMenu | null;
@@ -271,7 +272,6 @@ function createEmptyForm(): TemplateForm {
     body: "",
     mediaurl: "",
     expiresat: "",
-    footerText: "",
     buttons: [],
     interactiveType: "default",
     menu: null,
@@ -358,7 +358,7 @@ export default function ContentCreatePage() {
         ...prev,
         buttons: [...prev.buttons, nextButton],
       };
-    });
+    }); 
   };
 
   const updateButton = (id: string, changes: Partial<TemplateButton>) => {
@@ -688,12 +688,6 @@ export default function ContentCreatePage() {
         ? new Date(form.expiresat).toISOString()
         : null;
 
-      const placeholderData = {
-        footerText: form.footerText,
-        buttons: form.buttons,
-        interactiveType: form.interactiveType,
-      };
-
       const contentKey =
         (form.content_key || "").trim() ||
         generateContentKeyFromTitle(form.title || "content");
@@ -710,9 +704,8 @@ export default function ContentCreatePage() {
         mediaUrl: form.mediaurl?.trim() || null,
         expiresAt: expiresAtIso,
         placeholders: {
-          footerText: placeholderData.footerText,
           buttons:
-            form.interactiveType === "buttons" ? placeholderData.buttons : [],
+            form.interactiveType === "buttons" ? form.buttons : [],
           interactiveType: form.interactiveType,
           menu:
             form.interactiveType === "menu"
@@ -764,6 +757,41 @@ export default function ContentCreatePage() {
   const totalMenuOptions = activeMenu ? countTotalOptions(activeMenu.sections) : 0;
   const hasMenuOptions = totalMenuOptions > 0;
   const previewButtons = form.buttons.slice(0, MAX_QUICK_REPLIES);
+  const previewBody = form.body.trim() || "Body text here";
+  const previewTitle = form.title?.trim() || "Template title";
+  const previewTimestamp = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const previewTemplateName =
+    form.content_key?.trim() || "template_content_key";
+  const previewNormalizedButtons = previewButtons.map((btn) => ({
+    type: btn.type,
+    label: btn.label || "Button",
+    url: btn.url,
+    phone: btn.phone,
+  }));
+  const previewMenuSections =
+    form.interactiveType === "menu" && activeMenu
+      ? activeMenu.sections.map((section) => ({
+          id: section.id,
+          title: section.title || undefined,
+          options: (section.options || []).map((opt) => opt.title || "Option"),
+        }))
+      : undefined;
+
+  const previewData: PreviewData = {
+    title: previewTitle,
+    body: previewBody,
+    templateName: previewTemplateName,
+    footerText: previewTemplateName,
+    mediaUrl: form.mediaurl?.trim() || undefined,
+    buttons: previewNormalizedButtons,
+    interactiveType:
+      form.interactiveType === "menu" ? "list" : "buttons",
+    timestamp: previewTimestamp,
+    menuSections: previewMenuSections,
+  };
 
   const permissionBanner =
     !privLoading && !canCreate ? (
@@ -824,7 +852,7 @@ export default function ContentCreatePage() {
                 <option value="message">Message</option>
                 <option value="choice">Choice</option>
                 <option value="input">Input</option>
-                <option value="api">Api</option>
+
               </select>
             </label>
           </div>
@@ -1014,34 +1042,6 @@ export default function ContentCreatePage() {
             />
           </label>
 
-          {/* Footer */}
-          <div className="space-y-3 border-t pt-4">
-            <h4 className="text-sm font-semibold">
-              Footer note{" "}
-              <span className="text-xs text-muted-foreground">
-                (Optional, simple text shown at the bottom of this message)
-              </span>
-            </h4>
-            <p className="text-xs text-muted-foreground">
-              A short signature or disclaimer shown at the bottom of this message.
-            </p>
-            <label className="space-y-1 text-sm font-medium">
-              <span>Footer note text</span>
-              <input
-                type="text"
-                name="footerText"
-                placeholder="e.g. Sent via Campaign Engine"
-                value={form.footerText}
-                onChange={handleChange}
-                className="w-full rounded-md border px-3 py-2"
-              />
-              <p className="text-xs text-muted-foreground">
-                This footer is just a local note that appears under the message
-                (it is not a Meta template setting).
-              </p>
-            </label>
-          </div>
-
           {/* Buttons (only when interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
             <div className="space-y-3 border-t pt-4">
@@ -1052,16 +1052,16 @@ export default function ContentCreatePage() {
                     (Optional)
                   </span>
                 </h4>
-        <p className="text-xs text-muted-foreground">
-          Max 3 quick replies.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2 text-xs">
-        <button
-          type="button"
-          onClick={() => addButton("quick_reply")}
-          className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
-          disabled={disableQuickReply}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Max 3 quick replies.
+              </p>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => addButton("quick_reply")}
+                  className="rounded-md border px-3 py-1 hover:bg-muted disabled:opacity-60"
+                  disabled={disableQuickReply}
                 >
                   + Add Quick Reply
                 </button>
@@ -1076,16 +1076,16 @@ export default function ContentCreatePage() {
                   {form.buttons.slice(0, MAX_QUICK_REPLIES).map((btn) => (
                     <div
                       key={btn.id}
-                    className="rounded-md border p-3 space-y-2 text-sm"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        Quick reply
-                      </span>
-                      <button
-                        type="button"
-                        className="text-xs text-red-500"
-                        onClick={() => removeButton(btn.id)}
+                      className="rounded-md border p-3 space-y-2 text-sm"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">
+                          Quick reply
+                        </span>
+                        <button
+                          type="button"
+                          className="text-xs text-red-500"
+                          onClick={() => removeButton(btn.id)}
                         >
                           Remove
                         </button>
@@ -1334,118 +1334,7 @@ export default function ContentCreatePage() {
             <p className="text-xs text-muted-foreground">
               Preview of how this saved message block may look when sent as a normal WhatsApp session message.
             </p>
-            <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
-              {/* media preview (URL-based) */}
-              {form.mediaurl.trim() ? (() => {
-                const mediaUrl = form.mediaurl.trim();
-                const isImage = looksLikeImage(mediaUrl);
-                const isVideo = looksLikeVideo(mediaUrl);
-                const isDoc = looksLikeDocument(mediaUrl);
-                return (
-                  <div className="mb-2 overflow-hidden rounded-md bg-background">
-                    {isVideo ? (
-                      <video
-                        className="w-full max-h-64 bg-black"
-                        controls
-                        muted
-                        playsInline
-                        preload="metadata"
-                        src={mediaUrl}
-                      />
-                    ) : isImage ? (
-                      <img
-                        src={mediaUrl}
-                        alt="Media preview"
-                        className="block w-full object-cover max-h-64"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="p-3 text-xs text-muted-foreground space-y-1">
-                        <div className="font-semibold">{isDoc ? "Document" : "Attachment"}</div>
-                        <a
-                          href={mediaUrl}
-                          className="block truncate text-primary hover:underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {mediaUrl}
-                        </a>
-                        <div className="text-[11px]">
-                          Preview shown as a link (non-media file).
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })() : null}
-
-              {/* body bubble */}
-              <div className="rounded-lg bg-background px-3 py-2 text-xs leading-relaxed shadow-sm">
-                {renderFormattedLines(previewBody, "Body text here")}
-              </div>
-
-              {/* buttons */}
-              {form.interactiveType === "buttons" && previewButtons.length > 0 && (
-                <div className="mt-2 border-t pt-2 space-y-1">
-                  {previewButtons.map((btn) => (
-                    <button
-                      key={btn.id}
-                      type="button"
-                      className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
-                    >
-                      {btn.label || "Button"}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {form.interactiveType === "menu" && activeMenu && (
-                <div className="mt-2 border-t pt-2 space-y-1">
-                  <button
-                    type="button"
-                    className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
-                  >
-                    {activeMenu.buttonLabel || "Main Menu"}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {form.interactiveType === "menu" && activeMenu && hasMenuOptions && (
-              <div className="rounded-md border bg-muted/30 p-3 text-[11px] space-y-2">
-                {activeMenu.sections.map((section, sectionIdx) => (
-                  <div
-                    key={section.id}
-                    className="space-y-1 border-b last:border-b-0 border-slate-200/70 pb-2 last:pb-0"
-                  >
-                    <div className="font-semibold text-[10px] uppercase tracking-wide text-slate-700">
-                      {(section.title || "").trim() || `Section ${sectionIdx + 1}`}
-                    </div>
-                    {section.options.length === 0 ? (
-                      <div className="text-[10px] text-muted-foreground">
-                        No options in this section.
-                      </div>
-                    ) : (
-                      section.options.map((opt, optIdx) => {
-                        const title = opt.title?.trim() || `Option ${optIdx + 1}`;
-                        const desc = opt.description?.trim();
-                        return (
-                          <div key={opt.id} className="flex items-start gap-2">
-                            <span>-</span>
-                            <span>
-                              {title}
-                              {desc ? ` - ${desc}` : ""}
-                            </span>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <TemplatePreviewPanel preview={previewData} />
             <p className="text-xs text-muted-foreground">
               This preview is static for UI demonstration in your FYP.
               Actual WhatsApp rendering may differ slightly.
@@ -1460,4 +1349,3 @@ export default function ContentCreatePage() {
     </div>
   );
 }
-

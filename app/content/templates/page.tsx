@@ -4,13 +4,70 @@
 
 import type React from "react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import QueryAnnouncement from "@/components/QueryAnnouncement";
+import TemplatePreviewPanel, {
+  PreviewData,
+  PreviewButton,
+} from "@/components/TemplatePreviewPanel";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 import { showPrivilegeDenied } from "@/lib/showAlert";
 import type { TemplateDetail, TemplateListItem } from "@/lib/types";
+
+const TemplatePreviewWrapper: React.FC<{ preview: PreviewData }> = ({ preview }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const checkOverflow = () => setIsOverflowing(el.scrollHeight > el.clientHeight);
+    checkOverflow();
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(checkOverflow)
+        : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [
+    preview.body,
+    preview.mediaUrl,
+    preview.buttons?.length,
+    preview.menuSections?.length,
+    isExpanded,
+  ]);
+
+  const containerClass = `transition-[max-height] duration-300 ${
+    isExpanded
+      ? "max-h-[650px] overflow-auto"
+      : "max-h-[360px] overflow-hidden"
+  }`;
+
+  return (
+    <div className="relative">
+      <div ref={containerRef} className={containerClass}>
+        <TemplatePreviewPanel preview={preview} />
+      </div>
+      {!isExpanded && isOverflowing && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-white/90 to-transparent" />
+      )}
+      {isOverflowing && (
+        <div className="mt-2 flex justify-end">
+          <button
+            type="button"
+            className="text-sm font-semibold text-sky-600 hover:underline"
+            onClick={() => setIsExpanded((prev) => !prev)}
+          >
+            {isExpanded ? "Show less" : "Show more"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
 
 type TemplateSummary = TemplateListItem & {
   lang?: string | null;
@@ -187,13 +244,6 @@ function renderFormattedLines(text: string, placeholder: string) {
 
 const formatUsageMessage = (count: number) =>
   `In use by ${count} campaign step${count === 1 ? "" : "s"}. Cannot archive.`;
-
-const looksLikeImage = (url?: string | null) =>
-  !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url || "");
-const looksLikeVideo = (url?: string | null) =>
-  !!url && /\.(mp4|mov|avi|mkv|webm)(\?.*)?$/i.test(url || "");
-const looksLikeDocument = (url?: string | null) =>
-  !!url && /\.(pdf|docx?|xls|xlsx|ppt|pptx)(\?.*)?$/i.test(url || "");
 
 export default function TemplateLibraryPage() {
   const router = useRouter();
@@ -640,11 +690,6 @@ export default function TemplateLibraryPage() {
                   (t.body || t.description || "").trim() ||
                   "Body text here. Message body and personalization notes.";
 
-                const bodyLines = bodyText.split("\n");
-                const shortBody =
-                  bodyLines.length > 3
-                    ? bodyLines.slice(0, 3).join("\n") + "..."
-                    : bodyText;
                 const usageCount = Number(t.usageCount ?? t.usage_count ?? 0);
                 const isTemplateInUse = usageCount > 0;
 
@@ -721,148 +766,45 @@ export default function TemplateLibraryPage() {
 
                       {/* WhatsApp-style preview */}
                       <div className="flex-1 rounded-xl border bg-muted/40 p-3">
-                        {t.mediaurl ? (() => {
-                          const mediaUrl = t.mediaurl || "";
-                          const isImage = looksLikeImage(mediaUrl);
-                          const isVideo = looksLikeVideo(mediaUrl);
-                          const isDoc = looksLikeDocument(mediaUrl);
-                          const openAttachment = (e: React.MouseEvent) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (typeof window !== "undefined") {
-                              window.open(mediaUrl, "_blank", "noreferrer");
-                            }
-                          };
-                          return (
-                            <div className="mb-2 overflow-hidden rounded-md bg-background">
-                              {isVideo ? (
-                                <video
-                                  src={mediaUrl}
-                                  className="block w-full max-h-40 object-contain bg-black"
-                                  muted
-                                  playsInline
-                                  preload="metadata"
-                                  controls
-                                />
-                              ) : isDoc ? (
-                                <div className="p-3 text-xs text-muted-foreground space-y-1">
-                                  <div className="font-semibold">Document</div>
-                                  <button
-                                    type="button"
-                                    onClick={openAttachment}
-                                    className="block w-full truncate text-left text-primary hover:underline"
-                                  >
-                                    {mediaUrl}
-                                  </button>
-                                  <div className="text-[11px]">Preview shown as a link (non-media file).</div>
-                                </div>
-                              ) : (
-                                <>
-                                  {/* Try to show as image by default; fallback to link if it fails */}
-                                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={mediaUrl}
-                                    alt="Header"
-                                    className="block w-full max-h-48 object-cover"
-                                    onError={(e) => {
-                                      (e.currentTarget as HTMLImageElement).style.display = "none";
-                                      const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                                      if (fallback) fallback.style.display = "block";
-                                    }}
-                                  />
-                                  <div className="p-3 text-xs text-muted-foreground space-y-1 hidden">
-                                    <div className="font-semibold">Attachment</div>
-                                    <button
-                                      type="button"
-                                      onClick={openAttachment}
-                                      className="block w-full truncate text-left text-primary hover:underline"
-                                    >
-                                      {mediaUrl}
-                                    </button>
-                                    <div className="text-[11px]">
-                                      Preview shown as a link (non-media file).
-                                    </div>
-                                  </div>
-                                </>
-                              )}
-                            </div>
+                        {(() => {
+                          const previewBody = bodyText;
+                          const previewButtons = (t.buttons || []).map(
+                            (btn): PreviewButton => ({
+                              type:
+                                btn.type === "visit_website" ||
+                                btn.type === "call_phone"
+                                  ? (btn.type as PreviewButton["type"])
+                                  : "quick_reply",
+                              label: btn.label || "Button",
+                              url: btn.url,
+                              phone: btn.phone,
+                            })
                           );
-                        })() : null}
+                          const previewMenuSections =
+                            t.interactiveType === "menu" && t.menu
+                              ? t.menu.sections.map((section) => ({
+                                  id: section.id,
+                                  title: section.title || undefined,
+                                  options: (section.options || []).map(
+                                    (opt) => opt.title || "Option"
+                                  ),
+                                }))
+                              : undefined;
+                          const previewData: PreviewData = {
+                            title: t.headerType === "text" ? t.headerText || t.title : t.title,
+                            body: previewBody,
+                            templateName: t.content_key || t.title,
+                            footerText: t.footerText || undefined,
+                            mediaUrl: t.mediaurl || undefined,
+                            buttons: previewButtons,
+                            interactiveType: t.interactiveType === "menu" ? "list" : "buttons",
+                            menuSections: previewMenuSections,
+                          };
 
-                        {t.headerType === "text" && t.headerText && (
-                          <p className="mb-1 text-[11px] font-semibold">
-                            {t.headerText}
-                          </p>
-                        )}
-
-                        <div className="rounded-lg bg-background px-3 py-2 text-[11px] leading-relaxed shadow-sm">
-                          {renderFormattedLines(
-                            shortBody,
-                            "Body text here. Message body and personalization notes."
-                          )}
-                        </div>
-
-                        {t.footerText && (
-                          <p className="mt-2 text-[10px] text-muted-foreground">
-                            {t.footerText}
-                          </p>
-                        )}
-
-                        {t.interactiveType === "buttons" && t.buttons && t.buttons.length > 0 && (
-                          <div className="mt-2 border-t pt-2 space-y-1">
-                            {t.buttons.map((btn, i) => (
-                              <button
-                                key={btn.id ?? i}
-                                type="button"
-                                className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary"
-                              >
-                                {btn.label || "Button"}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {t.interactiveType === "menu" && t.menu && (
-                          <div className="mt-2 border-t pt-2 space-y-1">
-                            <button
-                              type="button"
-                              className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
-                            >
-                              {t.menu.buttonLabel || "Main Menu"}
-                            </button>
-                          </div>
-                        )}
+                          return <TemplatePreviewWrapper preview={previewData} />;
+                        })()}
                       </div>
 
-                      {t.interactiveType === "menu" && t.menu && t.menu.sections.length > 0 && (
-                        <div className="mt-2 rounded-md border bg-muted/30 p-2 text-[11px] space-y-2">
-                          {t.menu.sections.map((section, sIdx) => (
-                            <div
-                              key={section.id}
-                              className="space-y-1 border-b last:border-b-0 border-slate-200/70 pb-1 last:pb-0"
-                            >
-                              <div className="font-semibold text-[10px] uppercase tracking-wide text-slate-700">
-                                {(section.title || "").trim() || `Section ${sIdx + 1}`}
-                              </div>
-                              {section.options.length === 0 ? (
-                                <div className="text-[10px] text-muted-foreground">
-                                  No options in this section.
-                                </div>
-                              ) : (
-                                section.options.map((opt, oIdx) => (
-                                  <div key={opt.id} className="flex items-start gap-2">
-                                    <span>-</span>
-                                    <span>
-                                      {(opt.title || `Option ${oIdx + 1}`).toString()}
-                                      {opt.description ? ` - ${opt.description}` : ""}
-                                    </span>
-                                  </div>
-                                ))
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
 
                       {/* bottom meta */}
                       <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">

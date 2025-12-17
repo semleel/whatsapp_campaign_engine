@@ -6,6 +6,9 @@ import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import TemplatePreviewPanel, {
+  PreviewData,
+} from "@/components/TemplatePreviewPanel";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
 import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
@@ -29,7 +32,7 @@ type TemplateCategory =
   | string
   | null;
 
-type TemplateActionType = "choice" | "message" | "input" | "api";
+type TemplateActionType = "choice" | "message" | "input";
 
 type TemplateData = {
   contentid: number;
@@ -45,7 +48,6 @@ type TemplateData = {
   expiresat?: string | null;
   placeholders?: Record<string, unknown> | null;
   buttons: ButtonItem[];
-  footerText?: string | null;
   headerType?: "none" | "text" | "media";
   headerText?: string | null;
   headerMediaType?: "image" | "video" | "document";
@@ -290,87 +292,6 @@ type FeedbackState = {
   onSecondary?: () => void;
 };
 
-const INLINE_FORMATTERS = [
-  // Monospace block: ```text```
-  {
-    regex: /```([^`]+)```/g,
-    wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-        {content}
-      </code>
-    ),
-  },
-  // Inline code: `text`
-  {
-    regex: /`([^`]+)`/g,
-    wrap: (content: string, key: string) => (
-      <code key={key} className="bg-muted px-1 rounded text-[11px] font-mono">
-        {content}
-      </code>
-    ),
-  },
-  // Bold: *text*
-  {
-    regex: /\*(?!\s)([^*]+?)\*(?!\s)/g,
-    wrap: (content: string, key: string) => <strong key={key}>{content}</strong>,
-  },
-  // Italic: _text_
-  {
-    regex: /_(?!\s)([^_]+?)_(?!\s)/g,
-    wrap: (content: string, key: string) => <em key={key}>{content}</em>,
-  },
-  // Strikethrough: ~text~
-  {
-    regex: /~(?!\s)([^~]+?)~(?!\s)/g,
-    wrap: (content: string, key: string) => <s key={key}>{content}</s>,
-  },
-];
-
-function formatWhatsAppLine(line: string, keyPrefix: string) {
-  let segments: React.ReactNode[] = [line];
-
-  INLINE_FORMATTERS.forEach((fmt, fmtIdx) => {
-    const next: React.ReactNode[] = [];
-
-    segments.forEach((seg, segIdx) => {
-      if (typeof seg !== "string") {
-        next.push(seg);
-        return;
-      }
-
-      const regex = new RegExp(fmt.regex.source, fmt.regex.flags);
-      let lastIndex = 0;
-      let match: RegExpExecArray | null;
-
-      while ((match = regex.exec(seg)) !== null) {
-        if (match.index > lastIndex) {
-          next.push(seg.slice(lastIndex, match.index));
-        }
-
-        next.push(fmt.wrap(match[1], `${keyPrefix}-${fmtIdx}-${segIdx}-${next.length}`));
-        lastIndex = match.index + match[0].length;
-      }
-
-      if (lastIndex < seg.length) {
-        next.push(seg.slice(lastIndex));
-      }
-    });
-
-    segments = next;
-  });
-
-  return segments;
-}
-
-function renderFormattedLines(text: string, placeholder: string) {
-  const lines = text ? text.split("\n") : [placeholder];
-
-  return lines.map((line, idx) => {
-    const content = line ? formatWhatsAppLine(line, `line-${idx}`) : [placeholder];
-    return <p key={`line-${idx}`}>{content}</p>;
-  });
-}
-
 // ------------------------------
 // Component
 // ------------------------------
@@ -507,9 +428,6 @@ export default function EditTemplatePage() {
           ((data as any).placeholders as Record<string, unknown> | null) ||
           null;
         const placeholders = rawPlaceholders ? { ...rawPlaceholders } : null;
-        if (placeholders) {
-          delete (placeholders as any).footerText;
-        }
 
         const headerType: TemplateData["headerType"] =
           (data as any).headerType ||
@@ -944,7 +862,6 @@ export default function EditTemplatePage() {
         form.interactiveType === "default" ? undefined : form.interactiveType;
 
       const placeholderData = {
-        footerText: form.footerText,
         buttons: form.buttons,
         interactiveType: apiInteractiveType,
       };
@@ -955,7 +872,6 @@ export default function EditTemplatePage() {
       const cleanedPlaceholders = form.placeholders
         ? { ...form.placeholders }
         : {};
-      delete (cleanedPlaceholders as any).footerText;
 
       const payload = {
         title: form.title,
@@ -1184,8 +1100,31 @@ export default function EditTemplatePage() {
   const totalMenuOptions = activeMenu
     ? countTotalOptions(activeMenu.sections)
     : 0;
-  const hasMenuOptions = totalMenuOptions > 0;
   const previewButtons = (form.buttons || []).slice(0, MAX_QUICK_REPLIES);
+  const previewTitle = form.title?.trim() || "Template title";
+  const previewBody = form.body.trim() || "Body text here";
+  const previewTimestamp = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const previewTemplateName =
+    form.content_key?.trim() || "template_content_key";
+  const previewNormalizedButtons = previewButtons.map((btn) => ({
+    type: btn.type,
+    label: btn.label || "Button",
+    url: btn.url,
+    phone: btn.phone,
+  }));
+  const previewData: PreviewData = {
+    title: previewTitle,
+    body: previewBody,
+    templateName: previewTemplateName,
+    footerText: previewTemplateName,
+    mediaUrl: form.mediaurl?.trim() || undefined,
+    buttons: previewNormalizedButtons,
+    interactiveType: form.interactiveType,
+    timestamp: previewTimestamp,
+  };
 
   // ------------------------------
   // UI: loading / error
@@ -1265,7 +1204,6 @@ export default function EditTemplatePage() {
                 <option value="message">Message</option>
                 <option value="choice">Choice</option>
                 <option value="input">Input</option>
-                <option value="api">Api</option>
               </select>
             </label>
           </div>
@@ -1509,21 +1447,6 @@ export default function EditTemplatePage() {
               onChange={(e) => setForm({ ...form, body: e.target.value })}
             />
           </label>
-
-          {/* FOOTER */}
-          <div className="border-t pt-4 space-y-2">
-            <h4 className="font-semibold text-sm">
-              Footer{" "}
-              <span className="text-xs text-muted-foreground">(Optional)</span>
-            </h4>
-            <input
-              className="w-full border rounded px-3 py-2"
-              value={form.footerText || ""}
-              onChange={(e) =>
-                setForm({ ...form, footerText: e.target.value })
-              }
-            />
-          </div>
 
           {/* BUTTONS (interactiveType = buttons) */}
           {form.interactiveType === "buttons" && (
@@ -1830,117 +1753,7 @@ export default function EditTemplatePage() {
             <p className="text-xs text-muted-foreground">
               Preview of how this saved message block may look when sent as a normal WhatsApp session message.
             </p>
-
-            <div className="mx-auto max-w-xs rounded-2xl border bg-muted p-3">
-              {form.mediaurl?.trim() ? (() => {
-                const mediaUrl = form.mediaurl.trim();
-                const isImage = looksLikeImage(mediaUrl);
-                const isVideo = looksLikeVideo(mediaUrl);
-                const isDoc = looksLikeDocument(mediaUrl);
-                return (
-                  <div className="mb-2 overflow-hidden rounded-md bg-background">
-                    {isVideo ? (
-                      <video
-                        className="w-full max-h-64 bg-black"
-                        controls
-                        muted
-                        playsInline
-                        preload="metadata"
-                        src={mediaUrl}
-                      />
-                    ) : isImage ? (
-                      <img
-                        src={mediaUrl}
-                        className="rounded w-full object-cover max-h-64"
-                        alt="Media preview"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    ) : (
-                      <div className="p-3 text-xs text-muted-foreground space-y-1">
-                        <div className="font-semibold">{isDoc ? "Document" : "Attachment"}</div>
-                        <a
-                          href={mediaUrl}
-                          className="block truncate text-primary hover:underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {mediaUrl}
-                        </a>
-                        <div className="text-[11px]">
-                          Preview shown as a link (non-media file).
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })() : null}
-
-              <div className="bg-background rounded p-2 text-xs shadow">
-                {renderFormattedLines(form.body, "Body text here")}
-              </div>
-
-              {form.interactiveType === "buttons" && previewButtons.length > 0 && (
-                <div className="border-t mt-2 pt-2 space-y-1">
-                  {previewButtons.map((btn) => (
-                    <button
-                      key={btn.id}
-                      className="w-full rounded-full border px-3 py-1.5 text-[11px] text-primary"
-                      type="button"
-                    >
-                      {btn.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {form.interactiveType === "menu" && activeMenu && (
-                <div className="border-t mt-2 pt-2 space-y-1">
-                  <button
-                    type="button"
-                    className="w-full rounded-full border px-3 py-1.5 text-[11px] text-primary"
-                  >
-                    {activeMenu.buttonLabel || "Main Menu"}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {form.interactiveType === "menu" && activeMenu && hasMenuOptions && (
-              <div className="border rounded-lg bg-muted/40 p-3 space-y-2 text-[11px]">
-                {activeMenu.sections.map((section, sectionIdx) => (
-                  <div
-                    key={section.id}
-                    className="border-b last:border-b-0 border-slate-200/80 pb-2 last:pb-0 space-y-1"
-                  >
-                    <div className="font-semibold text-[10px] uppercase tracking-wide text-slate-700">
-                      {(section.title || "").trim() || `Section ${sectionIdx + 1}`}
-                    </div>
-                    {section.options.length === 0 ? (
-                      <div className="text-[10px] text-muted-foreground">
-                        No options in this section.
-                      </div>
-                    ) : (
-                      section.options.map((opt, optIdx) => {
-                        const title = opt.title?.trim() || `Option ${optIdx + 1}`;
-                        const desc = opt.description?.trim();
-                        return (
-                          <div key={opt.id} className="flex items-start gap-2">
-                            <span>-</span>
-                            <span>
-                              {title}
-                              {desc ? ` - ${desc}` : ""}
-                            </span>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
+            <TemplatePreviewPanel preview={previewData} />
             <p className="text-xs text-muted-foreground">
               Visual preview of how your template appears in WhatsApp.
             </p>
@@ -2014,8 +1827,3 @@ export default function EditTemplatePage() {
     </div>
   );
 }
-
-
-
-
-
