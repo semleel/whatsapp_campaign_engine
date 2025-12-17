@@ -17,7 +17,6 @@ import {
 } from "./commands.js";
 import { extractChoiceCodeFromPayload } from "./helpers.js";
 import { runChoiceStep, runInputStep, runStepAndReturnMessages } from "./steps.js";
-import { markSessionCompleted } from "../../controllers/sessionController.js";
 
 async function resolveKeywordFromTitle(title) {
   if (!title) return null;
@@ -703,24 +702,9 @@ async function handleAwaitingFeedbackComment({ contact, session, text }) {
     });
   }
 
-  delete existingPayload.feedback_rating;
-  delete existingPayload.awaiting_feedback_comment;
-  delete existingPayload.feedback_mode;
-  const cleanedPayload =
-    Object.keys(existingPayload).length > 0 ? existingPayload : null;
-
-  await prisma.campaign_session.update({
+  await prisma.campaign_session.delete({
     where: { campaign_session_id: session.campaign_session_id },
-    data: {
-      last_payload_json: cleanedPayload,
-      last_active_at: new Date(),
-    },
   });
-  const completedSession = await markSessionCompleted(session.campaign_session_id);
-  session.session_status = completedSession.session_status;
-  session.last_active_at = completedSession.last_active_at;
-  session.last_payload_json = completedSession.last_payload_json;
-  session.last_payload_type = completedSession.last_payload_type;
 
   return {
       outbound: [

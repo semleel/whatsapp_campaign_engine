@@ -201,8 +201,22 @@ async function getOrCreateFeedbackSession(contactId) {
   return session;
 }
 
+const deleteFeedbackSessionRow = async (session) => {
+  if (!session?.campaign_session_id) return;
+  await prisma.campaign_session.delete({
+    where: { campaign_session_id: session.campaign_session_id },
+  });
+};
+
+const isFeedbackSession = (session) => session?.last_payload_type === "system_feedback";
+
 const cancelActiveSession = async (session) => {
   if (!session?.campaign_session_id) return;
+
+  if (isFeedbackSession(session)) {
+    await deleteFeedbackSessionRow(session);
+    return;
+  }
 
   await prisma.campaign_session.update({
     where: { campaign_session_id: session.campaign_session_id },
@@ -218,6 +232,11 @@ const cancelActiveSession = async (session) => {
 
 const expireActiveSession = async (session) => {
   if (!session?.campaign_session_id) return;
+
+  if (isFeedbackSession(session)) {
+    await deleteFeedbackSessionRow(session);
+    return;
+  }
 
   await prisma.campaign_session.update({
     where: { campaign_session_id: session.campaign_session_id },
