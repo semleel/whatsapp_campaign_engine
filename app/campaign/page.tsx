@@ -87,16 +87,32 @@ export default function CampaignsPage() {
     );
   }
 
-  const handleEdit = (id: number) => {
+  const handleView = (id: number) => {
+    router.push(`/campaign/${id}`);
+  };
+
+  const handleEdit = (campaign: Campaign) => {
+    if (campaign.is_active) {
+      const msg = "Active campaigns cannot be edited. Deactivate first.";
+      setErrorMessage(msg);
+      void showCenteredAlert(msg);
+      return;
+    }
     if (!canUpdate) {
       void showPrivilegeDenied({ action: "edit campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to edit campaigns.");
       return;
     }
-    router.push(`/campaign/${id}`);
+    router.push(`/campaign/${campaign.campaignid}`);
   };
 
-  const handleArchive = async (id: number) => {
+  const handleArchive = async (campaign: Campaign) => {
+    if (campaign.is_active) {
+      const msg = "Active campaigns cannot be archived. Deactivate first.";
+      setErrorMessage(msg);
+      await showCenteredAlert(msg);
+      return;
+    }
     if (!canArchive) {
       await showPrivilegeDenied({ action: "archive campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to archive campaigns.");
@@ -105,9 +121,9 @@ export default function CampaignsPage() {
     const confirmed = await showCenteredConfirm("Archive this campaign?");
     if (!confirmed) return;
     try {
-      await Api.archiveCampaign(id);
+      await Api.archiveCampaign(campaign.campaignid);
       await showCenteredAlert("Campaign archived successfully.");
-      setCampaigns((prev) => prev.filter((c) => c.campaignid !== id));
+      setCampaigns((prev) => prev.filter((c) => c.campaignid !== campaign.campaignid));
     } catch (err) {
       console.error(err);
       setErrorMessage(
@@ -122,6 +138,7 @@ export default function CampaignsPage() {
     status?: string | null
   ) => {
     if (!canUpdate) {
+      void showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
       setErrorMessage("You do not have permission to update campaigns.");
       return;
     }
@@ -274,10 +291,8 @@ export default function CampaignsPage() {
                   "bg-slate-100 text-slate-700";
 
                 const isRunning = !!c.is_active; // when flagged active, lock edits/archiving
-                const editable = canUpdate && !isRunning;
-                const allowPause = false; // we now gate by is_active, not status-based pause
-                const allowEdit = editable;
-                const allowArchive = canArchive && !isRunning;
+                const allowEdit = !isRunning;
+                const allowArchive = !isRunning;
                 const missingKeyword = c.hasKeyword === false;
                 const missingSteps = c.hasSteps === false;
                 const hasDisabledApi = c.hasDisabledApi === true;
@@ -379,7 +394,7 @@ export default function CampaignsPage() {
                             c.currentstatus
                           )
                         }
-                        disabled={!canUpdate}
+                        disabled={privLoading}
                         className={`relative h-6 w-11 overflow-hidden rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${
                           c.is_active ? "bg-emerald-500 border-emerald-600" : "bg-slate-200 border-slate-300"
                         } ${!canUpdate ? "cursor-not-allowed opacity-60" : "hover:opacity-90"}`}
@@ -395,41 +410,44 @@ export default function CampaignsPage() {
                       </button>
                     </td>
                     <td className="px-3 py-2 text-right space-x-2">
-                      {allowEdit ? (
-                        <button
-                          onClick={() => allowEdit && handleEdit(c.campaignid)}
-                          disabled={!allowEdit}
-                          title={
-                            allowEdit
-                              ? "Edit campaign & schedule"
-                              : "Cannot edit this campaign."
-                          }
-                          className={`rounded border px-2 py-1 text-xs font-medium hover:bg-muted ${
-                            !allowEdit
-                              ? "cursor-not-allowed opacity-50 hover:bg-transparent"
-                              : ""
-                          }`}
-                        >
-                          Edit
-                        </button>
-                      ) : null}
-                      {allowArchive ? (
-                        <button
-                          onClick={() => handleArchive(c.campaignid)}
-                          className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
-                          disabled={!allowArchive}
-                          title={
-                            allowArchive
-                              ? "Archive campaign"
-                              : "Cannot archive while active"
-                          }
-                        >
-                          Archive
-                        </button>
-                      ) : null}
-                      {!allowEdit && !allowArchive && (
-                        <span className="text-xs text-muted-foreground">No actions</span>
-                      )}
+                      <button
+                        onClick={() => handleView(c.campaignid)}
+                        className="rounded border px-2 py-1 text-xs font-medium hover:bg-muted"
+                      >
+                        View
+                      </button>
+                      <button
+                        onClick={() => handleEdit(c)}
+                        disabled={!allowEdit}
+                        title={
+                          isRunning
+                            ? "Cannot edit an active campaign."
+                            : "Edit campaign & schedule"
+                        }
+                        className={`rounded border px-2 py-1 text-xs font-medium hover:bg-muted ${
+                          (!canUpdate || isRunning)
+                            ? "cursor-not-allowed opacity-50 hover:bg-transparent"
+                            : ""
+                        }`}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleArchive(c)}
+                        disabled={!allowArchive}
+                        className={`rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50 ${
+                          (!canArchive || isRunning)
+                            ? "cursor-not-allowed opacity-50 hover:bg-transparent"
+                            : ""
+                        }`}
+                        title={
+                          isRunning
+                            ? "Cannot archive while active"
+                            : "Archive campaign"
+                        }
+                      >
+                        Archive
+                      </button>
                     </td>
                   </tr>
                 );

@@ -1,3 +1,5 @@
+"use client";
+
 // lib/client.ts
 
 const API_BASE =
@@ -24,6 +26,27 @@ function withBase(path: string) {
 
 import { getStoredToken, clearStoredSession } from "./auth";
 
+type PrivilegeErrorDetails = {
+  error?: string;
+  message?: string;
+  details?: { action?: string; resource?: string };
+  action?: string;
+  resource?: string;
+};
+
+async function maybeShowPrivilegeAlert(details: PrivilegeErrorDetails | null, status: number) {
+  if (typeof window === "undefined" || status !== 403) return;
+  try {
+    const { showPrivilegeDenied } = await import("./showAlert");
+    const action = details?.details?.action || details?.action;
+    const resource = details?.details?.resource || details?.resource;
+    const message = details?.error || details?.message;
+    void showPrivilegeDenied({ action, resource, message });
+  } catch (err) {
+    console.warn("[client] Failed to show privilege alert", err);
+  }
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const url = withBase(path);
   const token = typeof window !== "undefined" ? getStoredToken() : null;
@@ -43,6 +66,9 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
       details = await res.json();
     } catch {
       // ignore
+    }
+    if (res.status === 403) {
+      void maybeShowPrivilegeAlert(details, res.status);
     }
     if (res.status === 401) {
       // Token missing/expired/revoked; reset client session so the user can log back in cleanly.
@@ -363,10 +389,9 @@ export const Api = {
   getReportSummary: () => http<ReportSummary>(`/api/report/summary`),
 
   // Feedback
-  listFeedback: (filters: { rating?: number; minRating?: number; hasComment?: boolean } = {}) => {
+  listFeedback: (filters: { rating?: "good" | "neutral" | "bad"; hasComment?: boolean } = {}) => {
     const params = new URLSearchParams();
-    if (filters.rating != null) params.append("rating", String(filters.rating));
-    if (filters.minRating != null) params.append("minRating", String(filters.minRating));
+    if (filters.rating) params.append("rating", filters.rating);
     if (filters.hasComment) params.append("hasComment", "true");
     const qs = params.toString();
     return http<{ items: FeedbackEntry[] }>(`/api/feedback${qs ? `?${qs}` : ""}`);

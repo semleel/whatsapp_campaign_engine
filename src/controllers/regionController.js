@@ -42,6 +42,15 @@ export async function getCampaignStatuses(_req, res) {
   }
 }
 
+export async function createUserFlow(req, res) {
+  try {
+    return res.status(501).json({ error: "User flows are not supported in this schema." });
+  } catch (err) {
+    console.error("Create user flow error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 export async function createRegion(req, res) {
   try {
     const { regionName, regionCode } = req.body || {};
@@ -68,15 +77,6 @@ export async function createRegion(req, res) {
     });
   } catch (err) {
     console.error("Create region error:", err);
-    return res.status(500).json({ error: err.message });
-  }
-}
-
-export async function createUserFlow(req, res) {
-  try {
-    return res.status(501).json({ error: "User flows are not supported in this schema." });
-  } catch (err) {
-    console.error("Create user flow error:", err);
     return res.status(500).json({ error: err.message });
   }
 }

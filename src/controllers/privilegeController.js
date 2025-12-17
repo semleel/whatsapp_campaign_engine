@@ -7,8 +7,6 @@ const DEFAULT_BASELINE_PRIVILEGES = [
   "overview",
   "campaigns",
   "content",
-  "flows",
-  "contacts",
   "integration",
   "feedback",
   "reports",

@@ -7,12 +7,16 @@ import { Api } from "@/lib/client";
 import { usePrivilege } from "@/lib/permissions";
 import type { FeedbackEntry } from "@/lib/types";
 
-const RATINGS = [5, 4, 3, 2, 1];
+const RATING_OPTIONS: Array<{ value: "good" | "neutral" | "bad"; label: string }> = [
+  { value: "good", label: "😊 Good" },
+  { value: "neutral", label: "😐 Neutral" },
+  { value: "bad", label: "😞 Bad" },
+];
 
 export default function FeedbackPage() {
   const { canView, loading: privLoading } = usePrivilege("feedback");
   const [items, setItems] = useState<FeedbackEntry[]>([]);
-  const [ratingFilter, setRatingFilter] = useState<number | null>(null);
+  const [ratingFilter, setRatingFilter] = useState<"good" | "neutral" | "bad" | null>(null);
   const [onlyWithComment, setOnlyWithComment] = useState(false);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -69,7 +73,7 @@ export default function FeedbackPage() {
         <div>
           <h2 className="text-xl font-semibold">Feedback</h2>
           <p className="text-sm text-muted-foreground">
-            Ratings and comments collected from users (1–5 stars).
+            Ratings and comments collected from users (Good / Neutral / Bad).
           </p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
@@ -85,18 +89,18 @@ export default function FeedbackPage() {
             >
               All
             </button>
-            {RATINGS.map((r) => (
+            {RATING_OPTIONS.map((opt) => (
               <button
-                key={r}
+                key={opt.value}
                 type="button"
-                onClick={() => setRatingFilter(r === ratingFilter ? null : r)}
+                onClick={() => setRatingFilter(opt.value === ratingFilter ? null : opt.value)}
                 className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                  ratingFilter === r
+                  ratingFilter === opt.value
                     ? "bg-primary text-primary-foreground shadow-sm border-primary/60"
                     : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
                 }`}
               >
-                {r}★
+                {opt.label}
               </button>
             ))}
           </div>
@@ -147,7 +151,11 @@ export default function FeedbackPage() {
                 ) : (
                   filtered.map((f) => (
                     <tr key={f.feedback_id} className="border-t">
-                      <td className="px-3 py-2 font-medium">{f.rating ?? "-"}</td>
+                      <td className="px-3 py-2 font-medium">
+                        {f.rating
+                          ? RATING_OPTIONS.find((opt) => opt.value === f.rating)?.label || f.rating
+                          : "-"}
+                      </td>
                       <td className="px-3 py-2 text-muted-foreground">
                         {f.comment || <span className="text-xs text-muted-foreground">No comment</span>}
                       </td>

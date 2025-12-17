@@ -7,7 +7,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
 import type { RegionRef, KeywordEntry } from "@/lib/types";
-import { showCenteredConfirm } from "@/lib/showAlert";
+import { showCenteredConfirm, showPrivilegeDenied } from "@/lib/showAlert";
+import { usePrivilege } from "@/lib/permissions";
 
 const formatDateForInput = (value?: string | null) => {
   if (!value) return "";
@@ -27,6 +28,7 @@ const KEYWORD_PATTERN = /^[a-z0-9]+$/;
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { loading: privLoading, canView, canUpdate } = usePrivilege("campaigns");
   const navLinkClass =
     "inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1.5 text-sm font-semibold text-primary shadow-sm hover:bg-secondary/80";
   const backIcon = (
@@ -56,9 +58,17 @@ export default function CampaignDetailPage() {
   const [keywordDraft, setKeywordDraft] = useState("");
   const [keywordLoading, setKeywordLoading] = useState(false);
   const [keywordMessage, setKeywordMessage] = useState("");
+  const readOnly = !canUpdate;
+  const showReadOnlyNotice = !privLoading && !canUpdate;
 
   useEffect(() => {
-    if (!id) return;
+    if (!privLoading && !canView) {
+      setLoading(false);
+    }
+  }, [privLoading, canView]);
+
+  useEffect(() => {
+    if (!id || privLoading || !canView) return;
     (async () => {
       try {
         const [regionRes, campaignRes, keywordRes] = await Promise.all([
@@ -86,7 +96,7 @@ export default function CampaignDetailPage() {
         setLoading(false);
       }
     })();
-  }, [id]);
+  }, [id, privLoading, canView]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -96,6 +106,11 @@ export default function CampaignDetailPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
+      setMessage("You do not have permission to update campaigns.");
+      return;
+    }
     setMessage("Saving...");
     try {
       await Api.updateCampaign(id, {
@@ -115,6 +130,11 @@ export default function CampaignDetailPage() {
   const handleAddKeyword = async () => {
     const raw = keywordDraft.trim().toLowerCase();
     if (!raw || !id) return;
+    if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
+      setKeywordMessage("You do not have permission to update campaigns.");
+      return;
+    }
 
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
@@ -166,6 +186,11 @@ export default function CampaignDetailPage() {
 
   // Delete keyword
   const handleDeleteKeyword = async (keywordid: number) => {
+    if (!canUpdate) {
+      await showPrivilegeDenied({ action: "update campaigns", resource: "Campaigns" });
+      setKeywordMessage("You do not have permission to update campaigns.");
+      return;
+    }
     const confirmed = await showCenteredConfirm("Remove this keyword from this campaign?");
     if (!confirmed) return;
     setKeywordLoading(true);
@@ -181,6 +206,13 @@ export default function CampaignDetailPage() {
       setKeywordLoading(false);
     }
   };
+
+  if (!privLoading && !canView)
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+        You do not have permission to view this campaign.
+      </div>
+    );
 
   if (loading)
     return (
@@ -215,6 +247,12 @@ export default function CampaignDetailPage() {
         </div>
       </div>
 
+      {showReadOnlyNotice && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          You have view-only access to this campaign. Contact an admin to edit, archive, or change keywords.
+        </div>
+      )}
+
       <form
         onSubmit={handleSubmit}
         className="rounded-xl border bg-card p-6 space-y-5"
@@ -233,7 +271,8 @@ export default function CampaignDetailPage() {
               name="campaignName"
               value={form.campaignName}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
+              disabled={readOnly}
+              className="w-full rounded-md border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
               required
             />
           </label>
@@ -243,7 +282,8 @@ export default function CampaignDetailPage() {
               name="objective"
               value={form.objective}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2 min-h-[80px]"
+              disabled={readOnly}
+              className="w-full rounded-md border px-3 py-2 min-h-[80px] disabled:cursor-not-allowed disabled:opacity-60"
               placeholder="Describe what this campaign is trying to achieve."
             />
           </label>
@@ -257,7 +297,8 @@ export default function CampaignDetailPage() {
               name="targetRegionID"
               value={form.targetRegionID}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
+              disabled={readOnly}
+              className="w-full rounded-md border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="">Select region</option>
               {regions.map((region) => (
@@ -282,7 +323,8 @@ export default function CampaignDetailPage() {
               name="startAt"
               value={form.startAt}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
+              disabled={readOnly}
+              className="w-full rounded-md border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
           <label className="space-y-1 text-sm font-medium">
@@ -292,7 +334,8 @@ export default function CampaignDetailPage() {
               name="endAt"
               value={form.endAt}
               onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
+              disabled={readOnly}
+              className="w-full rounded-md border px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
         </div>
@@ -326,14 +369,15 @@ export default function CampaignDetailPage() {
               type="text"
               value={keywordDraft}
               onChange={(e) => setKeywordDraft(e.target.value)}
-              className="rounded-md border px-3 py-2 text-sm flex-1 min-w-[180px]"
+              disabled={readOnly}
+              className="rounded-md border px-3 py-2 text-sm flex-1 min-w-[180px] disabled:cursor-not-allowed disabled:opacity-60"
               placeholder="Add keyword (single word, e.g. weather)"
             />
             <button
               type="button"
               onClick={handleAddKeyword}
-              disabled={keywordLoading || !keywordDraft.trim()}
-              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm disabled:opacity-60"
+              disabled={keywordLoading || !keywordDraft.trim() || readOnly}
+              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {keywordLoading ? "Saving..." : "Add keyword"}
             </button>
@@ -358,7 +402,8 @@ export default function CampaignDetailPage() {
                     <button
                       type="button"
                       onClick={() => handleDeleteKeyword(k.keywordid)}
-                      className="text-[11px] text-rose-600 hover:text-rose-700"
+                      disabled={readOnly}
+                      className="text-[11px] text-rose-600 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       x
                     </button>
@@ -383,7 +428,8 @@ export default function CampaignDetailPage() {
           </Link>
           <button
             type="submit"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+            disabled={readOnly}
+            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Save changes
           </button>

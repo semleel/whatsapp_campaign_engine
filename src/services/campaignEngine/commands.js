@@ -18,8 +18,8 @@ const CAMPAIGN_MENU_LIMIT = 10;
 
 const FEEDBACK_OPTIONS = [
   { id: "good", title: "😊 Good" },
-  { id: "neutral", title: "😑 Neutral" },
-  { id: "bad", title: "😞 Bad" },
+  { id: "neutral", title: "😐 Neutral" },
+  { id: "bad", title: "😟 Bad" },
 ];
 
 const DESTRUCTIVE_COMMANDS = new Set([
@@ -160,19 +160,27 @@ export async function showMainMenuWithUnknownKeyword(contact, attemptedKeyword) 
 
 const buildFeedbackButtonMessage = (contact) => {
   const bodyText = "How was your experience?";
+  const rows = FEEDBACK_OPTIONS.map((opt) => ({
+    id: opt.id,
+    title: opt.title,
+  }));
+
   return {
     to: contact.phone_num,
     content: bodyText,
     waPayload: {
       type: "interactive",
       interactive: {
-        type: "button",
+        type: "list",
         body: { text: bodyText },
         action: {
-          buttons: FEEDBACK_OPTIONS.map((opt) => ({
-            type: "reply",
-            reply: { id: opt.id, title: opt.title },
-          })),
+          button: "Choose",
+          sections: [
+            {
+              title: "Feedback options",
+              rows,
+            },
+          ],
         },
       },
     },
@@ -256,15 +264,15 @@ export async function handleFeedbackCommand(contact, text, session = null) {
     };
   }
 
-    return {
-      outbound: [
-        {
-          to: contact.phone_num,
-          content:
-            "Please choose a feedback option using `/feedback` and tap a button (Good / Neutral / Bad).",
-        },
-      ],
-    };
+  return {
+    outbound: [
+      {
+        to: contact.phone_num,
+        content: "Please pick a feedback option below.",
+        waPayload: buildFeedbackButtonMessage(contact).waPayload,
+      },
+    ],
+  };
 }
 
 export async function handleSystemCommand({ contact, command, rawText, session }) {

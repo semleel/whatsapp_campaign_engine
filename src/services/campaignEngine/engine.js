@@ -125,7 +125,7 @@ export async function handleIncomingMessage(args) {
         outbound: [
           {
             to: contact.phone_num,
-            content: "Please tap one of the feedback buttons (Good / Neutral / Bad).",
+            content: "Please pick one of the feedback options (Good / Neutral / Bad).",
           },
         ],
       };
@@ -145,7 +145,7 @@ export async function handleIncomingMessage(args) {
       outbound: [
         {
           to: contact.phone_num,
-          content: "Please complete the feedback 🙂",
+          content: "Please complete your feedback by choosing Good, Neutral, or Bad.",
         },
       ],
     };

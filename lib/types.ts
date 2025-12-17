@@ -514,7 +514,7 @@ export type FeedbackEntry = {
     contact_phone?: string | null;
     contact_name?: string | null;
     campaign_session_id?: number | null;
-    rating: number | null;
+    rating: "good" | "neutral" | "bad" | null;
     comment: string | null;
     created_at?: string | null;
 };
