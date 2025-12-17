@@ -440,7 +440,6 @@ const mapStepResponse = (step) => {
       choice_code: c.choice_code,
       label: c.label,
       next_step_id: c.next_step_id,
-      is_correct: c.is_correct,
     })),
     choice_mode: step.choice_mode,
     interaction_config: step.interaction_config ?? null,
@@ -685,8 +684,6 @@ export async function saveStepChoices(req, res) {
           choice_code: c.choice_code || c.choicecode || "",
           label: c.label || "",
           next_step_id: resolvedNextStepId,
-          is_correct:
-            typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
         };
 
         if (choiceId) {
@@ -950,7 +947,6 @@ export async function saveCampaignStepsBulk(req, res) {
             choice_code: c.choice_code || "",
             label: c.label || "",
             next_step_id: choiceNextStep,
-            is_correct: typeof c.is_correct === "boolean" ? c.is_correct : !!c.isCorrect,
           };
           if (choiceId > 0) {
             await tx.campaign_step_choice.update({

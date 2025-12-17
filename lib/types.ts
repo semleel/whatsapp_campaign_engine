@@ -327,7 +327,6 @@ export type CampaignStepChoice = {
     choice_code: string;
     label: string;
     next_step_id: number | null;
-    is_correct?: boolean | null;
 };
 
 export type CampaignStepWithChoices = CampaignStep & {

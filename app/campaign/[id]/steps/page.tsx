@@ -531,7 +531,6 @@ export default function CampaignStepsPage() {
       choice_code: "",
       label: "",
       next_step_id: null,
-      is_correct: false,
     };
     updateStep(stepIndex, {
       campaign_step_choice: [...(current.campaign_step_choice || []), choice],
@@ -667,7 +666,6 @@ export default function CampaignStepsPage() {
                         : `CHOICE_${idx + 1}`,
                     label: c.label,
                     next_step_id: null,
-                    is_correct: null,
                   }))
                   : s.campaign_step_choice,
                 error_message:
@@ -1686,31 +1684,8 @@ export default function CampaignStepsPage() {
                                                                 })}
                                                             </select>
                                                           </label>
-                                                          <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
-                                                            <input
-                                                              type="checkbox"
-                                                              checked={!!choice.is_correct}
-                                                              onChange={(e) =>
-                                                                updateChoice(idx, cidx, { is_correct: e.target.checked })
-                                                              }
-                                                              className="h-4 w-4"
-                                                            />
-                                                            Mark as correct
-                                                          </label>
                                                         </div>
-                                                      ) : (
-                                                        <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
-                                                          <input
-                                                            type="checkbox"
-                                                            checked={!!choice.is_correct}
-                                                            onChange={(e) =>
-                                                              updateChoice(idx, cidx, { is_correct: e.target.checked })
-                                                            }
-                                                            className="h-4 w-4"
-                                                          />
-                                                          Mark as correct
-                                                        </label>
-                                                      )}
+                                                      ) : null}
                                                     </div>
                                                   );
                                                 })
