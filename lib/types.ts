@@ -22,6 +22,7 @@ export type EndpointConfig = {
     auth_header_name: string | null;
     auth_token: string | null;
     is_active: boolean;
+    is_deleted?: boolean;
     headers_json?: { key: string; value: string }[];
     body_template?: string | null;
     response_template?: string | null;
@@ -513,7 +514,6 @@ export type FeedbackEntry = {
     contact_id: number | null;
     contact_phone?: string | null;
     contact_name?: string | null;
-    campaign_session_id?: number | null;
     rating: "good" | "neutral" | "bad" | null;
     comment: string | null;
     created_at?: string | null;

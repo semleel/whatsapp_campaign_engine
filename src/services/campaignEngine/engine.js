@@ -13,9 +13,11 @@ import {
   handleSystemCommand,
   buildLetContinueMessage,
   buildExitHintMessage,
+  buildStartMessage,
 } from "./commands.js";
 import { extractChoiceCodeFromPayload } from "./helpers.js";
 import { runChoiceStep, runInputStep, runStepAndReturnMessages } from "./steps.js";
+import { markSessionCompleted } from "../../controllers/sessionController.js";
 
 async function resolveKeywordFromTitle(title) {
   if (!title) return null;
@@ -295,7 +297,7 @@ export async function handleIncomingMessage(args) {
   }
 
   if (campaignFromKeyword) {
-    const activeAny = await findActiveSession(contact.contact_id);
+    const activeAny = await findActiveSession(contact.contact_id, undefined, { allowSystemFeedback: false });
     if (
       activeAny &&
       activeAny.campaign_id &&
@@ -315,7 +317,8 @@ export async function handleIncomingMessage(args) {
 
     const activeForCampaign = await findActiveSession(
       contact.contact_id,
-      campaignFromKeyword.campaign_id
+      campaignFromKeyword.campaign_id,
+      { allowSystemFeedback: false }
     );
     if (activeForCampaign) {
       return continueCampaignSession({
@@ -373,7 +376,10 @@ export async function handleIncomingMessage(args) {
     return startCampaignAtFirstStep({ contact, session: newSession });
   }
 
-  const session = activeSession;
+  let session = activeSession;
+  if (session && session.session_status === "COMPLETED") {
+    session = null;
+  }
 
   if (session) {
     return continueCampaignSession({
@@ -666,6 +672,7 @@ async function handleAwaitingFeedbackComment({ contact, session, text }) {
           to: contact.phone_num,
           content: "Thanks for your feedback! 🙏",
         },
+        buildStartMessage(contact),
       ],
     };
   }
@@ -684,7 +691,6 @@ async function handleAwaitingFeedbackComment({ contact, session, text }) {
     await prisma.service_feedback.create({
       data: {
         contact_id: contact.contact_id,
-        campaign_session_id: session.campaign_session_id,
         rating,
         comment,
       },
@@ -704,15 +710,20 @@ async function handleAwaitingFeedbackComment({ contact, session, text }) {
       last_active_at: new Date(),
     },
   });
-  session.last_payload_json = cleanedPayload;
+  const completedSession = await markSessionCompleted(session.campaign_session_id);
+  session.session_status = completedSession.session_status;
+  session.last_active_at = completedSession.last_active_at;
+  session.last_payload_json = completedSession.last_payload_json;
+  session.last_payload_type = completedSession.last_payload_type;
 
   return {
-    outbound: [
-      {
-        to: contact.phone_num,
-        content: "Thanks for your feedback! 🙏",
-      },
-    ],
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Thanks for your feedback! 🙏",
+        },
+        buildStartMessage(contact),
+      ],
   };
 }
 

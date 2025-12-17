@@ -36,8 +36,11 @@ model api {
   url               String
   headers_json      Json?
   body_template     Json?
+  is_deleted        Boolean         @default(false)
   api_log           api_log[]
   campaign_step     campaign_step[]
+
+  @@index([is_deleted], map: "idx_api_is_deleted")
 }
 
 model api_log {
@@ -127,7 +130,6 @@ model campaign_session {
   contact             contact             @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction)
   campaign_step       campaign_step?      @relation(fields: [current_step_id], references: [step_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_session_current_step_fk")
   message             message[]
-  service_feedback    service_feedback[]
   session_log         session_log[]
 }
 
@@ -150,7 +152,6 @@ model campaign_step {
   template_source_id                                                    Int?
   choice_mode                                                           String                 @default("branch") @db.VarChar(20)
   interaction_config                                                    Json?
-  placeholders                                                          Json?
   campaign_response                                                     campaign_response[]
   campaign_session                                                      campaign_session[]
   api                                                                   api?                   @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)
@@ -254,14 +255,12 @@ model message {
 }
 
 model service_feedback {
-  feedback_id         Int               @id @default(autoincrement())
-  contact_id          Int
-  rating              String?           @db.VarChar
-  comment             String?
-  created_at          DateTime?         @default(now()) @db.Timestamp(6)
-  campaign_session_id Int?
-  contact             contact           @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_feedback_contact_id_fkey")
-  campaign_session    campaign_session? @relation(fields: [campaign_session_id], references: [campaign_session_id], onDelete: NoAction, onUpdate: NoAction)
+  feedback_id Int       @id @default(autoincrement())
+  contact_id  Int
+  rating      String?   @db.VarChar
+  comment     String?
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  contact     contact   @relation(fields: [contact_id], references: [contact_id], onDelete: NoAction, onUpdate: NoAction, map: "campaign_feedback_contact_id_fkey")
 }
 
 model session_log {

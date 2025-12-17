@@ -63,18 +63,26 @@ export async function findOrCreateContact(phone) {
   return contact;
 }
 
-export async function findActiveSession(contactId, campaignId) {
+export async function findActiveSession(contactId, campaignId, options = {}) {
   const cutoff = new Date(Date.now() - SESSION_EXPIRY_MINUTES * 60_000);
+  const { allowSystemFeedback = true } = options;
 
-  return prisma.campaign_session.findFirst({
+  const session = await prisma.campaign_session.findFirst({
     where: {
       contact_id: contactId,
       ...(campaignId ? { campaign_id: campaignId } : {}),
-      session_status: "ACTIVE",
+      session_status: { in: ["ACTIVE", "PAUSED"] },
       last_active_at: { gte: cutoff },
     },
     include: { campaign: true },
   });
+
+  if (!session) return null;
+  if (!allowSystemFeedback && session.last_payload_type === "system_feedback") {
+    return null;
+  }
+
+  return session;
 }
 
 export async function findExpiredSession(contactId, campaignId) {

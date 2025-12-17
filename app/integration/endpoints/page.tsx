@@ -49,14 +49,14 @@ export default function EndpointsPage() {
     void refresh();
   }, [canView, privLoading]);
 
-  const handleDelete = async (endpoint: EndpointConfig) => {
+  const handleArchive = async (endpoint: EndpointConfig) => {
     if (!canArchive) {
-      await showPrivilegeDenied({ action: "delete endpoints", resource: "Integrations" });
-      setError("You do not have permission to delete endpoints.");
+      await showPrivilegeDenied({ action: "archive endpoints", resource: "Integrations" });
+      setError("You do not have permission to archive endpoints.");
       return;
     }
     const confirmed = await showCenteredConfirm(
-      `Delete endpoint "${endpoint.name || endpoint.apiid}"?`
+      `Archive endpoint '${endpoint.name || endpoint.apiid}'? This will disable it but keep logs.`
     );
     if (!confirmed) return;
     try {
@@ -67,7 +67,7 @@ export default function EndpointsPage() {
       await Api.deleteEndpoint(endpoint.apiid);
       await refresh();
     } catch (err: any) {
-      setError(err?.message || "Failed to delete endpoint");
+      setError(err?.message || "Failed to archive endpoint");
     }
   };
 
@@ -79,6 +79,10 @@ export default function EndpointsPage() {
   const handleToggleActive = async (endpoint: EndpointConfig) => {
     if (!canUpdate) {
       setError("You do not have permission to update endpoints.");
+      return;
+    }
+    if (endpoint.is_deleted) {
+      setError("Archived endpoints cannot be reactivated.");
       return;
     }
     if (endpoint.apiid == null) {
@@ -117,13 +121,25 @@ export default function EndpointsPage() {
             API definitions for campaign engine. Stored in <code>api</code> table.
           </p>
         </div>
-        {canCreate && (
-          <Link
-            href="/integration/endpoints/create"
-            className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
-          >
-            New endpoint
-          </Link>
+        {(canView || canCreate) && (
+          <div className="flex flex-wrap gap-2">
+            {canView && (
+              <Link
+                href="/integration/endpoints/archived"
+                className="inline-flex items-center rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/80"
+              >
+                Archived APIs
+              </Link>
+            )}
+            {canCreate && (
+              <Link
+                href="/integration/endpoints/create"
+                className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90"
+              >
+                New endpoint
+              </Link>
+            )}
+          </div>
         )}
       </div>
 
@@ -183,15 +199,15 @@ export default function EndpointsPage() {
                       <button
                         type="button"
                         onClick={() => handleToggleActive(endpoint)}
-                        disabled={!canUpdate}
+                        disabled={!canUpdate || endpoint.is_deleted}
                         className={`relative h-6 w-11 overflow-hidden rounded-full border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${
                           isActive
                             ? "bg-emerald-500 border-emerald-600"
                             : "bg-slate-200 border-slate-300"
-                        } ${!canUpdate ? "cursor-not-allowed opacity-60" : "hover:opacity-90"}`}
+                        } ${!canUpdate || endpoint.is_deleted ? "cursor-not-allowed opacity-60" : "hover:opacity-90"}`}
                         aria-pressed={isActive}
                         aria-label={isActive ? "Deactivate endpoint" : "Activate endpoint"}
-                        aria-disabled={!canUpdate}
+                        aria-disabled={!canUpdate || endpoint.is_deleted}
                       >
                         <span
                           className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
@@ -210,10 +226,10 @@ export default function EndpointsPage() {
                       {canArchive ? (
                         <button
                           type="button"
-                          onClick={() => handleDelete(endpoint)}
+                          onClick={() => handleArchive(endpoint)}
                           className="rounded border px-2 py-1 text-xs font-medium text-rose-600 hover:bg-rose-50"
                         >
-                          Delete
+                          Archive
                         </button>
                       ) : (
                         !canUpdate && (

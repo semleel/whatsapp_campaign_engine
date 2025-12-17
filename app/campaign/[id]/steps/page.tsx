@@ -4,7 +4,7 @@
 
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -384,6 +384,7 @@ function SortableStepRow({
 }
 
 export default function CampaignStepsPage() {
+  const router = useRouter();
   const { id } = useParams<{ id: string }>();
   const { loading: privLoading, canView, canUpdate } = usePrivilege("campaigns");
   const navLinkClass =
@@ -800,6 +801,8 @@ export default function CampaignStepsPage() {
       setSteps(mapped);
       setExpandedIndex(mapped.length ? 0 : null);
       await showCenteredAlert("Steps saved.");
+      await router.push("/campaign");
+      return;
     } catch (err) {
       console.error(err);
       await showCenteredAlert(err instanceof Error ? err.message : "Failed to save steps.");

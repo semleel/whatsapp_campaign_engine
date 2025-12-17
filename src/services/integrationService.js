@@ -277,6 +277,12 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
   if (!endpoint) throw new Error("Endpoint not found");
 
   const endpointNumericId = endpoint.id ?? endpoint.api_id ?? Number(endpointId);
+  if (endpoint.isDeleted) {
+    const err = new Error("This API has been archived.");
+    err.code = "API_ARCHIVED";
+    err.apiId = endpointNumericId;
+    throw err;
+  }
 
   const apiMeta = {
     apiId: endpointNumericId ?? endpointId,

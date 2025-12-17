@@ -102,6 +102,7 @@ function mapApiToEndpointConfig(row) {
     auth_header_name: row.auth_header_name,
     auth_token: row.auth_token,
     is_active: row.is_active ?? true,
+    is_deleted: Boolean(row.is_deleted),
     headers_json: headers,
     body_template: bodyTemplate,
     lastupdated: row.last_updated ? row.last_updated.toISOString() : null,
@@ -111,6 +112,7 @@ function mapApiToEndpointConfig(row) {
 export async function listEndpoints(req, res) {
   try {
     const rows = await prisma.api.findMany({
+      where: { is_deleted: false },
       orderBy: { api_id: "asc" },
     });
     const payload = rows.map(mapApiToEndpointConfig);
@@ -118,6 +120,22 @@ export async function listEndpoints(req, res) {
   } catch (err) {
     console.error("[integration:endpoints] list error:", err);
     return res.status(500).json({ error: err.message || "Failed to load endpoints" });
+  }
+}
+
+export async function listArchivedEndpoints(req, res) {
+  try {
+    const rows = await prisma.api.findMany({
+      where: { is_deleted: true },
+      orderBy: { last_updated: "desc" },
+    });
+    const payload = rows.map(mapApiToEndpointConfig);
+    return res.json(payload);
+  } catch (err) {
+    console.error("[integration:endpoints] archived list error:", err);
+    return res
+      .status(500)
+      .json({ error: err.message || "Failed to load archived endpoints" });
   }
 }
 
@@ -132,6 +150,9 @@ export async function getEndpoint(req, res) {
       where: { api_id: id },
     });
     if (!apiRow) {
+      return res.status(404).json({ error: "Endpoint not found" });
+    }
+    if (apiRow.is_deleted) {
       return res.status(404).json({ error: "Endpoint not found" });
     }
     return res.json(mapApiToEndpointConfig(apiRow));
@@ -176,6 +197,9 @@ export async function updateEndpoint(req, res) {
     const existing = await prisma.api.findUnique({ where: { api_id: id } });
     if (!existing) {
       return res.status(404).json({ error: "Endpoint not found" });
+    }
+    if (existing.is_deleted) {
+      return res.status(400).json({ error: "Cannot update an archived endpoint" });
     }
   } catch (err) {
     console.error("[integration:endpoints] lookup error:", err);
@@ -223,19 +247,49 @@ export async function deleteEndpoint(req, res) {
       return res.status(404).json({ error: "Endpoint not found" });
     }
 
-    await prisma.$transaction([
-      prisma.api_log.deleteMany({ where: { api_id: id } }),
-      prisma.campaign_step.updateMany({
-        where: { api_id: id },
-        data: { api_id: null },
-      }),
-      prisma.api.delete({
-        where: { api_id: id },
-      }),
-    ]);
+    await prisma.api.update({
+      where: { api_id: id },
+      data: {
+        is_deleted: true,
+        is_active: false,
+        last_updated: new Date(),
+      },
+    });
     return res.json({ success: true });
   } catch (err) {
     console.error("[integration:endpoints] delete error:", err);
     return res.status(500).json({ error: err.message || "Failed to delete endpoint" });
+  }
+}
+
+export async function restoreEndpoint(req, res) {
+  const id = Number(req.params.id);
+  if (!id) {
+    return res.status(400).json({ error: "Invalid endpoint id" });
+  }
+
+  try {
+    const existing = await prisma.api.findUnique({
+      where: { api_id: id },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: "Endpoint not found" });
+    }
+    if (!existing.is_deleted) {
+      return res.status(404).json({ error: "Endpoint not archived" });
+    }
+
+    const updated = await prisma.api.update({
+      where: { api_id: id },
+      data: {
+        is_deleted: false,
+        is_active: false,
+        last_updated: new Date(),
+      },
+    });
+    return res.json(mapApiToEndpointConfig(updated));
+  } catch (err) {
+    console.error("[integration:endpoints] restore error:", err);
+    return res.status(500).json({ error: err.message || "Failed to restore endpoint" });
   }
 }

@@ -51,6 +51,7 @@ export async function getRuntimeEndpoint(endpointId) {
       tokenRef: apiRow.auth_token || undefined,
     },
     isActive: apiRow.is_active !== false,
+    isDeleted: Boolean(apiRow.is_deleted),
     timeoutMs: 8000,
     retries: 0,
     backoffMs: 0,

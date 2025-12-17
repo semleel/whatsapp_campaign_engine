@@ -6,6 +6,9 @@ import { prisma } from "../config/prismaClient.js";
  * Helper: map DB session to API shape
  */
 function deriveCheckpoint(session) {
+    if (session?.last_payload_type === "system_feedback") {
+        return "Feedback";
+    }
     const primaryStep = session?.campaign_step;
     const responseStep = session?.campaign_response?.[0]?.campaign_step;
     const step = primaryStep || responseStep;
@@ -41,7 +44,9 @@ function formatSession(s) {
         id: s.campaign_session_id,
         contactid: s.contact_id,
         campaignid: s.campaign_id,
-        campaignname: s.campaign?.campaign_name ?? null,
+        campaignname:
+            s.campaign?.campaign_name ??
+            (s.last_payload_type === "system_feedback" ? "Feedback" : null),
         contact_phonenum: s.contact?.phone_num ?? null,
         checkpoint: deriveCheckpoint(s),
         status: s.session_status ?? "ACTIVE",
@@ -257,6 +262,8 @@ export async function markSessionCompleted(campaignsessionid) {
       data: {
         session_status: SESSION_STATUS.COMPLETED,
         last_active_at: new Date(),
+        last_payload_json: null,
+        last_payload_type: null,
       },
     });
     return updated;

@@ -39,15 +39,6 @@ export const MENU: MenuSection[] = [
       { label: "Template Library", href: "/content/templates" },
     ],
   },
-  // NOTE: The old visual Flows builder has been removed.
-  // If a new step-based editor is added in future, it can get a new section here.
-  // {
-  //   id: "flows",
-  //   label: "Flows",
-  //   items: [
-  //     { label: "Flow Hub", href: "/flows", exact: true },
-  //   ],
-  // },
   {
     id: "conversations",
     label: "Conversations",
@@ -86,7 +77,7 @@ export const MENU: MenuSection[] = [
       { label: "Staff", href: "/system/staff" },
       { label: "Tokens", href: "/system/tokens" },
       { label: "Security Logs", href: "/system/logs" },
-      { label: "WhatsApp Config", href: "/system/whatsapp" },
+      //{ label: "WhatsApp Config", href: "/system/whatsapp" },
       { label: "System Commands", href: "/system/commands" },
     ],
   },

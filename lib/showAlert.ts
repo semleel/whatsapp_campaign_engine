@@ -254,3 +254,44 @@ export function showCenteredConfirm(message: string): Promise<boolean> {
     okBtn.focus();
   });
 }
+
+const TOAST_CONTAINER_ID = "app-toast-container";
+
+export function showSuccessToast(message: string) {
+  if (typeof window === "undefined") return;
+
+  let container = document.getElementById(TOAST_CONTAINER_ID);
+  if (!container) {
+    container = document.createElement("div");
+    container.id = TOAST_CONTAINER_ID;
+    container.className = "fixed inset-0 flex pointer-events-none items-start justify-end p-4";
+    container.style.zIndex = "9999";
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement("div");
+  toast.className =
+    "mb-2 w-full max-w-sm rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900 shadow-lg transition-all duration-200 opacity-0";
+  toast.style.pointerEvents = "auto";
+  toast.textContent = message;
+
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add("opacity-100");
+  });
+
+  const remove = () => {
+    toast.classList.remove("opacity-100");
+    toast.classList.add("opacity-0");
+    setTimeout(() => {
+      toast.remove();
+      if (container && container.childElementCount === 0) {
+        container.remove();
+      }
+    }, 200);
+  };
+
+  toast.addEventListener("click", remove);
+  setTimeout(remove, 3500);
+}

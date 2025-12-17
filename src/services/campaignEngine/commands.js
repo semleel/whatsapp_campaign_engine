@@ -18,8 +18,8 @@ const CAMPAIGN_MENU_LIMIT = 10;
 
 const FEEDBACK_OPTIONS = [
   { id: "good", title: "😊 Good" },
-  { id: "neutral", title: "😐 Neutral" },
-  { id: "bad", title: "😟 Bad" },
+  { id: "neutral", title: "😑 Neutral" },
+  { id: "bad", title: "😞 Bad" },
 ];
 
 const DESTRUCTIVE_COMMANDS = new Set([
@@ -50,7 +50,7 @@ async function buildHelpMessage(contact) {
   };
 }
 
-const buildStartMessage = (contact) => ({
+export const buildStartMessage = (contact) => ({
   to: contact.phone_num,
   content: START_PROMPT,
 });
@@ -160,10 +160,16 @@ export async function showMainMenuWithUnknownKeyword(contact, attemptedKeyword) 
 
 const buildFeedbackButtonMessage = (contact) => {
   const bodyText = "How was your experience?";
-  const rows = FEEDBACK_OPTIONS.map((opt) => ({
-    id: opt.id,
-    title: opt.title,
-  }));
+  const buttons = FEEDBACK_OPTIONS.map((opt) => {
+    const truncatedTitle = opt.title.length > 20 ? opt.title.slice(0, 20) : opt.title;
+    return {
+      type: "reply",
+      reply: {
+        id: opt.id,
+        title: truncatedTitle,
+      },
+    };
+  });
 
   return {
     to: contact.phone_num,
@@ -171,16 +177,10 @@ const buildFeedbackButtonMessage = (contact) => {
     waPayload: {
       type: "interactive",
       interactive: {
-        type: "list",
+        type: "button",
         body: { text: bodyText },
         action: {
-          button: "Choose",
-          sections: [
-            {
-              title: "Feedback options",
-              rows,
-            },
-          ],
+          buttons,
         },
       },
     },

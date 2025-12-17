@@ -52,5 +52,68 @@
     "time_slot": "09:00 - 10:00",
     "status": "CONFIRMED",
     "created_at": "2025-12-17T15:46:22.733Z"
+  },
+  {
+    "booking_id": "BK-1765989710379-332",
+    "student_id": "2409081",
+    "name": "Lim Zheng Hong",
+    "facility": "club_house|swimming_pool",
+    "time_slot": "12:00 - 13:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T16:41:50.379Z"
+  },
+  {
+    "booking_id": "BK-1765990561597-162",
+    "student_id": "2409080",
+    "name": "Lim Yi Jian",
+    "facility": "library|discussion_room",
+    "time_slot": "14:00 - 15:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T16:56:01.597Z"
+  },
+  {
+    "booking_id": "BK-1765992098137-913",
+    "student_id": "2409081",
+    "name": "Lim Zheng Hong",
+    "facility": "club_house|swimming_pool",
+    "time_slot": "15:00 - 16:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T17:21:38.137Z"
+  },
+  {
+    "booking_id": "BK-1765992098205-910",
+    "student_id": "2409081",
+    "name": "Lim Zheng Hong",
+    "facility": "club_house|swimming_pool",
+    "time_slot": "15:00 - 16:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T17:21:38.205Z"
+  },
+  {
+    "booking_id": "BK-1765992198581-102",
+    "student_id": "2409081",
+    "name": "Lim Zheng Hong",
+    "facility": "library|discussion_room",
+    "time_slot": "15:00 - 16:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T17:23:18.581Z"
+  },
+  {
+    "booking_id": "BK-1765996822302-568",
+    "student_id": "2409081",
+    "name": "Lim Zheng Hong",
+    "facility": "club_house|swimming_pool",
+    "time_slot": "13:00 - 14:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T18:40:22.302Z"
+  },
+  {
+    "booking_id": "BK-1765997821635-526",
+    "student_id": "2409080",
+    "name": "Lim Yi Jian",
+    "facility": "library|individual_study_room",
+    "time_slot": "14:00 - 15:00",
+    "status": "CONFIRMED",
+    "created_at": "2025-12-17T18:57:01.635Z"
   }
 ]

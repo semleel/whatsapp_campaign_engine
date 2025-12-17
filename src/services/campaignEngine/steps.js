@@ -772,7 +772,7 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
 
       outbound.push({
         to: contact.phone_num,
-        content: "Type any campaign keyword to start.",
+        content: "Type any campaign keyword to start, or use `/menu` to view campaigns.",
       });
 
       return { outbound };

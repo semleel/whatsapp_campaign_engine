@@ -43,7 +43,6 @@ export async function listFeedback(req, res) {
     const data = rows.map((r) => ({
       feedback_id: r.feedback_id,
       contact_id: r.contact_id,
-      campaign_session_id: r.campaign_session_id,
       rating: r.rating,
       comment: r.comment,
       created_at: r.created_at,
@@ -64,7 +63,6 @@ export async function createFeedback(req, res) {
     const rating = ratingRaw ? String(ratingRaw).trim().toLowerCase() : "";
     const comment = req.body.comment ? String(req.body.comment).trim() : null;
     const contactId = req.body.contact_id ? Number(req.body.contact_id) : null;
-    const sessionId = req.body.campaign_session_id ? Number(req.body.campaign_session_id) : null;
     const allowedRatings = new Set(["good", "neutral", "bad"]);
 
     if (!allowedRatings.has(rating)) {
@@ -76,10 +74,9 @@ export async function createFeedback(req, res) {
     const record = await prisma.service_feedback.create({
       data: {
         contact_id: contactId,
-        campaign_session_id: sessionId,
-        rating,
-        comment,
-      },
+      rating,
+      comment,
+    },
     });
 
     return res.status(201).json({

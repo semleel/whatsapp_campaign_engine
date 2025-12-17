@@ -133,7 +133,14 @@ export default function SessionManagementModule() {
                       </span>
                     </div>
 
-                    <div className="text-xs text-muted-foreground">Campaign: {session.campaignname ?? session.campaignid}</div>
+                    <div className="text-xs text-muted-foreground flex items-center gap-2">
+                      <span>Campaign: {session.campaignname ?? "—"}</span>
+                      {session.campaignname === "Feedback" && (
+                        <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                          System
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground">Checkpoint: {session.checkpoint ?? "-"}</div>
                     <div className="text-xs text-muted-foreground">Last active: {session.lastActiveAt ? new Date(session.lastActiveAt).toLocaleString() : "-"}</div>
                   </button>
@@ -193,7 +200,17 @@ export default function SessionManagementModule() {
 
               <div><div className="text-xs text-muted-foreground">User</div><div>{selected.contact_phonenum ?? selected.contactid}</div></div>
 
-              <div><div className="text-xs text-muted-foreground">Campaign</div><div>{selected.campaignname ?? selected.campaignid}</div></div>
+              <div>
+                <div className="text-xs text-muted-foreground">Campaign</div>
+                <div className="flex items-center gap-2">
+                  <div>{selected.campaignname ?? "—"}</div>
+                  {selected.campaignname === "Feedback" && (
+                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      System
+                    </span>
+                  )}
+                </div>
+              </div>
 
               <div><div className="text-xs text-muted-foreground">Checkpoint</div><div className="font-mono text-xs">{selected.checkpoint ?? ""}</div></div>
 

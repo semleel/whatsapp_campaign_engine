@@ -335,6 +335,9 @@ export const Api = {
 
   listEndpoints: () => http<EndpointConfig[]>("/api/integration/endpoints"),
 
+  listArchivedEndpoints: () =>
+    http<EndpointConfig[]>("/api/integration/endpoints/archived"),
+
   getEndpoint: (id: string | number) =>
     http<EndpointConfig>(`/api/integration/endpoints/${id}`),
 
@@ -353,6 +356,11 @@ export const Api = {
   deleteEndpoint: (id: string | number) =>
     http<{ success: true }>(`/api/integration/endpoints/${id}`, {
       method: "DELETE",
+    }),
+
+  restoreEndpoint: (id: string | number) =>
+    http<EndpointConfig>(`/api/integration/endpoints/${id}/restore`, {
+      method: "POST",
     }),
 
   // =========================================================
