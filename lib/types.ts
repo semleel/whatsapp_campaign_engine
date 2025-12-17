@@ -352,6 +352,7 @@ export interface KeywordEntry {
     keywordid: number;
     value: string;
     campaignid: number;
+    campaignstatus?: string | null;
 }
 
 export interface KeywordListItem {

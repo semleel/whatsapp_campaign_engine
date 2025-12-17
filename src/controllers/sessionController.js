@@ -6,12 +6,27 @@ import { prisma } from "../config/prismaClient.js";
  * Helper: map DB session to API shape
  */
 function deriveCheckpoint(session) {
-    const step = session?.campaign_step;
+    const primaryStep = session?.campaign_step;
+    const responseStep = session?.campaign_response?.[0]?.campaign_step;
+    const step = primaryStep || responseStep;
     if (!step) return session?.checkpoint ?? null; // fallback if column exists in some envs
     if (step.step_code) return step.step_code;
     if (typeof step.step_number === "number") return `Step ${step.step_number}`;
     return null;
 }
+
+const sessionInclude = {
+    campaign: true,
+    contact: true,
+    campaign_step: { select: { step_code: true, step_number: true } },
+    campaign_response: {
+        orderBy: { created_at: "desc" },
+        take: 1,
+        include: {
+            campaign_step: { select: { step_code: true, step_number: true } },
+        },
+    },
+};
 
 const SESSION_STATUS = {
   ACTIVE: "ACTIVE",
@@ -42,11 +57,7 @@ function formatSession(s) {
 export async function listSessions(req, res) {
     try {
         const sessions = await prisma.campaign_session.findMany({
-            include: {
-                campaign: { select: { campaign_name: true } },
-                contact: { select: { phone_num: true } },
-                campaign_step: { select: { step_code: true, step_number: true } },
-            },
+            include: sessionInclude,
             orderBy: { last_active_at: "desc" },
             take: 1000,
         });
@@ -69,9 +80,7 @@ export async function getSession(req, res) {
         const s = await prisma.campaign_session.findUnique({
             where: { campaign_session_id: id },
             include: {
-                campaign: true,
-                contact: true,
-                campaign_step: { select: { step_code: true, step_number: true } },
+                ...sessionInclude,
                 message: { orderBy: { created_at: "asc" }, take: 500 },
                 session_log: { orderBy: { logged_at: "asc" }, take: 200 },
             },
@@ -109,7 +118,7 @@ export async function createSession(req, res) {
                     session_status: "ACTIVE",
                     last_active_at: new Date(),
                 },
-                include: { campaign: true, contact: true },
+                include: sessionInclude,
             });
         } catch (err) {
             // If already exists, return existing
@@ -121,7 +130,7 @@ export async function createSession(req, res) {
                             campaign_id: Number(campaignid),
                         },
                     },
-                    include: { campaign: true, contact: true },
+                    include: sessionInclude,
                 });
             } else {
                 throw err;
@@ -146,7 +155,7 @@ export async function pauseSession(req, res) {
         const updated = await prisma.campaign_session.update({
             where: { campaign_session_id: id },
             data: { session_status: "PAUSED" },
-            include: { campaign: true, contact: true },
+            include: sessionInclude,
         });
 
         return res.status(200).json({ message: "Session paused", session: formatSession(updated) });
@@ -185,7 +194,7 @@ export async function resumeSession(req, res) {
         const updated = await prisma.campaign_session.update({
             where: { campaign_session_id: id },
             data: { session_status: SESSION_STATUS.ACTIVE, last_active_at: new Date() },
-            include: { campaign: true, contact: true },
+            include: sessionInclude,
         });
 
         return res.status(200).json({ message: "Session resumed", session: formatSession(updated) });
@@ -207,7 +216,7 @@ export async function cancelSession(req, res) {
         const updated = await prisma.campaign_session.update({
             where: { campaign_session_id: id },
             data: { session_status: "CANCELLED" },
-            include: { campaign: true, contact: true },
+            include: sessionInclude,
         });
 
         return res.status(200).json({ message: "Session cancelled", session: formatSession(updated) });
@@ -231,11 +240,7 @@ export async function listSessionsByContact(req, res) {
     const sessions = await prisma.campaign_session.findMany({
       where: { contact_id: contactId },
       orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
-      include: {
-        campaign: { select: { campaign_name: true } },
-        contact: { select: { phone_num: true } },
-        campaign_step: { select: { step_code: true, step_number: true } },
-      },
+      include: sessionInclude,
     });
 
     return res.status(200).json(sessions.map(formatSession));

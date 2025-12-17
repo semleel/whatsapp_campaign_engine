@@ -6,11 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Api } from "@/lib/client";
-import type {
-  RegionRef,
-  CampaignStatusRef,
-  KeywordEntry,
-} from "@/lib/types";
+import type { RegionRef, KeywordEntry } from "@/lib/types";
 import { showCenteredConfirm } from "@/lib/showAlert";
 
 const formatDateForInput = (value?: string | null) => {
@@ -25,6 +21,8 @@ const formatDateForInput = (value?: string | null) => {
   const min = pad(date.getMinutes());
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 };
+
+const KEYWORD_PATTERN = /^[a-z0-9]+$/;
 
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,7 +48,6 @@ export default function CampaignDetailPage() {
     endAt: "",
   });
   const [regions, setRegions] = useState<RegionRef[]>([]);
-  const [statuses, setStatuses] = useState<CampaignStatusRef[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -64,15 +61,13 @@ export default function CampaignDetailPage() {
     if (!id) return;
     (async () => {
       try {
-        const [regionRes, statusRes, campaignRes, keywordRes] = await Promise.all([
+        const [regionRes, campaignRes, keywordRes] = await Promise.all([
           Api.listRegions(),
-          Api.listCampaignStatuses(),
           Api.getCampaign(id),
           Api.listKeywordsByCampaign(id),
         ]);
 
         setRegions(regionRes);
-        setStatuses(statusRes);
 
         setForm({
           campaignName: campaignRes.campaignname || "",
@@ -117,12 +112,19 @@ export default function CampaignDetailPage() {
   };
 
   // Add keyword for this campaign - with pre-check like create page
-  const handleAddKeyword = async () => {
-    const raw = keywordDraft.trim().toLowerCase();
-    if (!raw || !id) return;
+const handleAddKeyword = async () => {
+  const raw = keywordDraft.trim().toLowerCase();
+  if (!raw || !id) return;
 
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
+      return;
+    }
+
+    if (!KEYWORD_PATTERN.test(raw)) {
+      setKeywordMessage(
+        "Keyword must be a single word containing only letters and numbers (no spaces or symbols)."
+      );
       return;
     }
 
@@ -136,11 +138,21 @@ export default function CampaignDetailPage() {
 
     try {
       const availability = await Api.checkKeywordAvailability(raw);
-      if (!availability.ok) {
-        const data = availability.data;
+      const data = availability.data;
+      if (
+        !availability.ok ||
+        (data && data.available === false) ||
+        (data && "error" in data && data.error)
+      ) {
+        const campaignHint =
+          data && "campaignname" in data && data.campaignname
+            ? ` Keyword already belongs to "${data.campaignname}".`
+            : "";
         setKeywordMessage(
           (data && "error" in data && data.error) ||
-          "Unable to validate keyword. Please try again."
+            (data && data.available === false
+              ? `Keyword already taken.${campaignHint}`
+              : "Unable to validate keyword. Please try again.")
         );
         return;
       }
@@ -260,25 +272,6 @@ export default function CampaignDetailPage() {
                 >
                   {region.regionname}
                   {region.regioncode ? ` (${region.regioncode})` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 text-sm font-medium">
-            <span>Status</span>
-            <select
-              name="camStatusID"
-              value={form.camStatusID}
-              onChange={handleChange}
-              className="w-full rounded-md border px-3 py-2"
-            >
-              <option value="">Select status</option>
-              {statuses.map((status) => (
-                <option
-                  key={status.camstatusid}
-                  value={status.camstatusid}
-                >
-                  {status.currentstatus}
                 </option>
               ))}
             </select>

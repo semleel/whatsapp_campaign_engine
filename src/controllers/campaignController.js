@@ -9,6 +9,17 @@ const STATUS_ACTIVE = "Active";
 const STATUS_ON_HOLD = "On Hold";
 const STATUS_INACTIVE = "Inactive";
 
+const deriveWindowStatus = (startAt, endAt) => {
+  const now = new Date();
+  const start = startAt ? new Date(startAt) : null;
+  const end = endAt ? new Date(endAt) : null;
+
+  if (!start && !end) return "Upcoming";
+  if (start && now < start) return "Upcoming";
+  if (end && now > end) return "Expired";
+  return "On Going";
+};
+
 const parseNullableDate = (value) => {
   if (!value) return null;
   const parsed = new Date(value);
@@ -24,10 +35,19 @@ const parseNullableInt = (value) => {
 export async function createCampaign(req, res) {
   try {
     const { campaignName, objective, targetRegionID, status, startAt, endAt } = req.body;
+    const normalizedName = typeof campaignName === "string" ? campaignName.trim() : "";
 
-    if (!campaignName) {
+    if (!normalizedName) {
       return res.status(400).json({ error: "campaignName is required" });
     }
+    const nameInUse = await prisma.campaign.findFirst({
+      where: { campaign_name: { equals: normalizedName, mode: "insensitive" } },
+    });
+    if (nameInUse) {
+      return res.status(409).json({ error: "Campaign name already exists" });
+    }
+
+    const campaignNameValue = normalizedName;
 
     const startDate = parseNullableDate(startAt);
     const endDate = parseNullableDate(endAt);
@@ -59,17 +79,32 @@ export async function createCampaign(req, res) {
     }
 
     const data = {
-      campaign_name: campaignName,
+      campaign_name: campaignNameValue,
       objective: objective || null,
       target_region_id: parseNullableInt(targetRegionID),
       status: derivedStatus || normalizedStatus,
       start_at: startDate,
       end_at: endDate,
       created_by_admin_id: req.adminId || null,
+      is_active: false,
     };
 
     const campaign = await prisma.campaign.create({ data });
-    return res.status(201).json({ message: "Campaign created successfully!", data: campaign });
+    const responsePayload = {
+      campaignid: campaign.campaign_id,
+      campaignname: campaign.campaign_name,
+      objective: campaign.objective,
+      targetregionid: campaign.target_region_id || null,
+      status: campaign.status,
+      start_at: campaign.start_at,
+      end_at: campaign.end_at,
+      createdat: campaign.created_at,
+      updatedat: campaign.updated_at,
+      camstatusid: statusToId(campaign.status),
+    };
+    return res
+      .status(201)
+      .json({ message: "Campaign created successfully!", data: responsePayload });
   } catch (err) {
     console.error("Create campaign error:", err);
     return res.status(500).json({ error: err.message });
@@ -78,22 +113,6 @@ export async function createCampaign(req, res) {
 
 export async function listCampaigns(_req, res) {
   try {
-    const deriveWindowStatus = (startAt, endAt) => {
-      const now = new Date();
-      const start = startAt ? new Date(startAt) : null;
-      const end = endAt ? new Date(endAt) : null;
-
-      // Upcoming if there is no schedule at all, or start is in the future.
-      if (!start && !end) return "Upcoming";
-      if (start && now < start) return "Upcoming";
-
-      // Expired if an end date exists and has passed.
-      if (end && now > end) return "Expired";
-
-      // Otherwise we are within the active window (start reached, not past end).
-      return "On Going";
-    };
-
     const campaigns = await prisma.campaign.findMany({
       where: {
         status: { not: "Archived" },
@@ -297,15 +316,34 @@ export async function updateCampaign(req, res) {
       data.status = requestedStatus;
     }
 
-    // Keep is_deleted in sync when status is explicitly set
-    if (typeof data.status !== "undefined") {
-      if (data.status === "Archived") {
-        data.is_deleted = true;
-        data.is_active = false;
-      } else {
-        data.is_deleted = false;
-        data.is_active = true;
+    const hasStartOverride = Object.prototype.hasOwnProperty.call(data, "start_at");
+    const hasEndOverride = Object.prototype.hasOwnProperty.call(data, "end_at");
+    const effectiveStart = hasStartOverride ? data.start_at : existing.start_at;
+    const effectiveEnd = hasEndOverride ? data.end_at : existing.end_at;
+    const windowStatus = deriveWindowStatus(effectiveStart, effectiveEnd);
+    if (windowStatus === "Expired") {
+      if (is_active === true) {
+        return res.status(400).json({
+          error: "Expired campaigns cannot be reactivated.",
+        });
       }
+      data.is_active = false;
+      if (typeof data.status === "undefined") {
+        data.status = "Expired";
+      }
+    }
+
+    // Keep is_deleted in sync when status is explicitly set
+    const finalStatus = data.status ?? existing.status;
+    if (finalStatus === "Archived") {
+      data.is_deleted = true;
+      data.is_active = false;
+    } else if (finalStatus === "Expired") {
+      data.is_deleted = false;
+      data.is_active = false;
+    } else if (typeof data.status !== "undefined") {
+      data.is_deleted = false;
+      data.is_active = true;
     }
 
     await prisma.campaign.update({
@@ -1074,18 +1112,6 @@ export async function hardDeleteArchivedCampaigns(req, res) {
 
 export async function autoCheckCampaignStatuses() {
   try {
-    const now = new Date();
-
-    const deriveWindowStatus = (startAt, endAt) => {
-      const start = startAt ? new Date(startAt) : null;
-      const end = endAt ? new Date(endAt) : null;
-
-      if (!start && !end) return "Upcoming";
-      if (start && now < start) return "Upcoming";
-      if (end && now > end) return "Expired";
-      return "On Going";
-    };
-
     const campaigns = await prisma.campaign.findMany({
       where: {
         status: { not: "Archived" },
@@ -1104,9 +1130,13 @@ export async function autoCheckCampaignStatuses() {
       const nextStatus = deriveWindowStatus(campaign.start_at, campaign.end_at);
 
       if (nextStatus !== currentStatus) {
+        const updateData = { status: nextStatus };
+        if (nextStatus === "Expired") {
+          updateData.is_active = false;
+        }
         await prisma.campaign.update({
           where: { campaign_id: campaign.campaign_id },
-          data: { status: nextStatus },
+          data: updateData,
         });
       }
     }

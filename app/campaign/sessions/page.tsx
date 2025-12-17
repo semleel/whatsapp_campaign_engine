@@ -1,6 +1,6 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Api } from "@/lib/client";
 import type { CampaignSession, SessionStatus } from "@/lib/types";
 
@@ -10,6 +10,8 @@ export default function SessionManagementModule() {
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 8;
 
   async function loadSessions() {
     setLoading(true);
@@ -24,6 +26,7 @@ export default function SessionManagementModule() {
         }
         return s[0] ?? null;
       });
+      setCurrentPage(1);
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Failed to load sessions");
@@ -35,6 +38,30 @@ export default function SessionManagementModule() {
   useEffect(() => {
     loadSessions();
   }, []);
+
+  const paginatedSessions = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return sessions.slice(start, start + ITEMS_PER_PAGE);
+  }, [sessions, currentPage]);
+
+  const totalPages = useMemo(() =>
+    Math.max(1, Math.ceil(sessions.length / ITEMS_PER_PAGE)),
+    [sessions.length]
+  );
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (!loading && paginatedSessions.length > 0) {
+      setSelected(paginatedSessions[0]);
+    }
+  }, [paginatedSessions, loading]);
+
+
 
   async function updateStatus(id: number, to: SessionStatus) {
     setActionLoading(true);
@@ -81,7 +108,7 @@ export default function SessionManagementModule() {
       {error && <div className="text-sm text-rose-600">{error}</div>}
 
       <section className="grid gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border overflow-hidden">
+        <div className="rounded-xl border bg-card overflow-hidden">
           <div className="border-b px-4 py-3 text-sm font-semibold">Sessions</div>
           <div className="divide-y text-sm">
             {loading ? (
@@ -89,7 +116,7 @@ export default function SessionManagementModule() {
             ) : sessions.length === 0 ? (
               <div className="px-4 py-3 text-muted-foreground">No sessions found.</div>
             ) : (
-              sessions.map((session) => {
+              paginatedSessions.map((session) => {
                 const s = session.status as SessionStatus;
                 const config = statusStyles[s] ?? statusStyles.ACTIVE;
                 return (
@@ -107,16 +134,41 @@ export default function SessionManagementModule() {
                     </div>
 
                     <div className="text-xs text-muted-foreground">Campaign: {session.campaignname ?? session.campaignid}</div>
-                    <div className="text-xs text-muted-foreground">Checkpoint: {session.checkpoint ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground">Last active: {session.lastActiveAt ? new Date(session.lastActiveAt).toLocaleString() : "—"}</div>
+                    <div className="text-xs text-muted-foreground">Checkpoint: {session.checkpoint ?? "-"}</div>
+                    <div className="text-xs text-muted-foreground">Last active: {session.lastActiveAt ? new Date(session.lastActiveAt).toLocaleString() : "-"}</div>
                   </button>
                 );
               })
             )}
           </div>
+          {sessions.length > 0 && (
+            <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="underline disabled:text-muted-foreground"
+              >
+                Prev
+              </button>
+              <span>
+                Page {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                }
+                disabled={currentPage === totalPages}
+                className="underline disabled:text-muted-foreground"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="rounded-xl border p-5 space-y-4">
+        <div className="rounded-xl border bg-card p-5 space-y-4">
           <div>
             <h4 className="text-base font-semibold">Checkpoint & control</h4>
             <p className="text-sm text-muted-foreground">
@@ -143,35 +195,21 @@ export default function SessionManagementModule() {
 
               <div><div className="text-xs text-muted-foreground">Campaign</div><div>{selected.campaignname ?? selected.campaignid}</div></div>
 
-              <div><div className="text-xs text-muted-foreground">Checkpoint</div><div className="font-mono text-xs">{selected.checkpoint ?? "—"}</div></div>
+              <div><div className="text-xs text-muted-foreground">Checkpoint</div><div className="font-mono text-xs">{selected.checkpoint ?? ""}</div></div>
 
-              <div><div className="text-xs text-muted-foreground">Last activity</div><div>{selected.lastActiveAt ? new Date(selected.lastActiveAt).toLocaleString() : "—"}</div></div>
+              <div><div className="text-xs text-muted-foreground">Last activity</div><div>{selected.lastActiveAt ? new Date(selected.lastActiveAt).toLocaleString() : ""}</div></div>
 
-              <div className="flex flex-wrap gap-2 pt-1">
-                <button
-                  className="rounded-md border px-3 py-2 text-xs font-medium hover:bg-muted disabled:opacity-50"
-                  onClick={() => updateStatus(selected.id as number, "PAUSED")}
-                  disabled={actionLoading || (selected.status === "PAUSED" || selected.status === "COMPLETED" || selected.status === "EXPIRED" || selected.status === "CANCELLED")}
-                >
-                  Pause session
-                </button>
-
-                <button
-                  className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm disabled:opacity-50"
-                  onClick={() => updateStatus(selected.id as number, "ACTIVE")}
-                  disabled={actionLoading || (selected.status === "ACTIVE" || selected.status === "COMPLETED" || selected.status === "EXPIRED" || selected.status === "CANCELLED")}
-                >
-                  Resume session
-                </button>
-
-                <button
-                  className="rounded-md border px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                  onClick={() => updateStatus(selected.id as number, "CANCELLED")}
-                  disabled={actionLoading}
-                >
-                  Cancel session
-                </button>
-              </div>
+              {selected.status !== "COMPLETED" && selected.status !== "CANCELLED" && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    className="rounded-md border px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                    onClick={() => updateStatus(selected.id as number, "CANCELLED")}
+                    disabled={actionLoading}
+                  >
+                    Cancel session
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Select a session to inspect details.</p>
