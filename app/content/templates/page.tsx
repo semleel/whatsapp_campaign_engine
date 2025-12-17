@@ -59,7 +59,11 @@ const TemplatePreviewWrapper: React.FC<{ preview: PreviewData }> = ({ preview })
           <button
             type="button"
             className="text-sm font-semibold text-sky-600 hover:underline"
-            onClick={() => setIsExpanded((prev) => !prev)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsExpanded((prev) => !prev);
+            }}
           >
             {isExpanded ? "Show less" : "Show more"}
           </button>
