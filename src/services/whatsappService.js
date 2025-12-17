@@ -183,7 +183,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
   try {
     if (!to || !messageObj) throw new Error("Invalid message payload");
 
-    let normalized;
+    let preparedPayload;
     // ✅ INTERACTIVE MESSAGE SUPPORT
     if (
       typeof messageObj === "object" &&
@@ -204,11 +204,11 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
         throw new Error("Invalid interactive payload");
       }
 
-      normalized = interactive;
+      preparedPayload = interactive;
     } else if (typeof messageObj === "string") {
       const img = extractImageFromText(messageObj);
       if (img) {
-        normalized = {
+        preparedPayload = {
           type: "image",
           image: {
             link: img.url,
@@ -216,7 +216,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
           },
         };
       } else {
-        normalized = {
+        preparedPayload = {
           type: "text",
           text: {
             body: messageObj,
@@ -228,7 +228,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
       if (messageObj.type === "text" && messageObj.text?.body) {
         const img = extractImageFromText(messageObj.text.body);
         if (img) {
-          normalized = {
+          preparedPayload = {
             type: "image",
             image: {
               link: img.url,
@@ -236,12 +236,16 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
             },
           };
         } else {
-          messageObj.text = messageObj.text || {};
-          messageObj.text.preview_url = messageObj.text.preview_url ?? true;
-          normalized = messageObj;
+          preparedPayload = {
+            ...messageObj,
+            text: {
+              ...(messageObj.text || {}),
+              preview_url: messageObj.text?.preview_url ?? true,
+            },
+          };
         }
       } else {
-        normalized = messageObj;
+        preparedPayload = { ...messageObj };
       }
     } else {
       throw new Error("Invalid message payload");
@@ -250,7 +254,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
     const payload = sanitizeInteractiveListPayload({
       messaging_product: "whatsapp",
       to,
-      ...normalized,
+      ...preparedPayload,
     });
 
     // Only create a new delivery attempt for the first send; retries reuse the existing row.
@@ -285,7 +289,7 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
       });
     }
 
-    log(`Message sent to ${to} (${normalized.type})`);
+    log(`Message sent to ${to} (${preparedPayload?.type || "text"})`);
     return res.data;
   } catch (err) {
     // Log failure into deliverlog + message table if we started an attempt

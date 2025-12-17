@@ -16,7 +16,32 @@ import {
 } from "./commands.js";
 import { extractChoiceCodeFromPayload } from "./helpers.js";
 import { runChoiceStep, runInputStep, runStepAndReturnMessages } from "./steps.js";
-import { log } from "../../utils/logger.js";
+
+async function resolveKeywordFromTitle(title) {
+  if (!title) return null;
+
+  const campaign = await prisma.campaign.findFirst({
+    where: {
+      campaign_name: {
+        equals: title.trim(),
+        mode: "insensitive",
+      },
+    },
+    include: {
+      campaign_keyword: {
+        orderBy: { keyword_id: "asc" }, // primary keyword
+        take: 1,
+      },
+    },
+  });
+
+  return campaign?.campaign_keyword?.[0]?.value || null;
+}
+
+function stepExpectsUserInput(step) {
+  if (!step) return false;
+  return step.action_type === "choice" || step.action_type === "input";
+}
 
 export async function handleIncomingMessage(args) {
   const { fromPhone, text, type, payload, enginePayload } = args;
@@ -42,10 +67,19 @@ export async function handleIncomingMessage(args) {
   const normalizedCommandText = trimmedIncomingText || interactiveReplyId;
   const normalizedCommandLower = normalizedCommandText.toLowerCase();
 
-  const normalizedKeywordText =
-    keywordTextTypes.includes(type) && (trimmedIncomingText || interactiveReplyId)
-      ? trimmedIncomingText || interactiveReplyId
+  let normalizedKeywordText =
+    keywordTextTypes.includes(type)
+      ? interactiveReplyId || trimmedIncomingText
       : "";
+
+  // 🧪 SANDBOX FIX: map campaign title → primary keyword
+  if (!interactiveReplyId && trimmedIncomingText && type === "text") {
+    const resolvedKeyword = await resolveKeywordFromTitle(trimmedIncomingText);
+    if (resolvedKeyword) {
+      normalizedKeywordText = resolvedKeyword;
+    }
+  }
+
   const normalizedKeywordLower = normalizedKeywordText.toLowerCase();
   let activeSession = await findActiveSession(contact.contact_id);
   // 🔒 FEEDBACK FLOW OWNS INPUT — NOTHING ELSE RUNS
@@ -186,8 +220,6 @@ export async function handleIncomingMessage(args) {
     return { outbound: result.outbound || [] };
   }
 
-  log("[ENGINE] Feedback button intercepted:", interactiveReplyId);
-
   if (normalizedCommandLower.startsWith("/")) {
     const cmd = normalizedCommandLower.split(/\s+/)[0] || normalizedCommandLower;
     const rawCommandText = normalizedCommandText || cmd;
@@ -199,6 +231,22 @@ export async function handleIncomingMessage(args) {
     });
     if (commandResult.sessionEnded) {
       activeSession = null;
+    }
+    if (commandResult.restartCampaignId) {
+      const newSession = await createSessionForCampaign(
+        contact.contact_id,
+        commandResult.restartCampaignId
+      );
+      const restartResult = await startCampaignAtFirstStep({
+        contact,
+        session: newSession,
+      });
+      return {
+        outbound: [
+          ...(commandResult.outbound || []),
+          ...(restartResult.outbound || []),
+        ],
+      };
     }
     let outbound = [...(commandResult.outbound || [])];
     if (commandResult.shouldResume && activeSession) {
@@ -257,9 +305,9 @@ export async function handleIncomingMessage(args) {
         outbound: [
           {
             to: contact.phone_num,
-            content:
-              `You have an active session for "${activeAny.campaign?.campaign_name ?? "another campaign"}". ` +
-              "Please finish it or /exit.",
+          content:
+            `You have an active session for "${activeAny.campaign?.campaign_name ?? "another campaign"}". ` +
+            "Please finish it or `/exit`.",
           },
         ],
       };
@@ -469,7 +517,12 @@ async function startCampaignAtFirstStep({ contact, session }) {
 
   const result = await runStepAndReturnMessages({ contact, session, step: firstStep });
   result.outbound = result.outbound || [];
-  result.outbound.push(buildExitHintMessage(contact));
+
+  // Show exit hint ONLY if user input is expected
+  if (stepExpectsUserInput(firstStep) && !result.includedExitHint) {
+    result.outbound.push(buildExitHintMessage(contact));
+  }
+
   return result;
 }
 

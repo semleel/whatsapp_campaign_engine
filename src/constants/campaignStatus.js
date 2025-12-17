@@ -1,4 +1,4 @@
-export const CAMPAIGN_STATUSES = ["Active", "Inactive", "Archived", "New", "On Hold", "Paused"];
+export const CAMPAIGN_STATUSES = ["Upcoming", "On going", "Expired"];
 
 export function normalizeCampaignStatus(value, fallback = "Inactive") {
   if (!value) return fallback;

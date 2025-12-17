@@ -3,30 +3,31 @@
 import prisma from "../../config/prismaClient.js";
 import { findActiveSession } from "./session.js";
 
-const START_PROMPT = "Type any campaign keyword to start.";
+const START_PROMPT = "Type any campaign keyword to start, or use `/menu` to view campaigns.";
 const WELCOME_MESSAGE =
   "Welcome to the campaign platform! We'll guide you through the onboarding before you jump into a campaign.";
-const EXIT_HINT = "You may exit the campaign at any time by typing '/exit'.";
+const EXIT_HINT =
+  "You may type `/exit` to exit or `/start` to restart the campaign at any time.";
 const LETS_CONTINUE = "Let's continue from where we left off.";
 
 const COMMAND_SECTION_HEADER = "Available commands:\n";
 const COMMAND_DESCRIPTION_FALLBACK = "No description available.";
 const MENU_SECTION_TITLE = "Available campaigns";
 const MENU_BUTTON_LABEL = "View campaigns";
-const LANG_BUTTON_TEXT = "Select language";
 const CAMPAIGN_MENU_LIMIT = 10;
 
 const FEEDBACK_OPTIONS = [
-  { id: "good", title: "Good" },
-  { id: "neutral", title: "Neutral" },
-  { id: "bad", title: "Bad" },
+  { id: "good", title: "😊 Good" },
+  { id: "neutral", title: "😑 Neutral" },
+  { id: "bad", title: "😞 Bad" },
 ];
 
-const LANG_OPTIONS = [
-  { code: "EN", title: "English" },
-  { code: "MY", title: "Bahasa Malaysia" },
-  { code: "CN", title: "Chinese (Mandarin)" },
-];
+const DESTRUCTIVE_COMMANDS = new Set([
+  "/exit",
+  "/reset",
+  "/menu",
+  "/feedback",
+]);
 
 const getEnabledSystemCommands = () =>
   prisma.system_command.findMany({
@@ -72,30 +73,39 @@ export const buildExitHintMessage = (contact) => ({
 const fetchActiveCampaigns = (now = new Date()) =>
   prisma.campaign.findMany({
     where: {
-      status: { in: ["On Going", "Upcoming"] },
-      is_active: true,
-      OR: [{ is_deleted: false }, { is_deleted: null }],
-      OR: [{ start_at: null }, { start_at: { lte: now } }],
-      AND: [{ end_at: null }, { end_at: { gte: now } }],
+      status: { in: ["On Going", "Upcoming", "Active"] },
+      is_active: { not: false },
+
+      AND: [
+        { OR: [{ is_deleted: false }, { is_deleted: null }] },
+        { OR: [{ start_at: null }, { start_at: { lte: now } }] },
+        { OR: [{ end_at: null }, { end_at: { gte: now } }] },
+      ],
     },
     include: { campaign_keyword: true },
     orderBy: [{ updated_at: "desc" }],
     take: CAMPAIGN_MENU_LIMIT,
   });
 
+
 const formatCampaignRow = (campaign) => {
-  const keywords = (campaign.campaign_keyword || [])
-    .map((kw) => (kw?.value || "").trim())
-    .filter(Boolean);
-  const primaryKeyword = keywords[0] || null;
-  const id = primaryKeyword ? primaryKeyword : `campaign_${campaign.campaign_id}`;
-  const description = keywords.length
-    ? `keywords: ${keywords.join(", ")}`
-    : "Keyword not configured yet.";
+  const keyword =
+    campaign.campaign_keyword?.[0]?.value?.trim();
+  const rawTitle = (campaign.campaign_name || "Campaign").trim();
+  const safeTitle = rawTitle.slice(0, 24) || "Campaign";
+
+  if (!keyword) {
+    return {
+      id: `campaign_${campaign.campaign_id}`,
+      title: safeTitle,
+      description: "Keyword not configured",
+    };
+  }
+
   return {
-    id,
-    title: campaign.campaign_name || "Campaign",
-    description,
+    id: keyword.toLowerCase(), // ? what engine receives
+    title: safeTitle, // UI only
+    description: null, // ? remove noise
   };
 };
 
@@ -168,37 +178,6 @@ const buildFeedbackButtonMessage = (contact) => {
     },
   };
 };
-
-const buildLangButtonMessage = (contact) => ({
-  to: contact.phone_num,
-  content: "Change language for this session.",
-  waPayload: {
-    type: "interactive",
-    interactive: {
-      type: "button",
-      body: { text: "Select a language." },
-      action: {
-        button: LANG_BUTTON_TEXT,
-        buttons: LANG_OPTIONS.map((option) => ({
-          type: "reply",
-          reply: {
-            id: `/lang ${option.code}`,
-            title: option.title,
-          },
-        })),
-      },
-    },
-  },
-});
-
-async function findSessionForFeedback(contactId) {
-  let session = await findActiveSession(contactId);
-  if (session) return session;
-  return prisma.campaign_session.findFirst({
-    where: { contact_id: contactId },
-    orderBy: [{ last_active_at: "desc" }, { created_at: "desc" }],
-  });
-}
 
 // ✅ Create a lightweight ACTIVE session when user uses /feedback without an existing campaign.
 async function getOrCreateFeedbackSession(contactId) {
@@ -277,19 +256,47 @@ export async function handleFeedbackCommand(contact, text, session = null) {
     };
   }
 
-  return {
-    outbound: [
-      {
-        to: contact.phone_num,
-        content:
-          "Please choose a feedback option using /feedback and tap a button (Good / Neutral / Bad).",
-      },
-    ],
-  };
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content:
+            "Please choose a feedback option using `/feedback` and tap a button (Good / Neutral / Bad).",
+        },
+      ],
+    };
 }
 
 export async function handleSystemCommand({ contact, command, rawText, session }) {
   const normalized = command.toLowerCase();
+
+  // ✅ /start must NOT cancel the session — it restarts the same campaign
+  if (normalized === "/start") {
+    if (!session?.campaign_id) {
+      return {
+        outbound: [
+          {
+            to: contact.phone_num,
+            content: "You are not in a campaign. Type a campaign keyword to start.",
+          },
+        ],
+        shouldResume: false,
+        sessionEnded: false,
+      };
+    }
+
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Restarting the campaign from the beginning.",
+        },
+      ],
+      shouldResume: false,
+      sessionEnded: true,
+      restartCampaignId: session.campaign_id,
+    };
+  }
 
   const cmdRow = await prisma.system_command.findUnique({
     where: { command: normalized },
@@ -300,7 +307,7 @@ export async function handleSystemCommand({ contact, command, rawText, session }
       outbound: [
         {
           to: contact.phone_num,
-          content: "Unknown command. Type /help to see available commands.",
+          content: "Unknown command. Type `/help` to see available commands.",
         },
       ],
       shouldResume: false,
@@ -308,18 +315,12 @@ export async function handleSystemCommand({ contact, command, rawText, session }
     };
   }
 
-  const shouldCancel = ["/exit", "/reset", "/start"].includes(normalized);
-  if (shouldCancel) {
+  const isDestructive = DESTRUCTIVE_COMMANDS.has(normalized);
+  if (isDestructive) {
     await cancelActiveSession(session);
   }
 
   switch (normalized) {
-    case "/start":
-      return {
-        outbound: [buildStartMessage(contact)],
-        shouldResume: false,
-        sessionEnded: true,
-      };
     case "/reset":
       return {
         outbound: [buildWelcomeMessage(contact), buildStartMessage(contact)],
@@ -342,32 +343,22 @@ export async function handleSystemCommand({ contact, command, rawText, session }
       const menuPayload = await showMainMenu(contact);
       return {
         ...menuPayload,
-        shouldResume: !!session,
-        sessionEnded: false,
+        shouldResume: false,
+        sessionEnded: true,
       };
     }
-    case "/lang":
-      return {
-        outbound: [buildLangButtonMessage(contact)],
-        shouldResume: !!session,
-        sessionEnded: false,
-      };
     case "/feedback": {
-      const hasValue = rawText.split(" ").length > 1;
-
-      // 🔥 IMPORTANT: ensure feedback session exists
-      const targetSession =
-        session || (await getOrCreateFeedbackSession(contact.contact_id));
+      const hasValue = (rawText || "").trim().split(/\s+/).length > 1;
+      const targetSession = await getOrCreateFeedbackSession(contact.contact_id);
 
       if (hasValue) {
         return {
           ...(await handleFeedbackCommand(contact, rawText, targetSession)),
           shouldResume: false,
-          sessionEnded: false,
+          sessionEnded: true,
         };
       }
 
-      // 🔥 mark awaiting rating BEFORE showing buttons
       await prisma.campaign_session.update({
         where: { campaign_session_id: targetSession.campaign_session_id },
         data: {
@@ -383,7 +374,7 @@ export async function handleSystemCommand({ contact, command, rawText, session }
       return {
         outbound: [buildFeedbackButtonMessage(contact)],
         shouldResume: false,
-        sessionEnded: false,
+        sessionEnded: true,
       };
     }
     case "/help":
@@ -397,7 +388,7 @@ export async function handleSystemCommand({ contact, command, rawText, session }
         outbound: [
           {
             to: contact.phone_num,
-            content: "Unknown command. Type /help to see available commands.",
+            content: "Unknown command. Type `/help` to see available commands.",
           },
         ],
         shouldResume: false,

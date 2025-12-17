@@ -12,7 +12,6 @@ function parseBoolean(value) {
 export async function listFeedback(req, res) {
   try {
     const ratingRaw = req.query.rating;
-    const minRatingRaw = req.query.minRating ?? req.query.min_rating;
     const hasComment = parseBoolean(req.query.hasComment ?? req.query.has_comment);
 
     const where = {};
@@ -22,14 +21,6 @@ export async function listFeedback(req, res) {
       : "";
     if (normalizedRating && allowedRatings.has(normalizedRating)) {
       where.rating = normalizedRating;
-    } else {
-      const numericRating = Number(ratingRaw);
-      const minRating = Number(minRatingRaw);
-      if (!Number.isNaN(numericRating)) {
-        where.rating = numericRating;
-      } else if (!Number.isNaN(minRating)) {
-        where.rating = { gte: minRating };
-      }
     }
     if (hasComment) {
       where.comment = { not: null };

@@ -157,7 +157,8 @@ function buildMenuRows(menuSections) {
           ? section.options
             .map((opt, optionIdx) => {
               if (!opt) return null;
-              const title = (opt.title || "").trim();
+              const rawTitle = (opt.title || "").trim();
+              const title = rawTitle.slice(0, 24);
               if (!title) return null;
               const rowId =
                 (opt.id && String(opt.id)) || `sec-${sectionIdx}-opt-${optionIdx + 1}`;

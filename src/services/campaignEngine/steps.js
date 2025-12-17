@@ -14,8 +14,14 @@ import {
   extractLocationFromPayload,
   extractInteractiveTitleFromPayload,
 } from "./helpers.js";
+import { buildExitHintMessage } from "./commands.js";
 import { normalizeApiError } from "./apiErrorHelper.js";
 import { log, warn, error } from "../../utils/logger.js";
+
+function appendExitHint(outbound, contact) {
+  if (!Array.isArray(outbound) || !outbound.length || !contact?.phone_num) return;
+  outbound.push(buildExitHintMessage(contact));
+}
 
 export async function runChoiceStep({
   contact,
@@ -48,9 +54,9 @@ export async function runChoiceStep({
   const choices =
     isBranchMode
       ? await prisma.campaign_step_choice.findMany({
-          where: { step_id: step.step_id },
-          orderBy: { choice_id: "asc" },
-        })
+        where: { step_id: step.step_id },
+        orderBy: { choice_id: "asc" },
+      })
       : [];
 
   let matchedChoice = null;
@@ -219,6 +225,7 @@ export async function runChoiceStep({
           contentContext,
         }),
         rePrompt,
+        buildExitHintMessage(contact),
       ],
     };
   }
@@ -653,7 +660,8 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
             contentContext,
           })
         );
-        return { outbound };
+        appendExitHint(outbound, contact);
+        return { outbound, includedExitHint: true };
       }
     }
 
@@ -685,7 +693,8 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
             contentContext,
           })
         );
-        return { outbound };
+        appendExitHint(outbound, contact);
+        return { outbound, includedExitHint: true };
       }
 
       if (current.action_type === "input") {
@@ -709,7 +718,8 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
             })
           );
         }
-        return { outbound };
+        appendExitHint(outbound, contact);
+        return { outbound, includedExitHint: true };
       }
     }
 
@@ -748,8 +758,23 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
     if (isEnd) {
       await prisma.campaign_session.update({
         where: { campaign_session_id: session.campaign_session_id },
-        data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
+        data: {
+          session_status: "COMPLETED",
+          current_step_id: null,
+          last_active_at: new Date(),
+        },
       });
+
+      outbound.push({
+        to: contact.phone_num,
+        content: "This campaign has ended. Thank you!",
+      });
+
+      outbound.push({
+        to: contact.phone_num,
+        content: "Type any campaign keyword to start.",
+      });
+
       return { outbound };
     }
 
