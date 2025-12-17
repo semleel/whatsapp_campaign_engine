@@ -1,7 +1,7 @@
 ﻿// src/services/campaignEngine/commands.js
 
 import prisma from "../../config/prismaClient.js";
-import { findActiveSession } from "./session.js";
+import { findActiveSession, resetSessionForRestart } from "./session.js";
 
 const START_PROMPT = "Type any campaign keyword to start, or use `/menu` to view campaigns.";
 const WELCOME_MESSAGE =
@@ -22,12 +22,7 @@ const FEEDBACK_OPTIONS = [
   { id: "bad", title: "😞 Bad" },
 ];
 
-const DESTRUCTIVE_COMMANDS = new Set([
-  "/exit",
-  "/reset",
-  "/menu",
-  "/feedback",
-]);
+const DESTRUCTIVE_COMMANDS = new Set(["/reset", "/menu", "/feedback"]);
 
 const getEnabledSystemCommands = () =>
   prisma.system_command.findMany({
@@ -221,6 +216,18 @@ const cancelActiveSession = async (session) => {
   });
 };
 
+const expireActiveSession = async (session) => {
+  if (!session?.campaign_session_id) return;
+
+  await prisma.campaign_session.update({
+    where: { campaign_session_id: session.campaign_session_id },
+    data: {
+      session_status: "EXPIRED",
+      last_active_at: new Date(),
+    },
+  });
+};
+
 export async function handleFeedbackCommand(contact, text, session = null) {
   const parts = (text || "").trim().split(/\s+/).slice(1);
   const ratingRaw = (parts[0] || "").toLowerCase().trim();
@@ -293,6 +300,7 @@ export async function handleSystemCommand({ contact, command, rawText, session }
       };
     }
 
+    const restartedSession = await resetSessionForRestart(session);
     return {
       outbound: [
         {
@@ -301,8 +309,8 @@ export async function handleSystemCommand({ contact, command, rawText, session }
         },
       ],
       shouldResume: false,
-      sessionEnded: true,
-      restartCampaignId: session.campaign_id,
+      sessionEnded: false,
+      restartedSession,
     };
   }
 
@@ -323,8 +331,9 @@ export async function handleSystemCommand({ contact, command, rawText, session }
     };
   }
 
-  const isDestructive = DESTRUCTIVE_COMMANDS.has(normalized);
-  if (isDestructive) {
+  if (normalized === "/exit") {
+    await expireActiveSession(session);
+  } else if (DESTRUCTIVE_COMMANDS.has(normalized)) {
     await cancelActiveSession(session);
   }
 

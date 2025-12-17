@@ -129,3 +129,19 @@ export async function createSessionForCampaign(contactId, campaignId, keywordMet
   const session = await prisma.campaign_session.create({ data });
   return session;
 }
+
+export async function resetSessionForRestart(session) {
+  if (!session?.campaign_session_id) return null;
+  return prisma.campaign_session.update({
+    where: { campaign_session_id: session.campaign_session_id },
+    include: { campaign: true },
+    data: {
+      session_status: "ACTIVE",
+      current_step_id: null,
+      last_payload_json: null,
+      last_payload_type: null,
+      required_inputs: null,
+      last_active_at: new Date(),
+    },
+  });
+}

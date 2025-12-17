@@ -87,6 +87,7 @@ export async function createCampaign(req, res) {
       end_at: endDate,
       created_by_admin_id: req.adminId || null,
       is_active: false,
+      is_deleted: false,
     };
 
     const campaign = await prisma.campaign.create({ data });

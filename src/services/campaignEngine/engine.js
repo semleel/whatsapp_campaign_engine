@@ -153,7 +153,7 @@ export async function handleIncomingMessage(args) {
     };
   }
 
-  if (!activeSession) {
+  if (!activeSession && !normalizedKeywordLower) {
     const expiredSession = await findExpiredSession(contact.contact_id);
     if (expiredSession) {
       const revived = await prisma.campaign_session.update({
@@ -233,6 +233,19 @@ export async function handleIncomingMessage(args) {
     });
     if (commandResult.sessionEnded) {
       activeSession = null;
+    }
+    if (commandResult.restartedSession) {
+      activeSession = commandResult.restartedSession;
+      const restartResult = await startCampaignAtFirstStep({
+        contact,
+        session: activeSession,
+      });
+      return {
+        outbound: [
+          ...(commandResult.outbound || []),
+          ...(restartResult.outbound || []),
+        ],
+      };
     }
     if (commandResult.restartCampaignId) {
       const newSession = await createSessionForCampaign(
@@ -344,17 +357,10 @@ export async function handleIncomingMessage(args) {
 
       const resumeNotice = {
         to: contact.phone_num,
-        content: "Please Continu the camapaign ,Curently is your Last Checkpoint",
+        content: "Please continue the campaign; currently you're resuming at your last checkpoint.",
       };
 
-      const result = await continueCampaignSession({
-        contact,
-        session: revived,
-        incomingText: incomingTextValue,
-        type,
-        payload,
-        enginePayload,
-      });
+      const result = await replayCurrentStep({ contact, session: revived });
 
       return { outbound: [resumeNotice, ...(result?.outbound || [])] };
     }
