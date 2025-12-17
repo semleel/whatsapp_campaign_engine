@@ -16,12 +16,20 @@ export async function listFeedback(req, res) {
     const hasComment = parseBoolean(req.query.hasComment ?? req.query.has_comment);
 
     const where = {};
-    const rating = Number(ratingRaw);
-    const minRating = Number(minRatingRaw);
-    if (!Number.isNaN(rating)) {
-      where.rating = rating;
-    } else if (!Number.isNaN(minRating)) {
-      where.rating = { gte: minRating };
+    const allowedRatings = new Set(["good", "neutral", "bad"]);
+    const normalizedRating = ratingRaw
+      ? String(ratingRaw).trim().toLowerCase()
+      : "";
+    if (normalizedRating && allowedRatings.has(normalizedRating)) {
+      where.rating = normalizedRating;
+    } else {
+      const numericRating = Number(ratingRaw);
+      const minRating = Number(minRatingRaw);
+      if (!Number.isNaN(numericRating)) {
+        where.rating = numericRating;
+      } else if (!Number.isNaN(minRating)) {
+        where.rating = { gte: minRating };
+      }
     }
     if (hasComment) {
       where.comment = { not: null };
@@ -61,13 +69,17 @@ export async function listFeedback(req, res) {
 
 export async function createFeedback(req, res) {
   try {
-    const rating = Number(req.body.rating);
+    const ratingRaw = req.body.rating;
+    const rating = ratingRaw ? String(ratingRaw).trim().toLowerCase() : "";
     const comment = req.body.comment ? String(req.body.comment).trim() : null;
     const contactId = req.body.contact_id ? Number(req.body.contact_id) : null;
     const sessionId = req.body.campaign_session_id ? Number(req.body.campaign_session_id) : null;
+    const allowedRatings = new Set(["good", "neutral", "bad"]);
 
-    if (Number.isNaN(rating) || rating < 1 || rating > 5) {
-      return res.status(400).json({ error: "rating must be between 1 and 5" });
+    if (!allowedRatings.has(rating)) {
+      return res.status(400).json({
+        error: "rating must be one of: good, neutral, bad",
+      });
     }
 
     const record = await prisma.service_feedback.create({
@@ -90,4 +102,3 @@ export async function createFeedback(req, res) {
     return res.status(500).json({ error: err.message || "Failed to save feedback" });
   }
 }
-

@@ -73,6 +73,59 @@ function extractImageFromText(body = "") {
   return { url, caption: caption || null };
 }
 
+function truncateString(value, maxLength) {
+  if (typeof value !== "string") return value;
+  return value.length <= maxLength ? value : value.slice(0, maxLength);
+}
+
+function sanitizeInteractiveListPayload(payload) {
+  if (
+    !payload ||
+    payload.type !== "interactive" ||
+    payload.interactive?.type !== "list"
+  ) {
+    return payload;
+  }
+
+  const interactive = payload.interactive;
+  const action = interactive.action || {};
+  const sections = Array.isArray(action.sections) ? action.sections : [];
+  const sanitizedSections = sections.map((section) => {
+    if (!section) return section;
+    const rows = Array.isArray(section.rows) ? section.rows : [];
+    const sanitizedRows = rows.map((row) => {
+      if (!row) return row;
+      return {
+        ...row,
+        title: truncateString(String(row?.title ?? ""), 24),
+      };
+    });
+    return {
+      ...section,
+      title:
+        typeof section.title === "string"
+          ? truncateString(section.title, 24)
+          : section.title,
+      rows: sanitizedRows,
+    };
+  });
+
+  return {
+    ...payload,
+    interactive: {
+      ...interactive,
+      action: {
+        ...action,
+        button:
+          typeof action.button === "string"
+            ? truncateString(action.button, 20)
+            : action.button,
+        sections: sanitizedSections,
+      },
+    },
+  };
+}
+
 function buildInteractivePayload({ text, items = [], type = "buttons" }) {
   if (!Array.isArray(items) || items.length === 0) return null;
 
@@ -194,11 +247,11 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
       throw new Error("Invalid message payload");
     }
 
-    const payload = {
+    const payload = sanitizeInteractiveListPayload({
       messaging_product: "whatsapp",
       to,
       ...normalized,
-    };
+    });
 
     // Only create a new delivery attempt for the first send; retries reuse the existing row.
     if (!deliverAttempt && messageRecord) {

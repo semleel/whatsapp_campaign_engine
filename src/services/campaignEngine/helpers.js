@@ -119,7 +119,7 @@ export function buildChoiceMessage(contact, prompt, choices) {
   } else {
     const rows = choices.map((c, idx) => ({
       id: c.choice_code || String(c.choice_id || idx + 1),
-      title: c.label || c.choice_code || `Option ${idx + 1}`,
+      title: String(c.label || c.choice_code || `Option ${idx + 1}`).slice(0, 24),
     }));
 
     waPayload = {
@@ -174,7 +174,9 @@ function buildMenuRows(menuSections) {
           : [];
       if (!rows.length) return null;
       const sectionTitle =
-        typeof section.title === "string" ? section.title.trim() : "";
+        typeof section.title === "string"
+          ? section.title.trim().slice(0, 24)
+          : "";
       return {
         title: sectionTitle || undefined,
         rows,
@@ -208,6 +210,9 @@ export function buildTemplateMenuMessage(contact, prompt, menu) {
     return [...sectionHeader, ...rows];
   });
   const fallbackText = `${safePrompt}\n\n${optionLines.join("\n")}`;
+  const rawButtonLabel =
+    (menu.buttonLabel || "View options").trim() || "View options";
+  const safeButtonLabel = rawButtonLabel.slice(0, 20);
 
   return {
     to: contact.phone_num,
@@ -218,7 +223,7 @@ export function buildTemplateMenuMessage(contact, prompt, menu) {
         type: "list",
         body: { text: safePrompt },
         action: {
-          button: (menu.buttonLabel || "View options").trim() || "View options",
+          button: safeButtonLabel,
           sections,
         },
       },
@@ -341,11 +346,29 @@ export function buildChoicePromptMessage({
 
 export function extractChoiceCodeFromPayload(payload) {
   try {
+    // ✅ CASE 1: Simplified payload (your enginePayload)
+    if (payload?.type === "interactive" && payload?.interactive) {
+      const interactive = payload.interactive;
+      if (interactive?.type === "button_reply") {
+        return interactive.button_reply?.id || null;
+      }
+      if (interactive?.type === "list_reply") {
+        return interactive.list_reply?.id || null;
+      }
+
+      // fallback if type missing
+      if (interactive?.button_reply?.id) return interactive.button_reply.id;
+      if (interactive?.list_reply?.id) return interactive.list_reply.id;
+    }
+
+    // ✅ CASE 2: Full Meta webhook payload
     const entry = payload?.entry?.[0];
     const changes = entry?.changes?.[0];
     const value = changes?.value;
     const msg = value?.messages?.[0];
+
     if (!msg || msg.type !== "interactive") return null;
+
     const interactive = msg.interactive;
     if (interactive?.type === "button_reply") {
       return interactive.button_reply?.id || null;
@@ -353,12 +376,14 @@ export function extractChoiceCodeFromPayload(payload) {
     if (interactive?.type === "list_reply") {
       return interactive.list_reply?.id || null;
     }
+
     return null;
   } catch (e) {
     console.error("[ENGINE] extractChoiceCodeFromPayload error", e);
     return null;
   }
 }
+
 
 export function extractInteractiveTitleFromPayload(payload) {
   try {

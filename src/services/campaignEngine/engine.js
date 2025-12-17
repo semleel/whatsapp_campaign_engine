@@ -16,6 +16,7 @@ import {
 } from "./commands.js";
 import { extractChoiceCodeFromPayload } from "./helpers.js";
 import { runChoiceStep, runInputStep, runStepAndReturnMessages } from "./steps.js";
+import { log } from "../../utils/logger.js";
 
 export async function handleIncomingMessage(args) {
   const { fromPhone, text, type, payload, enginePayload } = args;
@@ -24,7 +25,19 @@ export async function handleIncomingMessage(args) {
   const keywordTextTypes = ["text", "button", "list"];
   const incomingTextValue = text || "";
   const trimmedIncomingText = text?.trim() ?? "";
-  const interactiveReplyId = (extractChoiceCodeFromPayload(payload) || "").trim();
+  let interactiveReplyId = "";
+
+  // 1️⃣ Try real WhatsApp interactive payload (will usually be null in your setup)
+  interactiveReplyId =
+    extractChoiceCodeFromPayload(payload)?.trim() || "";
+
+  // 2️⃣ Fallback: parse sandbox text like "[Button reply: Good]"
+  if (!interactiveReplyId && typeof text === "string") {
+    const m = text.match(/^\[Button reply:\s*(.+?)\]$/i);
+    if (m) {
+      interactiveReplyId = m[1].trim().toLowerCase();
+    }
+  }
 
   const normalizedCommandText = trimmedIncomingText || interactiveReplyId;
   const normalizedCommandLower = normalizedCommandText.toLowerCase();
@@ -35,6 +48,75 @@ export async function handleIncomingMessage(args) {
       : "";
   const normalizedKeywordLower = normalizedKeywordText.toLowerCase();
   let activeSession = await findActiveSession(contact.contact_id);
+  // 🔒 FEEDBACK FLOW OWNS INPUT — NOTHING ELSE RUNS
+  if (activeSession?.last_payload_json?.feedback_mode === true) {
+
+    // ✅ ALWAYS allow system commands
+    if (normalizedCommandLower.startsWith("/")) {
+      const cmd = normalizedCommandLower.split(/\s+/)[0];
+
+      // Allow exit / reset / start immediately
+      if (["/exit", "/reset", "/start"].includes(cmd)) {
+        const result = await handleSystemCommand({
+          contact,
+          command: cmd,
+          rawText: normalizedCommandText,
+          session: activeSession,
+        });
+        return { outbound: result.outbound || [] };
+      }
+    }
+
+    let raw =
+      (interactiveReplyId || trimmedIncomingText || "")
+        .trim()
+        .toLowerCase();
+
+    // 🩹 normalize sandbox button text
+    raw = raw.replace(/^\/feedback\s+/i, "").trim();
+
+    // Rating step
+    if (activeSession.last_payload_json.awaiting_feedback_rating) {
+      if (["good", "neutral", "bad"].includes(raw)) {
+        const result = await handleSystemCommand({
+          contact,
+          command: "/feedback",
+          rawText: `/feedback ${raw}`,
+          session: activeSession,
+        });
+        return { outbound: result.outbound || [] };
+      }
+
+      return {
+        outbound: [
+          {
+            to: contact.phone_num,
+            content: "Please tap one of the feedback buttons (Good / Neutral / Bad).",
+          },
+        ],
+      };
+    }
+
+    // Comment step
+    if (activeSession.last_payload_json.awaiting_feedback_comment) {
+      return handleAwaitingFeedbackComment({
+        contact,
+        session: activeSession,
+        text: trimmedIncomingText,
+      });
+    }
+
+    // Safety net
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Please complete the feedback 🙂",
+        },
+      ],
+    };
+  }
+
   if (!activeSession) {
     const expiredSession = await findExpiredSession(contact.contact_id);
     if (expiredSession) {
@@ -51,6 +133,60 @@ export async function handleIncomingMessage(args) {
       return { outbound: [resumeNotice, ...(result?.outbound || [])] };
     }
   }
+
+  const isFeedbackAwaitingComment =
+    !!activeSession?.last_payload_json?.awaiting_feedback_comment;
+  const isFeedbackMode = !!activeSession?.last_payload_json?.feedback_mode;
+  const isAwaitingRating = !!activeSession?.last_payload_json?.awaiting_feedback_rating;
+
+  if (activeSession && isFeedbackMode && isAwaitingRating) {
+    const rawInput = (interactiveReplyId || trimmedIncomingText || "")
+      .trim()
+      .toLowerCase();
+
+    // ✅ Accept both "good" and "/feedback good"
+    const rating = rawInput.startsWith("/feedback ")
+      ? rawInput.replace("/feedback ", "").trim()
+      : rawInput;
+
+    if (["good", "neutral", "bad"].includes(rating)) {
+      const result = await handleSystemCommand({
+        contact,
+        command: "/feedback",
+        rawText: `/feedback ${rating}`,
+        session: activeSession,
+      });
+      return { outbound: result.outbound || [] };
+    }
+  }
+
+  if (
+    !normalizedCommandLower.startsWith("/") &&
+    type === "text" &&
+    isFeedbackAwaitingComment
+  ) {
+    const response = await handleAwaitingFeedbackComment({
+      contact,
+      session: activeSession,
+      text: trimmedIncomingText,
+    });
+    return response;
+  }
+
+  if (
+    interactiveReplyId &&
+    activeSession?.last_payload_json?.feedback_mode === true
+  ) {
+    const result = await handleSystemCommand({
+      contact,
+      command: "/feedback",
+      rawText: interactiveReplyId, // "good" | "neutral" | "bad"
+      session: activeSession,
+    });
+    return { outbound: result.outbound || [] };
+  }
+
+  log("[ENGINE] Feedback button intercepted:", interactiveReplyId);
 
   if (normalizedCommandLower.startsWith("/")) {
     const cmd = normalizedCommandLower.split(/\s+/)[0] || normalizedCommandLower;
@@ -175,10 +311,10 @@ export async function handleIncomingMessage(args) {
     const keywordMeta =
       keywordOnly
         ? {
-            rawText: normalizedKeywordText,
-            keyword: keywordOnly,
-            args: keywordArgs || null,
-          }
+          rawText: normalizedKeywordText,
+          keyword: keywordOnly,
+          args: keywordArgs || null,
+        }
         : null;
 
     const newSession = await createSessionForCampaign(
@@ -467,6 +603,64 @@ async function continueAfterCommand(contact, session) {
   const repeated = await repeatLastStep({ contact, session });
   if (!repeated.length) return [];
   return [buildLetContinueMessage(contact), ...repeated];
+}
+
+async function handleAwaitingFeedbackComment({ contact, session, text }) {
+  if (!session?.campaign_session_id) {
+    return {
+      outbound: [
+        {
+          to: contact.phone_num,
+          content: "Thanks for your feedback! 🙏",
+        },
+      ],
+    };
+  }
+
+  const trimmedText = (text || "").trim();
+  const normalized = trimmedText.toLowerCase();
+  const isSkip = !trimmedText || normalized === "skip";
+  const comment = isSkip ? null : trimmedText;
+  const existingPayload =
+    session.last_payload_json && typeof session.last_payload_json === "object"
+      ? { ...session.last_payload_json }
+      : {};
+  const rating = existingPayload.feedback_rating;
+
+  if (rating) {
+    await prisma.service_feedback.create({
+      data: {
+        contact_id: contact.contact_id,
+        campaign_session_id: session.campaign_session_id,
+        rating,
+        comment,
+      },
+    });
+  }
+
+  delete existingPayload.feedback_rating;
+  delete existingPayload.awaiting_feedback_comment;
+  delete existingPayload.feedback_mode;
+  const cleanedPayload =
+    Object.keys(existingPayload).length > 0 ? existingPayload : null;
+
+  await prisma.campaign_session.update({
+    where: { campaign_session_id: session.campaign_session_id },
+    data: {
+      last_payload_json: cleanedPayload,
+      last_active_at: new Date(),
+    },
+  });
+  session.last_payload_json = cleanedPayload;
+
+  return {
+    outbound: [
+      {
+        to: contact.phone_num,
+        content: "Thanks for your feedback! 🙏",
+      },
+    ],
+  };
 }
 
 async function repeatLastStep({ contact, session }) {

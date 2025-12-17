@@ -268,6 +268,7 @@ export const Api = {
     const url = withBase(
       `/api/keyword/check?value=${encodeURIComponent(value)}`
     );
+
     const res = await fetch(url, {
       headers: {
         "Content-Type": "application/json",
@@ -275,13 +276,31 @@ export const Api = {
       },
       cache: "no-store",
     });
-    let data: KeywordCheckResponse | { error?: string } | null = null;
+
+    let data: KeywordCheckResponse;
+
     try {
-      data = await res.json();
+      const raw = await res.json();
+
+      data = {
+        available: Boolean(raw?.available),
+        error: raw?.error,
+        keywordid: raw?.keywordid,
+        campaignid: raw?.campaignid,
+        campaignname: raw?.campaignname ?? null,
+      };
     } catch {
-      data = null;
+      data = {
+        available: false,
+        error: "Invalid server response",
+      };
     }
-    return { ok: res.ok, status: res.status, data };
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      data,
+    };
   },
 
   // =========================================================

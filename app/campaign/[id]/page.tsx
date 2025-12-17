@@ -112,9 +112,9 @@ export default function CampaignDetailPage() {
   };
 
   // Add keyword for this campaign - with pre-check like create page
-const handleAddKeyword = async () => {
-  const raw = keywordDraft.trim().toLowerCase();
-  if (!raw || !id) return;
+  const handleAddKeyword = async () => {
+    const raw = keywordDraft.trim().toLowerCase();
+    if (!raw || !id) return;
 
     if (/\s/.test(raw)) {
       setKeywordMessage("Keyword must be a single word without spaces, e.g. 'pokemon'.");
@@ -138,21 +138,16 @@ const handleAddKeyword = async () => {
 
     try {
       const availability = await Api.checkKeywordAvailability(raw);
-      const data = availability.data;
-      if (
-        !availability.ok ||
-        (data && data.available === false) ||
-        (data && "error" in data && data.error)
-      ) {
-        const campaignHint =
-          data && "campaignname" in data && data.campaignname
-            ? ` Keyword already belongs to "${data.campaignname}".`
-            : "";
+      const { ok, data } = availability;
+
+      if (!ok || !data.available) {
+        const campaignHint = data.campaignname
+          ? ` Keyword already belongs to "${data.campaignname}".`
+          : "";
+
         setKeywordMessage(
-          (data && "error" in data && data.error) ||
-            (data && data.available === false
-              ? `Keyword already taken.${campaignHint}`
-              : "Unable to validate keyword. Please try again.")
+          data.error ||
+          `Keyword already taken.${campaignHint}`
         );
         return;
       }
