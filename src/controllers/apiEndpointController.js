@@ -30,14 +30,31 @@ function normalizeHeaders(rawHeaders) {
     .filter((row) => row.key);
 }
 
+function parseBodyTemplate(raw) {
+  if (raw == null) {
+    return null;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
 function normalizeEndpointPayload(body = {}) {
   const trimmedUrl = String(body.url || "").trim();
   ensureHttps(trimmedUrl);
 
   const authType = String(body.auth_type || "none");
   const cleanHeaders = normalizeHeaders(body.headers_json);
-  const bodyTemplate =
-    typeof body.body_template === "string" ? body.body_template : null;
+  const bodyTemplate = parseBodyTemplate(body.body_template);
   const responseTemplate =
     typeof body.response_template === "string" ? body.response_template : null;
   return {
@@ -72,7 +89,7 @@ function mapApiToEndpointConfig(row) {
       ? null
       : typeof row.body_template === "string"
         ? row.body_template
-        : JSON.stringify(row.body_template);
+        : JSON.stringify(row.body_template, null, 2);
 
   return {
     apiid: row.api_id,

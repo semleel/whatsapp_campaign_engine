@@ -1,4 +1,4 @@
-// src/fake-api/mbti.js
+// src/fake-api/routes/mbti.js
 
 import express from "express";
 import fs from "fs";

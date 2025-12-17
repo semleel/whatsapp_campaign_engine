@@ -1,4 +1,4 @@
-// src/fake-api/routes/bookings.js
+// src/fake-api/routes/students.js
 
 import express from "express";
 import fs from "fs";

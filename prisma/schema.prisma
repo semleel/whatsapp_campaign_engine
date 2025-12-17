@@ -120,6 +120,7 @@ model campaign_session {
   current_step_id     Int?
   last_payload_json   Json?
   last_payload_type   String?             @db.VarChar
+  required_inputs     Json?
   api_log             api_log[]
   campaign_response   campaign_response[]
   campaign            campaign?           @relation(fields: [campaign_id], references: [campaign_id], onDelete: NoAction, onUpdate: NoAction)
@@ -148,8 +149,7 @@ model campaign_step {
   media_url                                                             String?
   template_source_id                                                    Int?
   choice_mode                                                           String                 @default("branch") @db.VarChar(20)
-  choice_source                                                         String?                @default("manual") @db.VarChar(20)
-  choice_config                                                         Json?
+  interaction_config                                                    Json?
   campaign_response                                                     campaign_response[]
   campaign_session                                                      campaign_session[]
   api                                                                   api?                   @relation(fields: [api_id], references: [api_id], onDelete: NoAction, onUpdate: NoAction)

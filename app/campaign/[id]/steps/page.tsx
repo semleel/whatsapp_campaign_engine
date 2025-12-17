@@ -25,10 +25,12 @@ import { CSS } from "@dnd-kit/utilities";
 import { Api } from "@/lib/client";
 import type {
   ActionType,
+  CampaignStepChoice,
   CampaignStepWithChoices,
   ApiListItem,
   InputType,
-  ChoiceConfig,
+  InteractionConfig,
+  TemplateDetail,
 } from "@/lib/types";
 import { usePrivilege } from "@/lib/permissions";
 import { showCenteredAlert, showPrivilegeDenied } from "@/lib/showAlert";
@@ -64,8 +66,7 @@ type StepFormState = CampaignStepWithChoices & {
   local_id: string;
   client_id: number;
   choice_mode?: "branch" | "sequential";
-  choice_source?: "manual" | "api";
-  choice_config?: ChoiceConfig | null;
+  interaction_config?: InteractionConfig | null;
 };
 
 const resolveChoiceMode = (step?: StepFormState | null): "branch" | "sequential" =>
@@ -143,101 +144,56 @@ const extractChoicesFromTemplate = (
   return normalizedChoices;
 };
 
-const createChoiceConfig = (): ChoiceConfig => ({
-  response_path: "",
-  label_field: "",
-  value_field: "",
-  next_step_map: {},
-});
-
-const ensureChoiceConfig = (config?: ChoiceConfig | null): ChoiceConfig =>
-  config ?? createChoiceConfig();
-
-const parseApiSampleResponse = (template?: string | null) => {
-  if (!template) return null;
-  try {
-    return JSON.parse(template);
-  } catch {
-    return null;
-  }
+type ChoicePreviewItem = {
+  key: string;
+  label: string;
+  value?: string;
 };
 
-const resolveApiPathValue = (data: unknown, path?: string | null) => {
-  if (!path) return data;
-  const segments = path
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  let current = data;
-  for (const segment of segments) {
-    if (current && typeof current === "object") {
-      current = (current as Record<string, any>)[segment];
-    } else {
-      return undefined;
-    }
-  }
-  return current;
-};
-
-const collectResponseArrayPaths = (
-  data: unknown,
-  prefix = ""
-): { path: string; label: string }[] => {
-  const gathered: { path: string; label: string }[] = [];
-  if (Array.isArray(data)) {
-    gathered.push({ path: prefix, label: prefix || "response" });
-  }
-  if (data && typeof data === "object") {
-    Object.entries(data).forEach(([key, value]) => {
-      const nextPrefix = prefix ? `${prefix}.${key}` : key;
-      gathered.push(...collectResponseArrayPaths(value, nextPrefix));
-    });
-  }
-  return gathered;
-};
-
-const getSampleItems = (data: unknown, path?: string | null) => {
-  const resolved = resolveApiPathValue(data, path);
-  return Array.isArray(resolved) ? resolved : [];
-};
-
-const getFieldOptionsFromItems = (items: unknown[]) => {
-  const firstObject = items.find((item) => item && typeof item === "object");
-  if (!firstObject) return [];
-  return Array.from(new Set(Object.keys(firstObject as Record<string, any>)));
-};
-
-const toPreviewString = (value: unknown, fallback: string) => {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return fallback;
-    }
-  }
-  return String(value);
-};
-
-const deriveApiPreviewChoices = (data: unknown, config: ChoiceConfig) => {
-  const items = getSampleItems(data, config.response_path);
-  if (!items.length) return [];
-  return items.map((item, idx) => {
-    const fallbackValue = `choice_${idx + 1}`;
-    const rawValue =
-      resolveApiPathValue(item, config.value_field) ??
-      resolveApiPathValue(item, config.label_field) ??
-      item;
-    const value = toPreviewString(rawValue, fallbackValue);
-    const fallbackLabel = `Option ${idx + 1}`;
-    const rawLabel =
-      resolveApiPathValue(item, config.label_field) ?? rawValue ?? fallbackLabel;
-    const label = toPreviewString(rawLabel, fallbackLabel);
-    return { value, label };
+const buildManualChoicePreviewItems = (choices?: CampaignStepChoice[]): ChoicePreviewItem[] => {
+  const normalized = (choices || []).map((choice, idx) => {
+    const label =
+      (choice.label && choice.label.trim()) ||
+      (choice.choice_code && choice.choice_code.trim()) ||
+      `Option ${idx + 1}`;
+    const sanitizedLabel = label || `Option ${idx + 1}`;
+    const fallbackValue =
+      choice.choice_code || (choice.choice_id ? `choice_${choice.choice_id}` : `choice_${idx + 1}`);
+    return {
+      key: choice.choice_id ? `manual-${choice.choice_id}` : `manual-${idx}-${fallbackValue}`,
+      label: sanitizedLabel,
+      value: choice.choice_code
+        ? choice.choice_code
+        : choice.choice_id
+          ? `${choice.choice_id}`
+          : undefined,
+    };
   });
+  return normalized;
 };
 
-const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input", "api"];
+const buildTemplateChoicePreviewItems = (template?: TemplateListItem | null): ChoicePreviewItem[] => {
+  const choices = extractChoicesFromTemplate(template?.placeholders as Record<string, any> | null);
+  return choices.map((choice, idx) => ({
+    key: choice.__key ?? `template-${idx}-${choice.label}`,
+    label: choice.label,
+    value: choice.id ? `${choice.id}` : undefined,
+  }));
+};
+
+const dedupeChoicePreviewItems = (items: ChoicePreviewItem[]) => {
+  const seen = new Set<string>();
+  const unique: ChoicePreviewItem[] = [];
+  items.forEach((item) => {
+    const dedupeKey = item.value ?? item.label;
+    if (!dedupeKey || seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    unique.push(item);
+  });
+  return unique;
+};
+
+const ACTION_OPTIONS: ActionType[] = ["message", "choice", "input"];
 
 const generateLocalId = () => `step-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -359,8 +315,7 @@ const newStep = (campaignId: number, order: number): StepFormState => ({
   message_mode: "custom",
   campaign_step_choice: [],
   choice_mode: "branch",
-  choice_source: "manual",
-  choice_config: null,
+  interaction_config: null,
 });
 
 type SortableStepRowProps = {
@@ -461,8 +416,10 @@ export default function CampaignStepsPage() {
     const rawSteps = [...(apiSteps || [])].sort((a, b) => a.step_number - b.step_number);
 
     return rawSteps.map((step, index) => {
-      const normalizedAction =
-        ["message", "choice", "input", "api"].includes(step.action_type) ? step.action_type : "message";
+      const normalizedAction: ActionType =
+        step.action_type === "choice" || step.action_type === "input"
+          ? step.action_type
+          : "message";
       let inputType: InputType | null = null;
       let expected = step.expected_input;
       if (normalizedAction === "input") {
@@ -485,8 +442,7 @@ export default function CampaignStepsPage() {
         step_number: index + 1,
         campaign_step_choice: step.campaign_step_choice || [],
         choice_mode: step.choice_mode === "sequential" ? "sequential" : "branch",
-        choice_source: step.choice_source === "api" ? "api" : "manual",
-        choice_config: step.choice_config ?? null,
+        interaction_config: step.interaction_config ?? null,
         input_type: inputType,
         expected_input: expected,
         template: (step as any).template ?? null,
@@ -782,10 +738,18 @@ export default function CampaignStepsPage() {
       }
       if (step.action_type === "choice") {
         const mode = resolveChoiceMode(step);
+
         if (mode === "sequential") {
-          if (!step.next_step_id || !idSet.has(step.next_step_id)) {
+          if (!step.next_step_id) {
             setValidationError(
-              "This step must have a Next Step configured when using “Continue to next step”."
+              `Step ${step.step_number} is set to “Continue to next step” but no Next Step is selected.`
+            );
+            return;
+          }
+
+          if (!idSet.has(step.next_step_id)) {
+            setValidationError(
+              `Step ${step.step_number} points to a step that no longer exists.`
             );
             return;
           }
@@ -806,19 +770,27 @@ export default function CampaignStepsPage() {
       const payload = steps.map((s, idx) => {
         const { message_mode, template, local_id, ...rest } = s as StepFormState & { template?: any };
         const mode = resolveMessageMode(s);
-        const usesApi = ["message", "choice", "api"].includes(s.action_type);
+        const usesApi = s.action_type === "message" || s.action_type === "choice";
         const resolvedApiId = usesApi ? s.api_id ?? null : null;
         const resolvedFailureStepId = resolvedApiId ? s.failure_step_id ?? null : null;
+        const isSequentialChoice =
+          s.action_type === "choice" && resolveChoiceMode(s) === "sequential";
         return {
           ...rest,
           api_id: resolvedApiId,
-          next_step_id: s.action_type === "choice" ? null : s.is_end_step ? null : s.next_step_id ?? null,
+          next_step_id:
+            isSequentialChoice
+              ? s.next_step_id ?? null
+              : s.action_type === "choice"
+                ? null
+                : s.is_end_step
+                  ? null
+                  : s.next_step_id ?? null,
           failure_step_id: resolvedFailureStepId,
-          is_end_step: !!s.is_end_step,
+          is_end_step: s.action_type === "choice" ? false : !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
           choice_mode: s.action_type === "choice" ? (s.choice_mode ?? "branch") : undefined,
-          choice_source: s.action_type === "choice" ? (s.choice_source ?? "manual") : undefined,
-          choice_config: s.action_type === "choice" ? s.choice_config ?? null : null,
+          interaction_config: s.interaction_config ?? null,
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
@@ -837,6 +809,13 @@ export default function CampaignStepsPage() {
   };
 
   const activeTemplates = templates.filter(isTemplateActiveForSteps);
+
+  const hasInvalidSequentialStep = steps.some(
+    (s) =>
+      s.action_type === "choice" &&
+      resolveChoiceMode(s) === "sequential" &&
+      !s.next_step_id
+  );
 
   const activeStep =
     expandedIndex !== null && expandedIndex >= 0 && expandedIndex < steps.length
@@ -861,19 +840,24 @@ export default function CampaignStepsPage() {
       })()
       : "-";
   const activeChoiceMode = resolveChoiceMode(activeStep);
-  const templateMenu =
-    activeStep?.template_source_id &&
-    activeStep?.template?.placeholders &&
-    typeof activeStep.template.placeholders === "object"
-      ? ((activeStep.template.placeholders as any).menu as { sections?: TemplateMenuSection[] } | null)
-      : null;
-  const templateMenuSections = Array.isArray(templateMenu?.sections)
-    ? (templateMenu.sections as TemplateMenuSection[])
-    : [];
   const activeApi =
     activeStep?.api_id && typeof activeStep.api_id === "number"
       ? apis.find((api) => api.api_id === activeStep.api_id) ?? null
       : null;
+  const toTemplateListItem = (
+    t?: TemplateDetail | null
+  ): TemplateListItem | null => {
+    if (!t || typeof t.content_id !== "number") return null;
+    return t as TemplateListItem;
+  };
+  const manualPreviewChoices = dedupeChoicePreviewItems([
+    ...buildManualChoicePreviewItems(activeStep?.campaign_step_choice),
+    ...buildTemplateChoicePreviewItems(toTemplateListItem(activeStep?.template)),
+  ]);
+  const activePreviewChoices = manualPreviewChoices;
+  const previewHintText = activeStep?.interaction_config
+    ? "API response will be converted to buttons/menu at runtime."
+    : "Manual choices shown.";
 
   if (!privLoading && !canView) {
     return (
@@ -971,6 +955,7 @@ export default function CampaignStepsPage() {
                           const choiceMode = resolveChoiceMode(s);
                           const isSequentialChoice = s.action_type === "choice" && choiceMode === "sequential";
                           const targetSteps = steps.filter((st) => st.local_id !== s.local_id);
+                          const sequentialMissingNext = isSequentialChoice && !s.next_step_id;
                           const handleChoiceModeChange = (mode: "branch" | "sequential") => {
                             const patch: Partial<StepFormState> = { choice_mode: mode };
                             if (mode === "sequential") {
@@ -984,77 +969,40 @@ export default function CampaignStepsPage() {
                             }
                             updateStep(idx, patch);
                           };
-                          const choiceSource = s.choice_source === "api" ? "api" : "manual";
-                          const parsedChoiceConfig = ensureChoiceConfig(s.choice_config);
-                          const apiSampleResponse = parseApiSampleResponse(apiForStep?.response_template ?? null);
-                          const responseArrayPaths = apiSampleResponse
-                            ? collectResponseArrayPaths(apiSampleResponse)
-                            : [];
-                          const responsePath =
-                            parsedChoiceConfig.response_path || responseArrayPaths[0]?.path || "";
-                          const sampleItems = apiSampleResponse
-                            ? getSampleItems(apiSampleResponse, responsePath)
-                            : [];
-                          const fieldOptions = getFieldOptionsFromItems(sampleItems);
-                          const selectedLabelField = parsedChoiceConfig.label_field || fieldOptions[0] || "";
-                          const selectedValueField = parsedChoiceConfig.value_field || fieldOptions[0] || "";
-                          const apiPreviewChoices = deriveApiPreviewChoices(apiSampleResponse, parsedChoiceConfig);
-                          const nextStepMap = parsedChoiceConfig.next_step_map ?? {};
-                          const handleChoiceSourceChange = (source: "manual" | "api") => {
-                            const patch: Partial<StepFormState> = { choice_source: source };
-                            if (source === "api" && !s.choice_config) {
-                              patch.choice_config = createChoiceConfig();
-                            }
-                            updateStep(idx, patch);
+                          const defaultInteractionConfig: InteractionConfig = {
+                            type: "none",
+                            max_items: undefined,
+                            response_path: "",
+                            save_to: "",
+                          };
+                          const resolvedInteractionConfig: InteractionConfig = {
+                            type: s.interaction_config?.type ?? defaultInteractionConfig.type,
+                            max_items:
+                              typeof s.interaction_config?.max_items === "number"
+                                ? s.interaction_config.max_items
+                                : defaultInteractionConfig.max_items,
+                            response_path: s.interaction_config?.response_path ?? "",
+                            save_to: s.interaction_config?.save_to ?? "",
+                          };
+                          const interactionEnabled = Boolean(s.interaction_config);
+                          const handleInteractionToggle = (enabled: boolean) => {
+                            updateStep(idx, {
+                              interaction_config: enabled ? resolvedInteractionConfig : null,
+                            });
+                          };
+                          const handleInteractionChange = (changes: Partial<InteractionConfig>) => {
+                            updateStep(idx, {
+                              interaction_config: {
+                                ...(s.interaction_config ?? defaultInteractionConfig),
+                                ...changes,
+                              },
+                            });
                           };
                           const handleApiEndpointChange = (value: string) => {
                             const apiIdValue = value ? Number(value) : null;
                             updateStep(idx, {
                               api_id: apiIdValue,
-                              choice_config: apiIdValue ? createChoiceConfig() : null,
-                            });
-                          };
-                          const handleApiResponsePathChange = (value: string) => {
-                            const baseConfig = ensureChoiceConfig(s.choice_config);
-                            const itemsForPath = apiSampleResponse
-                              ? getSampleItems(apiSampleResponse, value)
-                              : [];
-                            const fallbackField = itemsForPath.length
-                              ? getFieldOptionsFromItems(itemsForPath)[0]
-                              : "";
-                            updateStep(idx, {
-                              choice_config: {
-                                ...baseConfig,
-                                response_path: value,
-                                label_field: fallbackField || baseConfig.label_field,
-                                value_field: fallbackField || baseConfig.value_field,
-                                next_step_map: {},
-                              },
-                            });
-                          };
-                          const handleApiFieldChange = (
-                            field: "label_field" | "value_field",
-                            value: string
-                          ) => {
-                            const baseConfig = ensureChoiceConfig(s.choice_config);
-                            updateStep(idx, {
-                              choice_config: {
-                                ...baseConfig,
-                                [field]: value,
-                                ...(field === "value_field" ? { next_step_map: {} } : {}),
-                              },
-                            });
-                          };
-                          const handleApiNextStepChange = (choiceValue: string, stepId: number | null) => {
-                            const baseConfig = ensureChoiceConfig(s.choice_config);
-                            updateStep(idx, {
-                              choice_config: {
-                                ...baseConfig,
-                                next_step_map: {
-                                  ...(baseConfig.next_step_map || {}),
-                                  [choiceValue]: stepId,
-                                },
-                              },
+                              interaction_config: apiIdValue ? s.interaction_config : null,
                             });
                           };
 
@@ -1099,10 +1047,9 @@ export default function CampaignStepsPage() {
                                               extra.next_step_id = null;
                                               extra.is_end_step = false;
                                               extra.choice_mode = "branch";
-                                              extra.choice_source = "manual";
-                                              extra.choice_config = null;
-                                            } else {
-                                              extra.choice_config = null;
+                                            }
+                                            if (nextAction === "message") {
+                                              extra.interaction_config = null;
                                             }
 
                                             updateStep(idx, {
@@ -1190,7 +1137,7 @@ export default function CampaignStepsPage() {
                                                         key={`${st.local_id}-target`}
                                                         value={value}
                                                       >
-                                                        {`Step ${st.step_number} – ${labelText}`}
+                                                        {`Step ${st.step_number} - ${labelText}`}
                                                       </option>
                                                     );
                                                   })}
@@ -1211,13 +1158,14 @@ export default function CampaignStepsPage() {
                                               />
                                               <span>End campaign</span>
                                             </label>
-                                            </div>
+                                          </div>
                                         </div>
                                       ) : isSequentialChoice ? (
                                         <div className="space-y-2 text-sm font-medium md:col-span-2">
                                           <span>On success</span>
                                           <select
-                                            className="w-full rounded border px-3 py-2"
+                                            className={`w-full rounded border px-3 py-2 ${sequentialMissingNext ? "border-rose-500 text-rose-600" : ""
+                                              }`}
                                             value={s.next_step_id ?? ""}
                                             onChange={(e) => {
                                               const val = e.target.value ? Number(e.target.value) : null;
@@ -1227,6 +1175,7 @@ export default function CampaignStepsPage() {
                                               });
                                             }}
                                             required
+                                            aria-invalid={sequentialMissingNext}
                                           >
                                             <option value="">Select a target step</option>
                                             {steps
@@ -1237,13 +1186,18 @@ export default function CampaignStepsPage() {
                                                   st.prompt_text?.trim() || st.step_code || "Untitled step";
                                                 return (
                                                   <option key={`${st.local_id}-target`} value={value}>
-                                                    {`Step ${st.step_number} – ${labelText}`}
+                                                    {`Step ${st.step_number} - ${labelText}`}
                                                   </option>
                                                 );
                                               })}
                                           </select>
-                                          <p className="text-[11px] text-muted-foreground">
-                                            Routing is handled by the step’s Next Step setting.
+                                          <p
+                                            className={`text-[11px] ${sequentialMissingNext ? "text-rose-600" : "text-muted-foreground"
+                                              }`}
+                                          >
+                                            {sequentialMissingNext
+                                              ? "Select a next step before the flow continues automatically."
+                                              : "Routing is handled by the step’s Next Step setting."}
                                           </p>
                                         </div>
                                       ) : null}
@@ -1400,6 +1354,34 @@ export default function CampaignStepsPage() {
                                       </label>
                                     )}
 
+                                    {s.action_type === "input" && (
+                                      <div className="space-y-2">
+                                        <label className="space-y-1 text-sm font-medium">
+                                          <span>Save input as</span>
+                                          <input
+                                            type="text"
+                                            className="w-full rounded border px-3 py-2 font-mono text-xs"
+                                            value={s.interaction_config?.save_to ?? ""}
+                                            onChange={(e) =>
+                                              updateStep(idx, {
+                                                interaction_config: {
+                                                  type: "none",
+                                                  save_to: e.target.value || undefined,
+                                                },
+                                              })
+                                            }
+                                            placeholder="e.g. student_id"
+                                          />
+                                        </label>
+                                        <p className="text-[11px] text-muted-foreground">
+                                          The user input will be saved to session and usable as:
+                                          <br />
+                                          <code className="font-mono">{`{{ session.<key> }}`}</code>
+                                        </p>
+                                      </div>
+                                    )}
+
+
                                     {isApiInactive && (
                                       <div className="md:col-span-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                                         ⚠️ The API{" "}"
@@ -1410,18 +1392,14 @@ export default function CampaignStepsPage() {
                                       </div>
                                     )}
 
-                                    {s.action_type === "api" && (
+                                    {(s.action_type === "message" || s.action_type === "choice") && (
                                       <div className="grid gap-3 md:grid-cols-2">
                                         <label className="space-y-1 text-sm font-medium">
                                           <span>API</span>
                                           <select
                                             className="w-full rounded border px-3 py-2"
                                             value={s.api_id ?? ""}
-                                            onChange={(e) =>
-                                              updateStep(idx, {
-                                                api_id: e.target.value ? Number(e.target.value) : null,
-                                              })
-                                            }
+                                            onChange={(e) => handleApiEndpointChange(e.target.value)}
                                           >
                                             <option value="">Select API</option>
                                             {apis
@@ -1458,24 +1436,26 @@ export default function CampaignStepsPage() {
                                             })}
                                           </select>
                                         </label>
-                                        <label className="space-y-1 text-sm font-medium md:col-span-2">
-                                          <span>Error message</span>
-                                          <textarea
-                                            className="w-full rounded border px-3 py-2 text-xs font-mono"
-                                            rows={3}
-                                            value={s.error_message ?? ""}
-                                            onChange={(e) =>
-                                              updateStep(idx, {
-                                                error_message: e.target.value || null,
-                                              })
-                                            }
-                                            placeholder="Shown when the user's input is invalid or not found (e.g. wrong city name)."
-                                          />
-                                          <p className="text-[11px] text-muted-foreground">
-                                            Optional. Used only for <b>user input errors (4xx)</b>.
-                                            System errors (API down, disabled, template issues) use automatic messages.
-                                          </p>
-                                        </label>
+                                        {s.action_type === "message" ? (
+                                          <label className="space-y-1 text-sm font-medium md:col-span-2">
+                                            <span>Error message</span>
+                                            <textarea
+                                              className="w-full rounded border px-3 py-2 text-xs font-mono"
+                                              rows={3}
+                                              value={s.error_message ?? ""}
+                                              onChange={(e) =>
+                                                updateStep(idx, {
+                                                  error_message: e.target.value || null,
+                                                })
+                                              }
+                                              placeholder="Shown when the user's input is invalid or not found (e.g. wrong city name)."
+                                            />
+                                            <p className="text-[11px] text-muted-foreground">
+                                              Optional. Used only for <b>user input errors (4xx)</b>.
+                                              System errors (API down, disabled, template issues) use automatic messages.
+                                            </p>
+                                          </label>
+                                        ) : null}
                                         <div className="md:col-span-2 space-y-2 text-sm">
                                           <p className="text-[11px] font-semibold text-muted-foreground">
                                             Response template (read-only)
@@ -1490,6 +1470,113 @@ export default function CampaignStepsPage() {
                                             </p>
                                           )}
                                         </div>
+                                      </div>
+                                    )}
+                                    {s.action_type === "choice" && (
+                                      <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-3 text-sm">
+                                        <div className="flex items-center justify-between">
+                                          <p className="text-sm font-semibold">
+                                            Convert API response to interactive options
+                                          </p>
+                                          <label className="inline-flex items-center gap-2 text-sm">
+                                            <input
+                                              type="checkbox"
+                                              checked={interactionEnabled}
+                                              disabled={!s.api_id}
+                                              onChange={(e) => handleInteractionToggle(e.target.checked)}
+                                              className="h-4 w-4"
+                                            />
+                                            <span>{interactionEnabled ? "Enabled" : "Disabled"}</span>
+                                          </label>
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground">
+                                          API responses will be converted to {interactionEnabled
+                                            ? resolvedInteractionConfig.type === "menu"
+                                              ? "a menu"
+                                              : "buttons"
+                                            : "buttons"} at runtime.
+                                        </p>
+                                        {interactionEnabled ? (
+                                          <div className="grid gap-3 md:grid-cols-2 text-sm">
+                                            <label className="space-y-1 font-medium">
+                                              <span>Interaction type</span>
+                                              <select
+                                                className="w-full rounded border px-3 py-2"
+                                                value={resolvedInteractionConfig.type}
+                                                onChange={(e) =>
+                                                  handleInteractionChange({
+                                                    type: e.target.value as InteractionConfig["type"],
+                                                  })
+                                                }
+                                              >
+                                                <option value="buttons">Buttons (max 3)</option>
+                                                <option value="menu">Menu (max 10)</option>
+                                              </select>
+                                            </label>
+                                            <label className="space-y-1 font-medium">
+                                              <span>Max items</span>
+                                              <input
+                                                type="number"
+                                                min={1}
+                                                max={10}
+                                                className="w-full rounded border px-3 py-2"
+                                                value={resolvedInteractionConfig.max_items ?? ""}
+                                                onChange={(e) =>
+                                                  handleInteractionChange({
+                                                    max_items: e.target.value ? Number(e.target.value) : undefined,
+                                                  })
+                                                }
+                                              />
+                                              <p className="text-[11px] text-muted-foreground">
+                                                Limit between 1 and 10.
+                                              </p>
+                                            </label>
+                                            <label className="space-y-1 font-medium md:col-span-2">
+                                              <span>API response path</span>
+                                              <input
+                                                type="text"
+                                                className="w-full rounded border px-3 py-2 font-mono text-xs"
+                                                value={resolvedInteractionConfig.response_path ?? ""}
+                                                onChange={(e) =>
+                                                  handleInteractionChange({
+                                                    response_path: e.target.value || undefined,
+                                                  })
+                                                }
+                                                placeholder="e.g. facilities or time_slots"
+                                              />
+                                              <p className="text-[11px] text-muted-foreground">
+                                                Path in API response JSON to convert into interactive options.
+                                              </p>
+                                            </label>
+                                            <label className="space-y-1 font-medium md:col-span-2">
+                                              <span>Save user selection as</span>
+                                              <input
+                                                type="text"
+                                                className="w-full rounded border px-3 py-2 font-mono text-xs"
+                                                value={resolvedInteractionConfig.save_to ?? ""}
+                                                onChange={(e) =>
+                                                  handleInteractionChange({
+                                                    save_to: e.target.value || undefined,
+                                                  })
+                                                }
+                                                placeholder="e.g. facility, time_slot"
+                                              />
+                                              <p className="text-[11px] text-muted-foreground">
+                                                The selected value will be stored in session and can be used in APIs as:
+                                                <br />
+                                                <code className="font-mono">{"{{ session.<key> }}"}</code>
+                                              </p>
+                                              <p className="text-[11px] text-muted-foreground">
+                                                If empty, system auto-maps this step to the next required API field.
+                                              </p>
+                                            </label>
+                                          </div>
+                                        ) : (
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Toggle on to convert the API response into interactive buttons or a
+                                            menu.
+                                          </p>
+                                        )}
                                       </div>
                                     )}
 
@@ -1543,43 +1630,8 @@ export default function CampaignStepsPage() {
                                             This controls how the campaign proceeds after the user makes a selection.
                                           </p>
                                         </div>
-                                        <div className="space-y-2 rounded-md border bg-muted/5 px-3 py-2 text-sm">
-                                          <div className="flex items-center justify-between">
-                                            <p className="text-sm font-semibold">Choice source</p>
-                                            <div className="flex flex-wrap gap-4 text-sm">
-                                              <label className="inline-flex items-center gap-2">
-                                                <input
-                                                  type="radio"
-                                                  name={`choice-source-${idx}`}
-                                                  value="manual"
-                                                  checked={choiceSource === "manual"}
-                                                  onChange={() => handleChoiceSourceChange("manual")}
-                                                  className="h-3 w-3"
-                                                />
-                                                <span>Manual entry</span>
-                                              </label>
-                                              <label className="inline-flex items-center gap-2">
-                                                <input
-                                                  type="radio"
-                                                  name={`choice-source-${idx}`}
-                                                  value="api"
-                                                  checked={choiceSource === "api"}
-                                                  onChange={() => handleChoiceSourceChange("api")}
-                                                  className="h-3 w-3"
-                                                />
-                                                <span>API-driven</span>
-                                              </label>
-                                            </div>
-                                          </div>
-                                          <p className="text-xs text-muted-foreground">
-                                            {choiceSource === "manual"
-                                              ? "Enter each option manually or seed them from a template."
-                                              : "Select an API endpoint that returns choices for this step."}
-                                          </p>
-                                        </div>
-                                        {choiceSource === "manual" ? (
-                                          choiceMode === "branch" ? (
-                                            <div className="space-y-3">
+                                        {choiceMode === "branch" ? (
+                                          <div className="space-y-3">
                                             <div className="flex items-center justify-between">
                                               <h4 className="text-sm font-semibold">Choices</h4>
                                               <button
@@ -1593,105 +1645,123 @@ export default function CampaignStepsPage() {
                                             </div>
                                             <div className="space-y-3">
                                               {s.campaign_step_choice?.length ? (
-                                                s.campaign_step_choice.map((choice, cidx) => (
-                                                  <div
-                                                    key={choice.choice_id || cidx}
-                                                    className="rounded border p-3 space-y-2"
-                                                  >
-                                                    <div className="flex justify-end">
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => removeChoice(idx, cidx)}
-                                                        className="text-xs text-rose-600 hover:text-rose-700"
-                                                      >
-                                                        Remove
-                                                      </button>
-                                                    </div>
-                                                    <div className="grid gap-2 md:grid-cols-2">
-                                                      <label className="text-sm font-medium space-y-1">
-                                                        <span>Code</span>
-                                                        <input
-                                                          type="text"
-                                                          value={choice.choice_code || ""}
-                                                          onChange={(e) =>
-                                                            updateChoice(idx, cidx, { choice_code: e.target.value })
-                                                          }
-                                                          className="w-full rounded border px-3 py-2"
-                                                          placeholder="e.g. YES"
-                                                        />
-                                                      </label>
-                                                      <label className="text-sm font-medium space-y-1">
-                                                        <span>Label</span>
-                                                        <input
-                                                          type="text"
-                                                          value={choice.label || ""}
-                                                          onChange={(e) =>
-                                                            updateChoice(idx, cidx, { label: e.target.value })
-                                                          }
-                                                          className="w-full rounded border px-3 py-2"
-                                                          placeholder="Displayed to user"
-                                                        />
-                                                      </label>
-                                                    </div>
-                                                    <div className="grid gap-2 md:grid-cols-2 items-center">
-                                                      <label className="text-sm font-medium space-y-1">
-                                                        <span>Next step (within this campaign)</span>
-                                                        <select
-                                                          className={`w-full rounded border px-3 py-2 ${
-                                                            isSequentialChoice
-                                                              ? "cursor-not-allowed bg-muted/40 text-muted-foreground"
-                                                              : ""
-                                                          }`}
-                                                          value={choice.next_step_id ?? ""}
-                                                          onChange={(e) =>
-                                                            updateChoice(idx, cidx, {
-                                                              next_step_id: e.target.value ? Number(e.target.value) : null,
-                                                            })
-                                                          }
-                                                          disabled={isSequentialChoice}
-                                                          aria-disabled={isSequentialChoice}
+                                                s.campaign_step_choice.map((choice, cidx) => {
+                                                  const choiceLabel =
+                                                    (choice.label && choice.label.trim()) ||
+                                                    (choice.choice_code && choice.choice_code.trim()) ||
+                                                    `Option ${cidx + 1}`;
+                                                  const sanitizedLabel = choiceLabel.replace(/\s+/g, "-").toLowerCase();
+                                                  const manualChoiceKey = choice.choice_id
+                                                    ? `choice-${choice.choice_id}`
+                                                    : `manual-${cidx}-${sanitizedLabel}`;
+                                                  return (
+                                                    <div
+                                                      key={manualChoiceKey}
+                                                      className="rounded border p-3 space-y-2"
+                                                    >
+                                                      <div className="flex justify-end">
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => removeChoice(idx, cidx)}
+                                                          className="text-xs text-rose-600 hover:text-rose-700"
                                                         >
-                                                          <option value="">Select a target step</option>
-                                                          {steps
-                                                            .filter((st) => st.local_id !== s.local_id)
-                                                            .map((st) => {
-                                                              const value = st.step_id || st.client_id;
-                                                              const labelText =
-                                                                st.prompt_text?.trim() ||
-                                                                st.step_code ||
-                                                                "Untitled step";
-                                                              return (
-                                                                <option
-                                                                  key={`${st.local_id}-choice-target`}
-                                                                  value={value}
-                                                                >
-                                                                  {`Step ${st.step_number} – ${labelText}`}
-                                                                </option>
-                                                              );
-                                                            })}
-                                                        </select>
-                                                      </label>
-                                                      <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
-                                                        <input
-                                                          type="checkbox"
-                                                          checked={!!choice.is_correct}
-                                                          onChange={(e) =>
-                                                            updateChoice(idx, cidx, { is_correct: e.target.checked })
-                                                          }
-                                                          className="h-4 w-4"
-                                                        />
-                                                        Mark as correct
-                                                      </label>
+                                                          Remove
+                                                        </button>
+                                                      </div>
+                                                      <div className="grid gap-2 md:grid-cols-2">
+                                                        <label className="text-sm font-medium space-y-1">
+                                                          <span>Code</span>
+                                                          <input
+                                                            type="text"
+                                                            value={choice.choice_code || ""}
+                                                            onChange={(e) =>
+                                                              updateChoice(idx, cidx, { choice_code: e.target.value })
+                                                            }
+                                                            className="w-full rounded border px-3 py-2"
+                                                            placeholder="e.g. YES"
+                                                          />
+                                                        </label>
+                                                        <label className="text-sm font-medium space-y-1">
+                                                          <span>Label</span>
+                                                          <input
+                                                            type="text"
+                                                            value={choice.label || ""}
+                                                            onChange={(e) =>
+                                                              updateChoice(idx, cidx, { label: e.target.value })
+                                                            }
+                                                            className="w-full rounded border px-3 py-2"
+                                                            placeholder="Displayed to user"
+                                                          />
+                                                        </label>
+                                                      </div>
+                                                      {!isSequentialChoice ? (
+                                                        <div className="grid gap-2 md:grid-cols-2 items-center">
+                                                          <label className="text-sm font-medium space-y-1">
+                                                            <span>Next step (within this campaign)</span>
+                                                            <select
+                                                              className="w-full rounded border px-3 py-2"
+                                                              value={choice.next_step_id ?? ""}
+                                                              onChange={(e) =>
+                                                                updateChoice(idx, cidx, {
+                                                                  next_step_id: e.target.value ? Number(e.target.value) : null,
+                                                                })
+                                                              }
+                                                            >
+                                                              <option value="">Select a target step</option>
+                                                              {steps
+                                                                .filter((st) => st.local_id !== s.local_id)
+                                                                .map((st) => {
+                                                                  const value = st.step_id || st.client_id;
+                                                                  const labelText =
+                                                                    st.prompt_text?.trim() ||
+                                                                    st.step_code ||
+                                                                    "Untitled step";
+                                                                  return (
+                                                                    <option
+                                                                      key={`${st.local_id}-choice-target-${value}`}
+                                                                      value={value}
+                                                                    >
+                                                                      {`Step ${st.step_number} - ${labelText}`}
+                                                                    </option>
+                                                                  );
+                                                                })}
+                                                            </select>
+                                                          </label>
+                                                          <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
+                                                            <input
+                                                              type="checkbox"
+                                                              checked={!!choice.is_correct}
+                                                              onChange={(e) =>
+                                                                updateChoice(idx, cidx, { is_correct: e.target.checked })
+                                                              }
+                                                              className="h-4 w-4"
+                                                            />
+                                                            Mark as correct
+                                                          </label>
+                                                        </div>
+                                                      ) : (
+                                                        <label className="inline-flex items-center gap-2 text-sm font-medium mt-4 md:mt-6">
+                                                          <input
+                                                            type="checkbox"
+                                                            checked={!!choice.is_correct}
+                                                            onChange={(e) =>
+                                                              updateChoice(idx, cidx, { is_correct: e.target.checked })
+                                                            }
+                                                            className="h-4 w-4"
+                                                          />
+                                                          Mark as correct
+                                                        </label>
+                                                      )}
                                                     </div>
-                                                  </div>
-                                                ))
+                                                  );
+                                                })
                                               ) : (
                                                 <p className="text-xs text-muted-foreground">No choices yet.</p>
                                               )}
                                             </div>
                                           </div>
-                                          ) : (
-                                            <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
+                                        ) : (
+                                          <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
                                             <p className="font-semibold">
                                               Choices are defined by the template or user input.
                                             </p>
@@ -1699,216 +1769,15 @@ export default function CampaignStepsPage() {
                                               In sequential mode, the flow always continues to the configured next
                                               step.
                                             </p>
-                                          </div>
-                                          )
-                                        ) : (
-                                          <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-2 text-sm text-muted-foreground">
-                                            <div className="grid gap-3 md:grid-cols-2">
-                                              <label className="space-y-1 text-sm font-medium">
-                                                <span>API</span>
-                                                <select
-                                                  className="w-full rounded border px-3 py-2"
-                                                  value={s.api_id ?? ""}
-                                                  onChange={(e) => handleApiEndpointChange(e.target.value)}
-                                                >
-                                                  <option value="">Select API</option>
-                                                  {apis
-                                                    .filter((api) => api.is_active !== false)
-                                                    .map((api) => (
-                                                      <option key={api.api_id} value={api.api_id}>
-                                                        {api.name}
-                                                      </option>
-                                                    ))}
-                                                </select>
-                                              </label>
-                                              <label className="space-y-1 text-sm font-medium">
-                                                <span>Failure step</span>
-                                                <select
-                                                  className="w-full rounded border px-3 py-2"
-                                                  value={s.failure_step_id ?? ""}
-                                                  onChange={(e) =>
-                                                    updateStep(idx, {
-                                                      failure_step_id: e.target.value ? Number(e.target.value) : null,
-                                                    })
-                                                  }
-                                                >
-                                                  <option value="">None</option>
-                                                  {steps.map((st) => {
-                                                    const value = st.step_id || st.client_id;
-                                                    return (
-                                                      <option key={`fail-${st.local_id}`} value={value}>
-                                                        {`Step ${st.step_number} - ${st.step_code || st.prompt_text || "Step"}`}
-                                                      </option>
-                                                    );
-                                                  })}
-                                                </select>
-                                              </label>
-                                            </div>
-                                            <label className="space-y-1 text-sm font-medium">
-                                              <span>Error message</span>
-                                              <textarea
-                                                className="w-full rounded border px-3 py-2 text-xs font-mono"
-                                                rows={3}
-                                                value={s.error_message ?? ""}
-                                                onChange={(e) =>
-                                                  updateStep(idx, {
-                                                    error_message: e.target.value || null,
-                                                  })
-                                                }
-                                                placeholder="Shown when the API response cannot be parsed."
-                                              />
-                                              <p className="text-[11px] text-muted-foreground">
-                                                Optional. System errors use automatic responses.
-                                              </p>
-                                            </label>
-                                            <div className="space-y-2 text-sm">
-                                              <p className="text-[11px] font-semibold text-muted-foreground">
-                                                Response template (read-only)
-                                              </p>
-                                              {apiForStep?.response_template ? (
-                                                <pre className="rounded bg-background px-2 py-1 text-[11px] whitespace-pre-wrap border">
-                                                  {apiForStep.response_template}
-                                                </pre>
-                                              ) : (
-                                                <p className="text-xs text-muted-foreground">
-                                                  Select an API to preview its response template.
-                                                </p>
-                                              )}
-                                            </div>
-                                            <label className="space-y-1 text-sm font-medium">
-                                              <span>Response array path</span>
-                                              <input
-                                                type="text"
-                                                className="w-full rounded border px-3 py-2"
-                                                value={responsePath}
-                                                onChange={(e) => handleApiResponsePathChange(e.target.value)}
-                                                placeholder="e.g. data.items"
-                                              />
-                                              {responseArrayPaths.length ? (
-                                                <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                                                  <span className="font-semibold">Detected arrays:</span>
-                                                  {responseArrayPaths.map((item) => (
-                                                    <button
-                                                      key={item.path}
-                                                      type="button"
-                                                      onClick={() => handleApiResponsePathChange(item.path)}
-                                                      className="rounded-full border px-2 py-0.5 text-xs font-semibold text-primary"
-                                                    >
-                                                      {item.label || item.path}
-                                                    </button>
-                                                  ))}
-                                                </div>
-                                              ) : null}
-                                            </label>
-                                            <div className="grid gap-3 md:grid-cols-2">
-                                              <label className="space-y-1 text-sm font-medium">
-                                                <span>Label field</span>
-                                                <select
-                                                  className="w-full rounded border px-3 py-2"
-                                                  value={selectedLabelField}
-                                                  onChange={(e) => handleApiFieldChange("label_field", e.target.value)}
-                                                  disabled={!fieldOptions.length}
-                                                >
-                                                  <option value="">Choose a field</option>
-                                                  {fieldOptions.map((field) => (
-                                                    <option key={field} value={field}>
-                                                      {field}
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                              </label>
-                                              <label className="space-y-1 text-sm font-medium">
-                                                <span>Value field</span>
-                                                <select
-                                                  className="w-full rounded border px-3 py-2"
-                                                  value={selectedValueField}
-                                                  onChange={(e) => handleApiFieldChange("value_field", e.target.value)}
-                                                  disabled={!fieldOptions.length}
-                                                >
-                                                  <option value="">Choose a field</option>
-                                                  {fieldOptions.map((field) => (
-                                                    <option key={field} value={field}>
-                                                      {field}
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                              </label>
-                                            </div>
-                                            <div className="space-y-2 rounded border bg-background px-3 py-2 text-xs text-muted-foreground">
-                                              <p className="font-semibold text-[11px]">Sample choices</p>
-                                              {apiPreviewChoices.length ? (
-                                                <div className="flex flex-wrap gap-2">
-                                                  {apiPreviewChoices.map((choice) => (
-                                                    <span
-                                                      key={`${choice.value}-${choice.label}`}
-                                                      className="rounded-full border px-3 py-1 text-[11px] text-foreground bg-muted/40"
-                                                    >
-                                                      {choice.label}
-                                                    </span>
-                                                  ))}
-                                                </div>
-                                              ) : (
-                                                <p className="text-xs text-muted-foreground">
-                                                  Configure the response path and fields to preview options.
-                                                </p>
-                                              )}
-                                            </div>
-                                            {choiceMode === "branch" ? (
-                                              <div className="space-y-3">
-                                                <div className="flex items-center justify-between">
-                                                  <p className="text-sm font-semibold">Routing per option</p>
-                                                  <p className="text-[11px] text-muted-foreground">
-                                                    Map each API choice to a target step.
-                                                  </p>
-                                                </div>
-                                                {apiPreviewChoices.length ? (
-                                                  apiPreviewChoices.map((choice, choiceIdx) => (
-                                                    <div
-                                                      key={`api-choice-${choiceIdx}`}
-                                                      className="space-y-1 rounded border px-3 py-2"
-                                                    >
-                                                      <p className="text-[11px] text-muted-foreground">
-                                                        {choice.label}
-                                                      </p>
-                                                      <select
-                                                        className="w-full rounded border px-3 py-2 text-sm"
-                                                        value={nextStepMap[choice.value] ?? ""}
-                                                        onChange={(e) =>
-                                                          handleApiNextStepChange(
-                                                            choice.value,
-                                                            e.target.value ? Number(e.target.value) : null
-                                                          )
-                                                        }
-                                                      >
-                                                        <option value="">No next step selected</option>
-                                                        {targetSteps.map((st) => {
-                                                          const value = st.step_id || st.client_id;
-                                                          const labelText =
-                                                            st.prompt_text?.trim() || st.step_code || "Untitled step";
-                                                          return (
-                                                            <option key={`${st.local_id}-api-choice-${choiceIdx}`} value={value}>
-                                                              {`Step ${st.step_number} – ${labelText}`}
-                                                            </option>
-                                                          );
-                                                        })}
-                                                      </select>
-                                                    </div>
-                                                  ))
-                                                ) : (
-                                                  <p className="text-xs text-muted-foreground">
-                                                    Choices will appear once an API and response path are configured.
-                                                  </p>
-                                                )}
-                                              </div>
-                                            ) : (
-                                              <p className="text-xs text-muted-foreground">
-                                                Sequential mode relies on the step Next Step after the API execution.
+                                            {sequentialMissingNext && (
+                                              <p className="text-[11px] text-rose-600">
+                                                Next step is required when continuing to the next step.
                                               </p>
                                             )}
                                           </div>
+                                        )}
                                       </div>
                                     )}
-
                                   </div>
                                 ) : null
                               }
@@ -1960,14 +1829,14 @@ export default function CampaignStepsPage() {
                                         return label ? `Jump (${label})` : "Jump (missing target)";
                                       })()}
                                 </td>
-                                  <td className="px-3 py-2 text-muted-foreground">
-                                    {(() => {
-                                      if (!s.api_id) return "-";
-                                      if (!s.failure_step_id) return "None";
-                                      const target = findStepByRef(s.failure_step_id);
-                                      return formatStepLabel(target) ?? "Missing target";
-                                    })()}
-                                  </td>
+                                <td className="px-3 py-2 text-muted-foreground">
+                                  {(() => {
+                                    if (!s.api_id) return "-";
+                                    if (!s.failure_step_id) return "None";
+                                    const target = findStepByRef(s.failure_step_id);
+                                    return formatStepLabel(target) ?? "Missing target";
+                                  })()}
+                                </td>
 
                               </>
                             </SortableStepRow>
@@ -1995,7 +1864,7 @@ export default function CampaignStepsPage() {
             <button
               type="button"
               onClick={handleSaveAll}
-              disabled={saving}
+              disabled={saving || hasInvalidSequentialStep}
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save changes"}
@@ -2090,63 +1959,50 @@ export default function CampaignStepsPage() {
               {activeStep.action_type === "choice" && (
                 <div className="space-y-2">
                   {activeChoiceMode === "branch" ? (
-                    (activeStep.campaign_step_choice || []).length ? (
-                      (activeStep.campaign_step_choice || []).map((c, idx) => (
-                        <button
-                          key={`${c.choice_id || idx}`}
-                          type="button"
-                          className="w-full rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary text-center"
-                        >
-                          {c.label || c.choice_code || `Option ${idx + 1}`}
-                        </button>
-                      ))
+                    activePreviewChoices.length ? (
+                      <div className="flex flex-wrap gap-2">
+                        {activePreviewChoices.map((choice) => (
+                          <button
+                            key={choice.key}
+                            type="button"
+                            className="rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary"
+                          >
+                            {choice.label}
+                          </button>
+                        ))}
+                      </div>
                     ) : (
-                      <p className="text-xs text-muted-foreground">Choices will appear here.</p>
+                      <p className="text-xs text-muted-foreground">
+                        Add choices or pick a template to preview them.
+                      </p>
                     )
                   ) : (
                     <>
-                      {templateMenuSections.length ? (
-                        <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-2 text-xs text-muted-foreground">
-                      {templateMenuSections.map((section, secIdx) => {
-                        const sectionTitle = (section?.title || "").trim();
-                        const rows: TemplateMenuOption[] = Array.isArray(section?.options)
-                          ? section.options
-                          : Array.isArray(section?.rows)
-                            ? section.rows
-                            : [];
-                        return (
-                          <div key={`menu-section-${secIdx}`} className="space-y-1">
-                            <p className="font-semibold text-foreground">
-                                  {sectionTitle ? `[ ${sectionTitle} ]` : `[ Section ${secIdx + 1} ]`}
-                                </p>
-                                <ul className="list-disc space-y-1 pl-4 text-[11px] font-medium text-foreground">
-                                  {rows.length
-                                    ? rows.map((row: TemplateMenuOption, rowIdx: number) => {
-                                        const label =
-                                          (row?.title || row?.label || row?.name || "").trim() ||
-                                          `Option ${rowIdx + 1}`;
-                                        return <li key={`menu-row-${secIdx}-${rowIdx}`}>{label}</li>;
-                                      })
-                                    : (
-                                      <li className="text-[11px] text-muted-foreground">
-                                        No options defined.
-                                      </li>
-                                    )}
-                                </ul>
-                              </div>
-                            );
-                          })}
+                      {activePreviewChoices.length ? (
+                        <div className="flex flex-wrap gap-2">
+                          {activePreviewChoices.map((choice) => (
+                            <button
+                              key={choice.key}
+                              type="button"
+                              className="rounded-full border bg-background px-3 py-1.5 text-[11px] font-medium text-primary"
+                            >
+                              {choice.label}
+                            </button>
+                          ))}
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Choices are defined by the template or user input.
+                          Add choices or pick a template to preview them.
                         </p>
                       )}
                       <p className="text-[11px] italic text-muted-foreground">
-                        User selection will be recorded and the flow continues automatically.
+                        User selection is recorded and the flow continues automatically.
                       </p>
                     </>
                   )}
+                  <p className="text-[11px] text-muted-foreground">
+                    {previewHintText}
+                  </p>
                 </div>
               )}
 

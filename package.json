@@ -7,7 +7,9 @@
     "install:all": "npm install",
     "dev": "concurrently \"npm:dev:backend\" \"npm:dev:ui\"",
     "dev:backend": "nodemon src/server.js",
+    "dev:backend:stable": "node src/server.js",
     "dev:ui": "next dev -p 3001",
+    "dev:stable": "concurrently \"npm:dev:backend:stable\" \"npm:dev:ui\"",
     "build": "next build",
     "start": "concurrently \"node src/server.js\" \"next start\"",
     "lint": "eslint . || true"

@@ -15,7 +15,7 @@ import {
   buildExitHintMessage,
 } from "./commands.js";
 import { extractChoiceCodeFromPayload } from "./helpers.js";
-import { runChoiceStep, runInputStep, runApiStep, runStepAndReturnMessages } from "./steps.js";
+import { runChoiceStep, runInputStep, runStepAndReturnMessages } from "./steps.js";
 
 export async function handleIncomingMessage(args) {
   const { fromPhone, text, type, payload, enginePayload } = args;
@@ -418,32 +418,8 @@ async function continueCampaignSession({
       return runChoiceStep({ contact, session, step, incomingText, type, payload });
     case "input":
       return runInputStep({ contact, session, step, incomingText, type, payload });
-    case "api": {
-      const contentContext = step.template_source_id
-        ? await resolveStepContent(session, step)
-        : null;
-      const apiResult = await runApiStep({
-        contact,
-        session,
-        step,
-        lastAnswer: null,
-        contentContext,
-      });
-      if (!apiResult.nextStepId) {
-        await prisma.campaign_session.update({
-          where: { campaign_session_id: session.campaign_session_id },
-          data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
-        });
-        return { outbound: apiResult.outbound };
-      }
-      const nextStep = await prisma.campaign_step.findUnique({ where: { step_id: apiResult.nextStepId } });
-      await prisma.campaign_session.update({
-        where: { campaign_session_id: session.campaign_session_id },
-        data: { current_step_id: apiResult.nextStepId, last_active_at: new Date() },
-      });
-      return runStepAndReturnMessages({ contact, session, step: nextStep });
-    }
     case "message":
+    case "api":
     default:
       return runStepAndReturnMessages({ contact, session, step });
   }

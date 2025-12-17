@@ -155,22 +155,22 @@ function buildMenuRows(menuSections) {
       const rows =
         Array.isArray(section.options) && section.options.length
           ? section.options
-              .map((opt, optionIdx) => {
-                if (!opt) return null;
-                const title = (opt.title || "").trim();
-                if (!title) return null;
-                const rowId =
-                  (opt.id && String(opt.id)) || `sec-${sectionIdx}-opt-${optionIdx + 1}`;
-                return {
-                  id: rowId,
-                  title,
-                  description:
-                    opt.description && typeof opt.description === "string"
-                      ? opt.description.trim()
-                      : undefined,
-                };
-              })
-              .filter(Boolean)
+            .map((opt, optionIdx) => {
+              if (!opt) return null;
+              const title = (opt.title || "").trim();
+              if (!title) return null;
+              const rowId =
+                (opt.id && String(opt.id)) || `sec-${sectionIdx}-opt-${optionIdx + 1}`;
+              return {
+                id: rowId,
+                title,
+                description:
+                  opt.description && typeof opt.description === "string"
+                    ? opt.description.trim()
+                    : undefined,
+              };
+            })
+            .filter(Boolean)
           : [];
       if (!rows.length) return null;
       const sectionTitle =
@@ -221,6 +221,99 @@ export function buildTemplateMenuMessage(contact, prompt, menu) {
           button: (menu.buttonLabel || "View options").trim() || "View options",
           sections,
         },
+      },
+    },
+  };
+}
+
+export function buildInteractionMessage({ contact, step, items = {}, type }) {
+  const promptText =
+    (step?.prompt_text || "").trim() || "Please choose an option:";
+
+  // ✅ SECTIONED MENU (from API)
+  if (type === "menu" && items?.sections?.length) {
+    return {
+      to: contact.phone_num,
+      content: promptText,
+      waPayload: {
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: { text: promptText },
+          action: {
+            button: "Choose",
+            sections: items.sections.map((section) => ({
+              title: section.title,
+              rows: section.rows.map((row) => ({
+                id: row.id,
+                title: row.title,
+                ...(row.description ? { description: row.description } : {}),
+              })),
+            })),
+          },
+        },
+      },
+    };
+  }
+
+  // ✅ FLAT MENU (fallback)
+  if (type === "menu" && Array.isArray(items?.rows)) {
+    if (!items.rows.length) {
+      return { to: contact.phone_num, content: promptText };
+    }
+
+    return {
+      to: contact.phone_num,
+      content: promptText,
+      waPayload: {
+        type: "interactive",
+        interactive: {
+          type: "list",
+          body: { text: promptText },
+          action: {
+            button: "Choose",
+            sections: [
+              {
+                title: "Options",
+                rows: items.rows,
+              },
+            ],
+          },
+        },
+      },
+    };
+  }
+
+  // ✅ BUTTONS (unchanged)
+  const buttons = (Array.isArray(items) ? items : [])
+    .slice(0, 3)
+    .map((item, idx) => ({
+      type: "reply",
+      reply: {
+        id:
+          String(item?.value || `opt-${idx + 1}`)
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, "_")
+            .slice(0, 200),
+        title: String(item?.title || item?.label || "Option")
+          .trim()
+          .slice(0, 20),
+      },
+    }));
+
+  if (!buttons.length) {
+    return { to: contact.phone_num, content: promptText };
+  }
+
+  return {
+    to: contact.phone_num,
+    content: promptText,
+    waPayload: {
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: promptText },
+        action: { buttons },
       },
     },
   };

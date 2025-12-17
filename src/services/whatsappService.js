@@ -73,6 +73,51 @@ function extractImageFromText(body = "") {
   return { url, caption: caption || null };
 }
 
+function buildInteractivePayload({ text, items = [], type = "buttons" }) {
+  if (!Array.isArray(items) || items.length === 0) return null;
+
+  // Buttons (max 3)
+  if (type === "buttons") {
+    return {
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text },
+        action: {
+          buttons: items.slice(0, 3).map((item, idx) => ({
+            type: "reply",
+            reply: {
+              id: String(item.value ?? idx + 1),
+              title: String(item.title).slice(0, 20),
+            },
+          })),
+        },
+      },
+    };
+  }
+
+  // List menu (max 10)
+  return {
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text },
+      action: {
+        button: "Select",
+        sections: [
+          {
+            title: "Options",
+            rows: items.slice(0, 10).map((item, idx) => ({
+              id: String(item.value ?? idx + 1),
+              title: String(item.title).slice(0, 24),
+            })),
+          },
+        ],
+      },
+    },
+  };
+}
+
 /**
  * Send a WhatsApp message.
  * If `messageRecord` is provided, also create/update deliverlog and message status.
@@ -86,7 +131,28 @@ export async function sendWhatsAppMessage(to, messageObj, messageRecord = null, 
     if (!to || !messageObj) throw new Error("Invalid message payload");
 
     let normalized;
-    if (typeof messageObj === "string") {
+    // ✅ INTERACTIVE MESSAGE SUPPORT
+    if (
+      typeof messageObj === "object" &&
+      messageObj.interactionItems &&
+      Array.isArray(messageObj.interactionItems)
+    ) {
+      const interactive = buildInteractivePayload({
+        text:
+          messageObj.text?.body ||
+          messageObj.text ||
+          messageObj.body ||
+          "Please choose an option",
+        items: messageObj.interactionItems,
+        type: messageObj.interactionType || "buttons",
+      });
+
+      if (!interactive) {
+        throw new Error("Invalid interactive payload");
+      }
+
+      normalized = interactive;
+    } else if (typeof messageObj === "string") {
       const img = extractImageFromText(messageObj);
       if (img) {
         normalized = {

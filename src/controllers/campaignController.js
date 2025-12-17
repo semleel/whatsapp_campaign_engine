@@ -247,7 +247,7 @@ export async function updateCampaign(req, res) {
       });
     }
 
-   
+
     const requestedStatus =
       statusFromId(camStatusID) || normalizeCampaignStatus(status, null);
 
@@ -285,7 +285,7 @@ export async function updateCampaign(req, res) {
       if (newStart && now < newStart) {
         nextStatus = STATUS_ON_HOLD;
       } else if (newStart && now >= newStart && (!newEnd || now <= newEnd)) {
-        nextStatus = STATUS_ACTIVE; 
+        nextStatus = STATUS_ACTIVE;
       } else if (newEnd && now > newEnd) {
         nextStatus = STATUS_INACTIVE;
       }
@@ -344,8 +344,8 @@ const parseStepPayload = (body = {}) => {
     is_end_step: !!body.is_end_step,
     template_source_id: toNullableInt(body.template_source_id),
     choice_mode: body.choice_mode || "branch",
-    choice_source: body.choice_source || "manual",
-    choice_config: typeof body.choice_config === "undefined" ? null : body.choice_config,
+    interaction_config:
+      typeof body.interaction_config === "undefined" ? null : body.interaction_config,
 
     // Media field (optional)
     media_url:
@@ -404,8 +404,7 @@ const mapStepResponse = (step) => {
       is_correct: c.is_correct,
     })),
     choice_mode: step.choice_mode,
-    choice_source: step.choice_source,
-    choice_config: step.choice_config,
+    interaction_config: step.interaction_config ?? null,
   };
 };
 
@@ -683,8 +682,7 @@ export async function saveCampaignStepsBulk(req, res) {
       step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
       client_id: s.client_id ?? s.step_id ?? (s.stepId ? Number(s.stepId) : null),
       choice_mode: (s.choice_mode || "branch").toString(),
-      choice_source: (s.choice_source || "manual").toString(),
-      choice_config: s.choice_config ?? null,
+      interaction_config: s.interaction_config ?? null,
     }));
 
     // Validate unique step_code (non-empty) per campaign
@@ -757,19 +755,15 @@ export async function saveCampaignStepsBulk(req, res) {
             step.template_source_id == null || step.template_source_id === ""
               ? null
               : Number.isNaN(Number(step.template_source_id))
-              ? null
-              : Number(step.template_source_id),
+                ? null
+                : Number(step.template_source_id),
           failure_step_id: null,
           next_step_id: null,
           is_end_step: isChoiceStep ? false : !!step.is_end_step,
           media_url:
             typeof step.media_url === "string" && step.media_url.length ? step.media_url : null,
           choice_mode: (step.choice_mode || "branch").toString(),
-          choice_source:
-            step.action_type === "choice"
-              ? (step.choice_source || "manual").toString()
-              : "manual",
-          choice_config: step.action_type === "choice" ? step.choice_config ?? null : null,
+          interaction_config: step.interaction_config ?? null,
         };
 
         let saved;
@@ -791,8 +785,7 @@ export async function saveCampaignStepsBulk(req, res) {
             action_type: step.action_type || "message",
             is_end_step: isChoiceStep ? false : !!step.is_end_step,
             choice_mode: (step.choice_mode || "branch").toString(),
-            choice_source: (step.choice_source || "manual").toString(),
-            choice_config: step.choice_config ?? null,
+            interaction_config: step.interaction_config ?? null,
           },
           sourceChoices: step.campaign_step_choice || [],
           clientId,
@@ -819,17 +812,27 @@ export async function saveCampaignStepsBulk(req, res) {
 
       // Apply routing using explicit next_step_id values only
       for (const { saved, source } of savedSteps) {
-        const normalizedChoiceMode = (source.choice_mode || "branch").toString().toLowerCase();
+        const normalizedChoiceMode = (source.choice_mode || "branch")
+          .toString()
+          .toLowerCase();
+
         const isSequentialChoice =
           source.action_type === "choice" && normalizedChoiceMode === "sequential";
+
+        // ✅ Resolve next step FIRST
         let dbNextStepId = null;
+
         if (isSequentialChoice) {
           dbNextStepId = resolveRef(source.next_step_id);
         } else if (source.action_type !== "choice") {
-          dbNextStepId = source.is_end_step ? null : resolveRef(source.next_step_id);
+          dbNextStepId = source.is_end_step
+            ? null
+            : resolveRef(source.next_step_id);
         }
+
         const dbFailureStepId = resolveRef(source.failure_step_id);
 
+        // ✅ Validate AFTER resolution
         if (isSequentialChoice && !dbNextStepId) {
           throw Object.assign(
             new Error(
@@ -841,7 +844,9 @@ export async function saveCampaignStepsBulk(req, res) {
 
         if (source.action_type !== "choice" && !source.is_end_step && !dbNextStepId) {
           throw Object.assign(
-            new Error(`Invalid next_step_id for step ${source.step_code || source.step_number}`),
+            new Error(
+              `Invalid next_step_id for step ${source.step_code || source.step_number}`
+            ),
             { statusCode: 400 }
           );
         }
@@ -862,15 +867,8 @@ export async function saveCampaignStepsBulk(req, res) {
         const normalizedChoiceMode = (source.choice_mode || "branch").toString().toLowerCase();
         const requiresBranchRouting =
           source.action_type === "choice" && normalizedChoiceMode === "branch";
-        const normalizedChoiceSource = (source.choice_source || "manual").toString().toLowerCase();
-        const isManualChoiceSource =
-          source.action_type === "choice" && normalizedChoiceSource === "manual";
-        if (!isManualChoiceSource) {
-          continue;
-        }
-
         const existingChoices = await tx.campaign_step_choice.findMany({
-          where: { step_id },
+          where: { step_id: stepId },
           select: { choice_id: true },
         });
         const choiceIds = existingChoices.map((c) => c.choice_id);
@@ -883,7 +881,7 @@ export async function saveCampaignStepsBulk(req, res) {
         // Delete removed
         await tx.campaign_step_choice.deleteMany({
           where: {
-            step_id,
+            step_id: stepId,
             choice_id: {
               notIn: (Array.isArray(sourceChoices) ? sourceChoices : [])
                 .map((c) => Number(c.choice_id) || 0)
@@ -968,7 +966,6 @@ export async function saveCampaignStepsBulk(req, res) {
     return res.status(500).json({ error: err.message });
   }
 }
-
 
 export async function archiveCampaign(req, res) {
   try {

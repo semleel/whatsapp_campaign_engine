@@ -4,8 +4,10 @@ import prisma from "../../config/prismaClient.js";
 import { dispatchEndpoint } from "../integrationService.js";
 import { ensureSessionStep, resolveStepContent, isLanguageSelectorStep, updateContactLanguageForSession } from "./session.js";
 import { SUPPORTED_LANG_CODES } from "./constants.js";
+import { convertApiResponseToInteraction } from "./interactionConverter.js";
 import {
   buildChoicePromptMessage,
+  buildInteractionMessage,
   withStepContext,
   buildMediaWaPayload,
   extractChoiceCodeFromPayload,
@@ -14,152 +16,6 @@ import {
 } from "./helpers.js";
 import { normalizeApiError } from "./apiErrorHelper.js";
 import { log, warn, error } from "../../utils/logger.js";
-
-const CHOICE_SOURCE_MANUAL = "manual";
-const CHOICE_SOURCE_API = "api";
-const DEFAULT_CHOICE_CONFIG = {
-  response_path: "",
-  label_field: "",
-  value_field: "",
-  next_step_map: {},
-};
-
-const normalizeChoiceConfig = (config) => {
-  if (!config || typeof config !== "object") {
-    return { ...DEFAULT_CHOICE_CONFIG };
-  }
-  const rawMap = config.next_step_map && typeof config.next_step_map === "object" ? config.next_step_map : {};
-  const nextStepMap = {};
-  Object.entries(rawMap).forEach(([key, value]) => {
-    if (value === null || value === undefined || value === "") {
-      nextStepMap[String(key)] = null;
-      return;
-    }
-    const parsed = Number(value);
-    nextStepMap[String(key)] = Number.isNaN(parsed) ? null : parsed;
-  });
-
-  return {
-    response_path: typeof config.response_path === "string" ? config.response_path : "",
-    label_field: typeof config.label_field === "string" ? config.label_field : "",
-    value_field: typeof config.value_field === "string" ? config.value_field : "",
-    next_step_map: nextStepMap,
-  };
-};
-
-const resolveNestedValue = (data, path) => {
-  if (!path || typeof path !== "string") return data;
-  const segments = path
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  let current = data;
-  for (const segment of segments) {
-    if (current == null || typeof current !== "object") {
-      return undefined;
-    }
-    current = current[segment];
-  }
-  return current;
-};
-
-const ensureArray = (value) => (Array.isArray(value) ? value : []);
-
-const toPlainString = (value, fallback = "") => {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return fallback;
-    }
-  }
-  return String(value);
-};
-
-const resolveNextStepFromMap = (map, key) => {
-  if (!map || typeof map !== "object") return null;
-  const raw = map[String(key)];
-  if (raw === null || raw === undefined || raw === "") return null;
-  const parsed = Number(raw);
-  return Number.isNaN(parsed) ? null : parsed;
-};
-
-const extractArrayFromResponse = (response, path) => {
-  if (response == null) return [];
-  const resolved = resolveNestedValue(response, path);
-  return ensureArray(resolved);
-};
-
-const buildApiRuntimeChoices = (response, config, isBranchMode) => {
-  const items = extractArrayFromResponse(response, config.response_path);
-  return items.map((item, idx) => {
-    const fallbackValue = `choice_${idx + 1}`;
-    const rawValue =
-      resolveNestedValue(item, config.value_field) ??
-      resolveNestedValue(item, config.label_field) ??
-      item;
-    const choiceCode = toPlainString(rawValue, fallbackValue);
-    const fallbackLabel = `Option ${idx + 1}`;
-    const rawLabel =
-      resolveNestedValue(item, config.label_field) ?? rawValue ?? fallbackLabel;
-    const label = toPlainString(rawLabel, fallbackLabel);
-    const nextStepId = isBranchMode
-      ? resolveNextStepFromMap(config.next_step_map, choiceCode)
-      : null;
-    return {
-      choice_code: choiceCode,
-      label,
-      next_step_id: nextStepId,
-    };
-  });
-};
-
-const fetchApiChoicePayload = async ({ step, contact, session }) => {
-  if (!step?.api_id) {
-    return { response: null, error: new Error("Missing API for choice step") };
-  }
-  try {
-    const vars = {
-      contact,
-      campaign: session?.campaign || { campaign_id: session?.campaign_id },
-      session,
-      lastAnswer: null,
-    };
-    const result = await dispatchEndpoint(step.api_id, vars, {
-      source: "campaign_choice",
-      stepId: step.step_id,
-    });
-    return { response: result?.payload?.response ?? null, error: null };
-  } catch (err) {
-    warn(
-      "[ENGINE] Choice API fetch failed",
-      JSON.stringify({
-        step_id: step?.step_id ?? null,
-        campaign_id: session?.campaign_id ?? null,
-        error: err?.message ?? err,
-      })
-    );
-    return { response: null, error: err };
-  }
-};
-
-const resolveRuntimeChoices = async ({ step, contact, session, isBranchMode }) => {
-  const normalizedSource = (step.choice_source || CHOICE_SOURCE_MANUAL)
-    .toString()
-    .toLowerCase();
-  if (normalizedSource === CHOICE_SOURCE_API) {
-    const config = normalizeChoiceConfig(step.choice_config);
-    const { response, error } = await fetchApiChoicePayload({ step, contact, session });
-    const choices = buildApiRuntimeChoices(response, config, isBranchMode);
-    return { choices, error, source: CHOICE_SOURCE_API };
-  }
-  const choices = await prisma.campaign_step_choice.findMany({
-    where: { step_id: step.step_id },
-    orderBy: { choice_id: "asc" },
-  });
-  return { choices, error: null, source: CHOICE_SOURCE_MANUAL };
-};
 
 export async function runChoiceStep({
   contact,
@@ -185,69 +41,52 @@ export async function runChoiceStep({
   const interactiveTitle = extractInteractiveTitleFromPayload(payload) || "";
   const rawResponseText = incomingText || interactiveTitle || "";
   const normalizedResponseText = rawResponseText.trim();
+  const selectedId = extractChoiceCodeFromPayload(payload) || null;
+  const selectedLabel = (interactiveTitle || incomingText || "").trim();
 
-  const normalizedIsBranch = normalizedChoiceMode === "branch";
-  const { choices: availableChoices, error: choiceError, source: runtimeChoiceSource } =
-    await resolveRuntimeChoices({
-      step,
-      contact,
-      session,
-      isBranchMode: normalizedIsBranch,
-    });
-  const choices = availableChoices || [];
-
-  if (runtimeChoiceSource === CHOICE_SOURCE_API && choiceError && !choices.length) {
-    const errorMessage =
-      step.error_message ||
-      "Sorry, this choice is temporarily unavailable. Please try again in a moment.";
-    await prisma.campaign_session.update({
-      where: { campaign_session_id: session.campaign_session_id },
-      data: { current_step_id: step.step_id, last_active_at: new Date() },
-    });
-    return {
-      outbound: [
-        withStepContext({
-          base: { to: contact.phone_num, content: errorMessage },
-          step,
-          session,
-          contact,
-          contentContext,
-        }),
-      ],
-    };
-  }
+  const isBranchMode = normalizedChoiceMode === "branch";
+  const choices =
+    isBranchMode
+      ? await prisma.campaign_step_choice.findMany({
+          where: { step_id: step.step_id },
+          orderBy: { choice_id: "asc" },
+        })
+      : [];
 
   let matchedChoice = null;
-  let selectedCode = null;
 
   if (type === "button" || type === "list") {
-    selectedCode = extractChoiceCodeFromPayload(payload);
-    if (selectedCode) {
-      const lc = selectedCode.toLowerCase();
-      matchedChoice =
-        choices.find((c) => (c.choice_code || "").toLowerCase() === lc) ||
-        choices.find((c) => (c.label || "").trim().toLowerCase() === lc) ||
-        choices.find((c) => String(c.choice_id || "").toLowerCase() === lc);
-      if (!matchedChoice) {
-        warn(
-          "[ENGINE] No matching choice for interactive reply",
-          JSON.stringify({
-            selectedCode: lc,
-            available: choices.map((c) => ({
-              id: c.choice_id,
-              code: c.choice_code,
-              label: c.label,
-              next_step_id: c.next_step_id,
-            })),
-          })
-        );
+    if (selectedId) {
+      const lc = String(selectedId).toLowerCase();
+      if (isBranchMode && choices.length) {
+        matchedChoice =
+          choices.find((c) => (c.choice_code || "").toLowerCase() === lc) ||
+          choices.find((c) => (c.label || "").trim().toLowerCase() === lc) ||
+          choices.find((c) => String(c.choice_id || "").toLowerCase() === lc);
+        if (!matchedChoice) {
+          warn(
+            "[ENGINE] No matching choice for interactive reply",
+            JSON.stringify({
+              selectedId: lc,
+              selectedLabel,
+              available: choices.map((c) => ({
+                id: c.choice_id,
+                code: c.choice_code,
+                label: c.label,
+                next_step_id: c.next_step_id,
+              })),
+            })
+          );
+        }
       }
     }
   } else {
-    const text = rawResponseText.toLowerCase();
-    matchedChoice =
-      choices.find((c) => (c.choice_code || "").toLowerCase() === text) ||
-      choices.find((c) => (c.label || "").trim().toLowerCase() === text);
+    if (isBranchMode && choices.length) {
+      const text = rawResponseText.toLowerCase();
+      matchedChoice =
+        choices.find((c) => (c.choice_code || "").toLowerCase() === text) ||
+        choices.find((c) => (c.label || "").trim().toLowerCase() === text);
+    }
   }
 
   const isValid = isSequentialMode ? normalizedResponseText.length > 0 : !!matchedChoice;
@@ -257,19 +96,19 @@ export async function runChoiceStep({
       session_id: session.campaign_session_id,
       campaign_id: session.campaign_id,
       step_id: step.step_id,
-      choice_id:
-        runtimeChoiceSource === CHOICE_SOURCE_MANUAL && !isSequentialMode && matchedChoice
-          ? matchedChoice.choice_id
-          : null,
+      choice_id: !isSequentialMode && matchedChoice ? matchedChoice.choice_id : null,
       user_input_raw: rawResponseText,
       is_valid: isValid,
     },
   });
 
+  const sessionChoiceMap = extractSessionRuntimeChoiceMap(session);
   if ((type === "button" || type === "list") && normalizedResponseText) {
+    const runtimeLabel = selectedId ? sessionChoiceMap[selectedId] : null;
+    const resolvedLabel = matchedChoice?.label ?? runtimeLabel ?? normalizedResponseText;
     session.last_choice = {
       value: normalizedResponseText,
-      label: matchedChoice?.label ?? normalizedResponseText,
+      label: resolvedLabel,
       source: type === "list" ? "menu" : "button",
       template_content_id: step.template_source_id ?? null,
     };
@@ -280,19 +119,74 @@ export async function runChoiceStep({
     JSON.stringify({
       step_id: step.step_id,
       choiceMode: normalizedChoiceMode,
-      choiceSource: runtimeChoiceSource,
-      selectedCode,
+      selectedId,
+      selectedLabel,
       incomingText: rawResponseText,
       matchedChoice: matchedChoice
         ? {
-            id: matchedChoice.choice_id,
-            code: matchedChoice.choice_code,
-            label: matchedChoice.label,
-            next_step_id: matchedChoice.next_step_id,
-          }
+          id: matchedChoice.choice_id,
+          code: matchedChoice.choice_code,
+          label: matchedChoice.label,
+          next_step_id: matchedChoice.next_step_id,
+        }
         : null,
     })
   );
+
+  const explicitKey = step.interaction_config?.save_to;
+  const requiredKeys = session.required_inputs || [];
+
+  const saveKey =
+    explicitKey ||
+    requiredKeys.find(
+      (k) => !(session.last_payload_json && k in session.last_payload_json)
+    );
+
+  let runtimeLabelEntry =
+    selectedId && selectedLabel
+      ? { [selectedId]: selectedLabel }
+      : null;
+
+  if (saveKey) {
+    const valueToSave = selectedId || normalizedResponseText;
+
+    if (valueToSave) {
+      const existingPayload = session.last_payload_json || {};
+
+      let updatedPayload = {
+        ...(typeof existingPayload === "object" ? existingPayload : {}),
+        [saveKey]: valueToSave,
+      };
+      if (runtimeLabelEntry) {
+        updatedPayload = mergeRuntimeChoiceMapIntoPayload(updatedPayload, runtimeLabelEntry);
+        runtimeLabelEntry = null;
+      }
+      await prisma.campaign_session.update({
+        where: { campaign_session_id: session.campaign_session_id },
+        data: {
+          last_payload_json: updatedPayload,
+          last_active_at: new Date(),
+        },
+      });
+
+      // keep in-memory session updated
+      session.last_payload_json = updatedPayload;
+    }
+  }
+
+  if (runtimeLabelEntry) {
+    const existingPayload = session.last_payload_json || {};
+    const updatedPayload = mergeRuntimeChoiceMapIntoPayload(existingPayload, runtimeLabelEntry);
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: {
+        last_payload_json: updatedPayload,
+        last_active_at: new Date(),
+      },
+    });
+    session.last_payload_json = updatedPayload;
+    runtimeLabelEntry = null;
+  }
 
   if (!isValid) {
     const msg =
@@ -404,6 +298,60 @@ export async function runChoiceStep({
   return runStepAndReturnMessages({ contact, session, step: nextStep });
 }
 
+const isPlainObject = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const normalizeObject = (value) => (isPlainObject(value) ? { ...value } : {});
+
+function mergeRuntimeChoiceMapIntoPayload(payload, choiceMap) {
+  if (!choiceMap || typeof choiceMap !== "object" || !Object.keys(choiceMap).length) {
+    return normalizeObject(payload);
+  }
+  const normalizedPayload = normalizeObject(payload);
+  const runtime = normalizeObject(normalizedPayload.runtime);
+  const existingChoiceMap = normalizeObject(runtime.choice_map);
+  const mergedChoiceMap = { ...existingChoiceMap, ...choiceMap };
+  return {
+    ...normalizedPayload,
+    runtime: {
+      ...runtime,
+      choice_map: mergedChoiceMap,
+    },
+  };
+}
+
+function extractSessionRuntimeChoiceMap(session) {
+  const payload = session?.last_payload_json;
+  if (!isPlainObject(payload)) return {};
+  const runtime = payload.runtime;
+  if (!isPlainObject(runtime)) return {};
+  const choiceMap = runtime.choice_map;
+  if (!isPlainObject(choiceMap)) return {};
+  return choiceMap;
+}
+
+function extractChoiceMapFromItems(items) {
+  if (!items) return {};
+  const map = {};
+  const addRow = (row) => {
+    if (!row) return;
+    const id = row.id ?? row.value;
+    const title = (row.title ?? row.label ?? "").trim();
+    if (!id || !title) return;
+    map[String(id)] = title;
+  };
+  if (Array.isArray(items.rows)) {
+    items.rows.forEach(addRow);
+  }
+  if (Array.isArray(items.sections)) {
+    items.sections.forEach((section) => {
+      if (!section?.rows) return;
+      section.rows.forEach(addRow);
+    });
+  }
+  return map;
+}
+
 export async function runInputStep({ contact, session, step, incomingText, type, payload }) {
   let value = (incomingText || "").trim();
   let isValid = true;
@@ -474,6 +422,36 @@ export async function runInputStep({ contact, session, step, incomingText, type,
     };
   }
 
+  const explicitKey = step.interaction_config?.save_to;
+  const requiredKeys = session.required_inputs || [];
+
+  const saveKey =
+    explicitKey ||
+    requiredKeys.find(
+      (k) => !(session.last_payload_json && k in session.last_payload_json)
+    );
+
+  if (saveKey && value) {
+    const existingPayload = session.last_payload_json || {};
+
+    await prisma.campaign_session.update({
+      where: { campaign_session_id: session.campaign_session_id },
+      data: {
+        last_payload_json: {
+          ...(typeof existingPayload === "object" ? existingPayload : {}),
+          [saveKey]: value,
+        },
+        last_active_at: new Date(),
+      },
+    });
+
+    // keep runtime session in sync
+    session.last_payload_json = {
+      ...(typeof existingPayload === "object" ? existingPayload : {}),
+      [saveKey]: value,
+    };
+  }
+
   const nextStepId = step.next_step_id;
 
   if (!nextStepId || step.is_end_step) {
@@ -532,206 +510,6 @@ function logApiFailure(normalizedError, err, { step, api, status }) {
   }
 }
 
-export async function runApiStep({
-  contact,
-  session,
-  step,
-  lastAnswer,
-  contentContext = null,
-}) {
-  await ensureSessionStep(session, step.step_id);
-
-  if (!step.api_id) {
-    warn(
-      "[flowEngine] API step has no api_id",
-      JSON.stringify({ stepId: step.step_id })
-    );
-    return { outbound: [], nextStepId: step.next_step_id };
-  }
-
-  /* -------------------------------------------------
-   * 1. Resolve lastAnswer (same logic you already had)
-   * ------------------------------------------------- */
-  let effectiveLastAnswer = lastAnswer || null;
-
-  if (!effectiveLastAnswer && session?.campaign_session_id) {
-    effectiveLastAnswer = await prisma.campaign_response.findFirst({
-      where: {
-        session_id: session.campaign_session_id,
-        is_valid: true,
-      },
-      orderBy: { created_at: "desc" },
-    });
-  }
-
-  if (!effectiveLastAnswer && session) {
-    const isKeywordStart = session.last_payload_type === "keyword_start";
-    if (isKeywordStart && session.last_payload_json) {
-      let keywordMeta = session.last_payload_json;
-      if (typeof keywordMeta === "string") {
-        try {
-          keywordMeta = JSON.parse(keywordMeta);
-        } catch {
-          keywordMeta = null;
-        }
-      }
-
-      if (keywordMeta && typeof keywordMeta === "object") {
-        const args = keywordMeta.args || "";
-        const rawText = keywordMeta.rawText || "";
-        const keywordOnly = keywordMeta.keyword || "";
-
-        effectiveLastAnswer = {
-          session_id: session.campaign_session_id ?? null,
-          campaign_id: session.campaign_id ?? null,
-          step_id: null,
-          choice_id: null,
-          user_input_raw: args || rawText || keywordOnly || "",
-          is_valid: true,
-        };
-      }
-    }
-  }
-
-  const vars = {
-    contact,
-    campaign: session?.campaign || { campaign_id: session.campaign_id },
-    session,
-    lastAnswer: effectiveLastAnswer,
-  };
-
-  /* -------------------------------------------------
-   * 2. IMMEDIATELY send prompt_text (UX FIX)
-   * ------------------------------------------------- */
-  const outbound = [];
-
-  if (step.prompt_text && step.prompt_text.trim()) {
-    outbound.push(
-      withStepContext({
-        base: {
-          to: contact.phone_num,
-          content: step.prompt_text,
-        },
-        step,
-        session,
-        contact,
-        contentContext,
-      })
-    );
-  }
-
-  /* -------------------------------------------------
-   * 3. Call API (can be slow)
-   * ------------------------------------------------- */
-  let result = null;
-  let ok = false;
-  let status = 500;
-  let apiPayload;
-  let normalizedError = null;
-  let apiInfo = { apiId: step.api_id };
-  let formattedText = null;
-  let templateError = null;
-
-  try {
-    result = await dispatchEndpoint(step.api_id, vars, {
-      source: "campaign_step",
-      stepId: step.step_id,
-    });
-
-    apiInfo = result?.api ?? { apiId: result?.apiId ?? step.api_id };
-    ok = !!result?.ok;
-    status = result?.status ?? status;
-    apiPayload = result?.payload;
-    formattedText =
-      apiPayload && typeof apiPayload.formattedText === "string"
-        ? apiPayload.formattedText
-        : null;
-    templateError = result?.templateError ?? null;
-  } catch (err) {
-    status = err?.status ?? status;
-    normalizedError = normalizeApiError({
-      err,
-      status,
-      api: apiInfo,
-      step,
-    });
-    logApiFailure(normalizedError, err, { step, api: apiInfo, status });
-    outbound.push({
-      to: contact.phone_num,
-      content: normalizedError.userMessage,
-    });
-    ok = false;
-  }
-
-  /* -------------------------------------------------
-   * 4. Send API result OR error_message
-   * ------------------------------------------------- */
-  if (!normalizedError) {
-    if (ok && !templateError && formattedText) {
-      outbound.push(
-        withStepContext({
-          base: {
-            to: contact.phone_num,
-            content: formattedText,
-          },
-          step,
-          session,
-          contact,
-          contentContext,
-        })
-      );
-    } else {
-      normalizedError = normalizeApiError({
-        err: templateError ?? null,
-        status,
-        api: apiInfo,
-        step,
-      });
-      logApiFailure(normalizedError, templateError, {
-        step,
-        api: apiInfo,
-        status,
-      });
-      outbound.push({
-        to: contact.phone_num,
-        content: normalizedError.userMessage,
-      });
-      ok = false;
-    }
-  }
-
-  /* -------------------------------------------------
-   * 5. Decide next step
-   * ------------------------------------------------- */
-  const hasFailureStep = !!step.failure_step_id;
-  const resolvedOk = ok && !normalizedError;
-  const targetStepId = resolvedOk
-    ? step.next_step_id
-    : hasFailureStep
-      ? step.failure_step_id
-      : null;
-
-  const integrationMeta = {
-    apiId: apiInfo.apiId ?? step.api_id,
-    ok: resolvedOk,
-    status,
-    type: normalizedError?.type ?? "SUCCESS",
-    ...(apiPayload !== undefined ? { payload: apiPayload } : {}),
-  };
-  if (normalizedError) {
-    integrationMeta.error = normalizedError.systemMessage;
-    integrationMeta.userMessage = normalizedError.userMessage;
-  }
-
-  return {
-    outbound,
-    nextStepId: targetStepId,
-    integration: {
-      lastApi: integrationMeta,
-    },
-  };
-}
-
 export async function runEndStep({ contact, session, step }) {
   await ensureSessionStep(session, step.step_id);
   const contentContext =
@@ -779,37 +557,107 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
       current.action_type === "choice" || current.action_type === "input";
     const isEnd = current.is_end_step || current.next_step_id == null;
 
-    if (current.action_type === "api") {
-      const apiResult = await runApiStep({
-        contact,
-        session,
-        step: current,
-        lastAnswer: null,
-        contentContext,
-      });
-      outbound.push(...apiResult.outbound);
-
-      if (!apiResult.nextStepId) {
+    // Execute the configured API (if any) before rendering outbound content so downstream logic can reuse the payload.
+    let stepApiState = null;
+    if (current.api_id) {
+      stepApiState = await executeStepApiCall({ contact, session, step: current });
+      if (stepApiState?.requiredInputs?.length) {
         await prisma.campaign_session.update({
           where: { campaign_session_id: session.campaign_session_id },
-          data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
+          data: {
+            required_inputs: stepApiState.requiredInputs,
+          },
         });
-        return { outbound };
-      }
 
-      const nextStep = await prisma.campaign_step.findUnique({
-        where: { step_id: apiResult.nextStepId },
-      });
-      if (!nextStep) {
-        await prisma.campaign_session.update({
-          where: { campaign_session_id: session.campaign_session_id },
-          data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
-        });
-        return { outbound };
+        session.required_inputs = stepApiState.requiredInputs;
       }
-      current = nextStep;
-      continue;
+      if (stepApiState?.normalizedError) {
+        outbound.push(
+          withStepContext({
+            base: { to: contact.phone_num, content: stepApiState.normalizedError.userMessage },
+            step: current,
+            session,
+            contact,
+            contentContext,
+          })
+        );
+        if (!current.failure_step_id) {
+          await prisma.campaign_session.update({
+            where: { campaign_session_id: session.campaign_session_id },
+            data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
+          });
+          return { outbound };
+        }
+        const failureStep = await prisma.campaign_step.findUnique({
+          where: { step_id: current.failure_step_id },
+        });
+        if (!failureStep) {
+          await prisma.campaign_session.update({
+            where: { campaign_session_id: session.campaign_session_id },
+            data: { session_status: "COMPLETED", current_step_id: null, last_active_at: new Date() },
+          });
+          return { outbound };
+        }
+        current = failureStep;
+        continue;
+      }
     }
+
+    if (
+      current.interaction_config &&
+      current.interaction_config.type !== "none" &&
+      stepApiState?.apiPayload?.response
+    ) {
+      const items = convertApiResponseToInteraction({
+        response: stepApiState.apiPayload.response,
+        config: current.interaction_config,
+      });
+
+      const hasInteractionItems =
+        (Array.isArray(items?.rows) && items.rows.length > 0) ||
+        (Array.isArray(items?.sections) && items.sections.length > 0);
+
+      if (hasInteractionItems) {
+        const runtimeChoiceMap = extractChoiceMapFromItems(items);
+        const sessionPayload =
+          Object.keys(runtimeChoiceMap).length > 0
+            ? mergeRuntimeChoiceMapIntoPayload(session.last_payload_json, runtimeChoiceMap)
+            : null;
+
+        const updateData = {
+          current_step_id: current.step_id,
+          last_active_at: new Date(),
+          ...(sessionPayload ? { last_payload_json: sessionPayload } : {}),
+        };
+
+        await prisma.campaign_session.update({
+          where: { campaign_session_id: session.campaign_session_id },
+          data: updateData,
+        });
+
+        if (sessionPayload) {
+          session.last_payload_json = sessionPayload;
+        }
+
+        outbound.push(
+          withStepContext({
+            base: buildInteractionMessage({
+              contact,
+              step: current,
+              items,
+              type: current.interaction_config?.type,
+            }),
+            step: current,
+            session,
+            contact,
+            contentContext,
+          })
+        );
+        return { outbound };
+      }
+    }
+
+    const effectivePrompt = (stepApiState?.formattedText ?? resolvedPrompt) || "";
 
     if (expectsInput) {
       await prisma.campaign_session.update({
@@ -817,25 +665,20 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         data: { current_step_id: current.step_id, last_active_at: new Date() },
       });
 
-    if (current.action_type === "choice") {
-      const normalizedChoiceMode = (current.choice_mode || "branch").toString().toLowerCase();
-      const isBranchMode = normalizedChoiceMode === "branch";
-      const { choices: availableChoices, error: choiceError, source: runtimeChoiceSource } =
-        await resolveRuntimeChoices({
-          step: current,
-          contact,
-          session,
-          isBranchMode,
+      if (current.action_type === "choice") {
+        const choices = await prisma.campaign_step_choice.findMany({
+          where: { step_id: current.step_id },
+          orderBy: { choice_id: "asc" },
         });
-      const choices = availableChoices || [];
-
-      if (runtimeChoiceSource === CHOICE_SOURCE_API && choiceError && !choices.length) {
-        const errorMessage =
-          current.error_message ||
-          "Sorry, this choice is temporarily unavailable. Please try again in a moment.";
+        const promptMessage = buildChoicePromptMessage({
+          contact,
+          prompt: effectivePrompt,
+          choices,
+          contentContext,
+        });
         outbound.push(
           withStepContext({
-            base: { to: contact.phone_num, content: errorMessage },
+            base: promptMessage,
             step: current,
             session,
             contact,
@@ -845,51 +688,35 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         return { outbound };
       }
 
-      const promptMessage = buildChoicePromptMessage({
-        contact,
-        prompt: resolvedPrompt,
-        choices,
-        contentContext,
-      });
-      outbound.push(
-        withStepContext({
-          base: promptMessage,
-          step: current,
-          session,
-          contact,
-          contentContext,
-        })
-      );
-      return { outbound };
-    }
-
-      if (resolvedPrompt || resolvedMediaUrl) {
-        const mediaPayload = buildMediaWaPayload({
-          ...current,
-          prompt_text: resolvedPrompt,
-          media_url: resolvedMediaUrl,
-        });
-        outbound.push(
-          withStepContext({
-            base: {
-              to: contact.phone_num,
-              content: resolvedPrompt || "",
-              ...(mediaPayload ? { waPayload: mediaPayload } : {}),
-            },
-            step: current,
-            session,
-            contact,
-            contentContext,
-          })
-        );
+      if (current.action_type === "input") {
+        if (effectivePrompt || resolvedMediaUrl) {
+          const mediaPayload = buildMediaWaPayload({
+            ...current,
+            prompt_text: effectivePrompt,
+            media_url: resolvedMediaUrl,
+          });
+          outbound.push(
+            withStepContext({
+              base: {
+                to: contact.phone_num,
+                content: effectivePrompt,
+                ...(mediaPayload ? { waPayload: mediaPayload } : {}),
+              },
+              step: current,
+              session,
+              contact,
+              contentContext,
+            })
+          );
+        }
+        return { outbound };
       }
-      return { outbound };
     }
 
-    if (resolvedPrompt || resolvedMediaUrl) {
+    if (effectivePrompt || resolvedMediaUrl) {
       const mediaPayload = buildMediaWaPayload({
         ...current,
-        prompt_text: resolvedPrompt,
+        prompt_text: effectivePrompt,
         media_url: resolvedMediaUrl,
       });
       log(
@@ -898,7 +725,7 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
           step_id: current.step_id,
           campaign_id: current.campaign_id,
           action: current.action_type,
-          has_text: !!(resolvedPrompt && resolvedPrompt.trim()),
+          has_text: !!(effectivePrompt && effectivePrompt.trim()),
           media_url: resolvedMediaUrl || null,
           media_payload_type: mediaPayload?.type || null,
         })
@@ -907,7 +734,7 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
         withStepContext({
           base: {
             to: contact.phone_num,
-            content: resolvedPrompt || "",
+            content: effectivePrompt,
             ...(mediaPayload ? { waPayload: mediaPayload } : {}),
           },
           step: current,
@@ -940,4 +767,129 @@ export async function runStepAndReturnMessages({ contact, session, step }) {
   }
 
   return { outbound };
+}
+
+async function resolveEffectiveLastAnswer(session, lastAnswerCandidate = null) {
+  if (lastAnswerCandidate) {
+    return lastAnswerCandidate;
+  }
+  if (!session?.campaign_session_id) return null;
+
+  const lastResponse = await prisma.campaign_response.findFirst({
+    where: {
+      session_id: session.campaign_session_id,
+      is_valid: true,
+    },
+    orderBy: { created_at: "desc" },
+  });
+  if (lastResponse) return lastResponse;
+
+  if (!session) return null;
+  const isKeywordStart = session.last_payload_type === "keyword_start";
+  if (isKeywordStart && session.last_payload_json) {
+    let keywordMeta = session.last_payload_json;
+    if (typeof keywordMeta === "string") {
+      try {
+        keywordMeta = JSON.parse(keywordMeta);
+      } catch {
+        keywordMeta = null;
+      }
+    }
+
+    if (keywordMeta && typeof keywordMeta === "object") {
+      const args = keywordMeta.args || "";
+      const rawText = keywordMeta.rawText || "";
+      const keywordOnly = keywordMeta.keyword || "";
+
+      return {
+        session_id: session.campaign_session_id ?? null,
+        campaign_id: session.campaign_id ?? null,
+        step_id: null,
+        choice_id: null,
+        user_input_raw: args || rawText || keywordOnly || "",
+        is_valid: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function executeStepApiCall({ contact, session, step, lastAnswer = null }) {
+  if (!step?.api_id) return null;
+
+  const effectiveLastAnswer = await resolveEffectiveLastAnswer(session, lastAnswer);
+  const vars = {
+    contact,
+    campaign: session?.campaign || { campaign_id: session?.campaign_id },
+    session,
+    lastAnswer: effectiveLastAnswer,
+  };
+
+  let result = null;
+  let ok = false;
+  let status = 500;
+  let apiPayload = null;
+  let normalizedError = null;
+  let apiInfo = { apiId: step.api_id };
+  let formattedText = null;
+  let templateError = null;
+
+  try {
+    result = await dispatchEndpoint(step.api_id, vars, {
+      source: "campaign_step",
+      stepId: step.step_id,
+    });
+
+    apiInfo = result?.api ?? { apiId: result?.apiId ?? step.api_id };
+    ok = !!result?.ok;
+    status = result?.status ?? status;
+    apiPayload = result?.payload;
+    formattedText =
+      apiPayload && typeof apiPayload.formattedText === "string"
+        ? apiPayload.formattedText
+        : null;
+    templateError = result?.templateError ?? null;
+  } catch (err) {
+    status = err?.status ?? status;
+    normalizedError = normalizeApiError({
+      err,
+      status,
+      api: apiInfo,
+      step,
+    });
+    logApiFailure(normalizedError, err, { step, api: apiInfo, status });
+    return {
+      normalizedError,
+      apiPayload: null,
+      formattedText: null,
+      apiInfo,
+      status,
+    };
+  }
+
+  if (!normalizedError) {
+    if (!ok || templateError) {
+      normalizedError = normalizeApiError({
+        err: templateError ?? null,
+        status,
+        api: apiInfo,
+        step,
+      });
+      logApiFailure(normalizedError, templateError ?? null, {
+        step,
+        api: apiInfo,
+        status,
+      });
+    }
+  }
+
+  return {
+    normalizedError,
+    apiPayload,
+    formattedText,
+    apiInfo,
+    status,
+    requiredInputs: result?.requiredInputs || [],
+  };
 }

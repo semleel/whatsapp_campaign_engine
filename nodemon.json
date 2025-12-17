@@ -1,0 +1,12 @@
+{
+    "watch": [
+        "src"
+    ],
+    "ignore": [
+        "logs/*",
+        "src/fake-api/data/*.json",
+        "node_modules/*",
+        ".next/*"
+    ],
+    "delay": "300"
+}

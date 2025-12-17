@@ -284,6 +284,13 @@ export type ChoiceConfig = {
     next_step_map?: Record<string, number | null>;
 };
 
+export type InteractionConfig = {
+    type: "none" | "buttons" | "menu";
+    response_path?: string;
+    max_items?: number;
+    save_to?: string;
+};
+
 export type CampaignStep = {
     step_id: number;
     client_id?: number;
@@ -304,6 +311,7 @@ export type CampaignStep = {
     next_step_number?: number | null;
     failure_step_number?: number | null;
     updatedat?: string | null;
+    interaction_config?: InteractionConfig | null;
 };
 
 export type CampaignStepChoice = {
@@ -321,8 +329,7 @@ export type CampaignStepWithChoices = CampaignStep & {
     template?: TemplateDetail | null;
     validation_mode?: ValidationMode;
     choice_mode?: ChoiceMode;
-    choice_source?: "manual" | "api";
-    choice_config?: ChoiceConfig | null;
+    interaction_config?: InteractionConfig | null;
     campaign_step_choice: CampaignStepChoice[];
 };
 

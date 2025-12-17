@@ -7,11 +7,23 @@ import { getRuntimeEndpoint } from "./apiEndpointRuntime.js";
 import { normalizeApiError } from "./campaignEngine/apiErrorHelper.js";
 import { log as appLog, warn as appWarn } from "../utils/logger.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { convertApiResponseToInteraction } from "./campaignEngine/interactionConverter.js";
 
 // ---------------------------------------------------------------------------
 // Simple {{ token }} formatter (used for URL/body templating)
 // ---------------------------------------------------------------------------
 const PLACEHOLDER = /{{\s*([^}]+)\s*}}/g;
+
+function extractSessionKeysFromBodyTemplate(template) {
+  if (!template || typeof template !== "string") return [];
+  const regex = /{{\s*session\.([a-zA-Z0-9_]+)\s*}}/g;
+  const keys = new Set();
+  let match;
+  while ((match = regex.exec(template)) !== null) {
+    keys.add(match[1]);
+  }
+  return Array.from(keys);
+}
 
 function resolvePath(data, path) {
   return path.split(".").reduce((acc, key) => (acc == null ? acc : acc[key]), data);
@@ -160,25 +172,36 @@ function normalizeLastAnswer(rawAnswer) {
 }
 
 function buildTemplateResponse(responseBody) {
-  if (
-    responseBody &&
-    typeof responseBody === "object" &&
-    !Array.isArray(responseBody)
-  ) {
+  // If API returns array, expose first item directly
+  if (Array.isArray(responseBody)) {
+    return responseBody.length > 0 && typeof responseBody[0] === "object"
+      ? responseBody[0]
+      : { value: responseBody };
+  }
+
+  // If API returns object
+  if (responseBody && typeof responseBody === "object") {
     const keys = Object.keys(responseBody);
+
+    // Preserve existing "single-key unwrap" behavior
     if (keys.length === 1) {
       const singleValue = responseBody[keys[0]];
       if (singleValue && typeof singleValue === "object") {
         return { ...responseBody, data: singleValue };
       }
     }
+
     return responseBody;
   }
+
+  // Fallback
   if (responseBody != null) {
     return { value: responseBody };
   }
+
   return {};
 }
+
 
 
 function ensureHttps(url) {
@@ -292,6 +315,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     throw err;
   }
   endpoint = { ...endpoint, response_template: normalizedTemplate };
+  const requiredInputs = extractSessionKeysFromBodyTemplate(endpoint.bodyTemplate || "");
 
   const resolvedVars = { ...vars };
   const lastAnswerContext = normalizeLastAnswer(
@@ -306,6 +330,10 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
 
   const requestContext = {
     ...resolvedVars,
+    session: {
+      ...resolvedVars.session,
+      ...(resolvedVars.session?.last_payload_json || {}),
+    },
     lastAnswer: {
       raw: lastAnswerContext.raw,
       value: lastAnswerContext.value,
@@ -420,6 +448,25 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
         }
       }
 
+      // ---- Interaction generation (CHOICE + interaction_config) ----
+      let interactionItems = null;
+
+      if (
+        endpoint &&
+        resolvedVars?.step &&
+        resolvedVars.step.action_type === "choice" &&
+        resolvedVars.step.interaction_config
+      ) {
+        try {
+          interactionItems = convertApiResponseToInteraction({
+            response: responseNormalized,
+            config: resolvedVars.step.interaction_config,
+          });
+        } catch (e) {
+          appWarn?.("[interaction] failed to convert API response:", e?.message || e);
+        }
+      }
+
       const successResponse = {
         ...result,
         url,
@@ -432,6 +479,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
         },
         api: apiMeta,
         templateError,
+        requiredInputs,
       };
 
       if (shouldLog) {
