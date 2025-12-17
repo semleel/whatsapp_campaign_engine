@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { jsPDF } from "jspdf";
 import { Api } from "@/lib/client";
 import type {
   ConversationThread,
@@ -34,6 +35,8 @@ export default function ConversationsPage() {
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<CampaignSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -75,13 +78,11 @@ export default function ConversationsPage() {
   const selectedThread =
     filtered.find((c) => c.contactId === selectedId) || filtered[0] || null;
 
-  // Auto-scroll to latest message when thread changes or new message arrives
   useEffect(() => {
     if (!messagesRef.current) return;
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
   }, [selectedThread?.contactId, selectedThread?.messages.length]);
 
-  // Load sessions for selected contact
   useEffect(() => {
     if (!selectedThread?.contactId) {
       setSessions([]);
@@ -144,6 +145,86 @@ export default function ConversationsPage() {
     }
   };
 
+  const handleExportConversation = () => {
+    if (!selectedThread) return;
+    setExportError(null);
+    setExporting(true);
+    try {
+      const doc = new jsPDF({
+        unit: "mm",
+        format: "a4",
+      });
+
+      const marginLeft = 20;
+      const marginTop = 20;
+      const maxWidth = 170;
+      const lineSpacing = 6;
+      let cursorY = marginTop;
+
+      const ensureSpace = (space: number) => {
+        if (cursorY + space > 287) {
+          doc.addPage();
+          cursorY = marginTop;
+        }
+      };
+
+      doc.setFontSize(16);
+      doc.text("Conversation Export", marginLeft, cursorY);
+      cursorY += lineSpacing;
+
+      doc.setFontSize(11);
+      const contactLabel = `Contact: ${selectedThread.contactName || "Unknown"}`;
+      doc.text(contactLabel, marginLeft, cursorY);
+      cursorY += lineSpacing;
+
+      doc.text(`Phone: ${selectedThread.phone}`, marginLeft, cursorY);
+      cursorY += lineSpacing;
+
+      if (selectedThread.campaign) {
+        doc.text(`Campaign: ${selectedThread.campaign}`, marginLeft, cursorY);
+        cursorY += lineSpacing;
+      }
+
+      doc.text(`Exported: ${new Date().toLocaleString()}`, marginLeft, cursorY);
+      cursorY += lineSpacing * 1.5;
+
+      doc.setFontSize(12);
+      doc.text("Conversation", marginLeft, cursorY);
+      cursorY += lineSpacing;
+
+      selectedThread.messages.forEach((message) => {
+        ensureSpace(lineSpacing * 2);
+        const authorLabel = message.author === "agent" ? "Agent" : "Customer";
+        const timestamp = new Date(message.timestamp).toLocaleString();
+        doc.setFont(undefined, "bold");
+        doc.text(`${authorLabel} - ${timestamp}`, marginLeft, cursorY);
+        cursorY += lineSpacing;
+
+        doc.setFont(undefined, "normal");
+        const messageText = message.text || "";
+        const lines = doc.splitTextToSize(messageText, maxWidth);
+        lines.forEach((line) => {
+          ensureSpace(lineSpacing);
+          doc.text(line, marginLeft + 5, cursorY);
+          cursorY += lineSpacing;
+        });
+
+        cursorY += lineSpacing / 2;
+      });
+
+      const baseName =
+        (selectedThread.contactName || selectedThread.phone || "conversation")
+          .replace(/[^a-z0-9]+/gi, "_")
+          .replace(/^_+|_+$/g, "")
+          .toLowerCase() || "conversation";
+      doc.save(`${baseName}_${Date.now()}.pdf`);
+    } catch (err: any) {
+      setExportError(err?.message || "Failed to export conversation.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (!privLoading && !canView) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
@@ -160,7 +241,16 @@ export default function ConversationsPage() {
           <h1 className="text-2xl font-semibold">Conversations</h1>
         </div>
         <div className="flex gap-2">
-          <button className="btn btn-ghost">Export</button>
+          <button
+            className="btn btn-ghost"
+            disabled={!selectedThread || exporting}
+            onClick={handleExportConversation}
+          >
+            {exporting ? "Exporting..." : "Export"}
+          </button>
+          {exportError ? (
+            <div className="text-xs text-rose-700">{exportError}</div>
+          ) : null}
           {canUpdate && (
             <button
               className="btn btn-primary"
@@ -179,7 +269,6 @@ export default function ConversationsPage() {
           showDetails ? "lg:grid-cols-[320px_1fr_320px]" : "lg:grid-cols-[320px_1fr]"
         }`}
       >
-        {/* Left pane: conversation list */}
         <div className="card p-4 h-[calc(100vh-200px)] overflow-hidden">
           {error ? (
             <div className="mb-3 rounded border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -244,7 +333,6 @@ export default function ConversationsPage() {
           </div>
         </div>
 
-        {/* Middle pane: message thread */}
         <div className="card p-4 h-[calc(100vh-200px)] overflow-hidden flex flex-col">
           {selectedThread ? (
             <>
@@ -332,8 +420,6 @@ export default function ConversationsPage() {
             </div>
           )}
         </div>
-
-        {/* Right pane: contact details */}
         {showDetails && (
           <div className="card p-4 h-[calc(100vh-200px)] overflow-y-auto">
             {selectedThread ? (
