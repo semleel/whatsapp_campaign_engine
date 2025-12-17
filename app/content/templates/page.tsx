@@ -19,6 +19,8 @@ type TemplateSummary = TemplateListItem & {
   expiresat?: string | null;
   mediaurl?: string | null;
   isdeleted?: boolean | null;
+  usageCount?: number | null;
+  usage_count?: number | null;
 };
 
 type ButtonItem = {
@@ -183,6 +185,9 @@ function renderFormattedLines(text: string, placeholder: string) {
   });
 }
 
+const formatUsageMessage = (count: number) =>
+  `In use by ${count} campaign step${count === 1 ? "" : "s"}. Cannot archive.`;
+
 const looksLikeImage = (url?: string | null) =>
   !!url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url || "");
 const looksLikeVideo = (url?: string | null) =>
@@ -224,29 +229,43 @@ export default function TemplateLibraryPage() {
 
         const rawSummaries: TemplateSummary[] = await Api.listTemplates({ includeDeleted: true });
 
-        const summaries = rawSummaries.map((item) => ({
-          contentid: item.contentid,
-          content_key: (item as any).content_key ?? (item as any).contentkey ?? null,
-          title: item.title || `Template ${item.contentid}`,
-          type: item.type || "message",
-          status: normalizeStatus(item.status),
-          category: item.category ?? null,
-          lang:
-            ((item.lang ?? item.defaultlang ?? "") as string).toUpperCase() || "",
-          defaultlang: item.defaultlang ?? "",
-          currentversion: item.currentversion ?? null,
-          updatedat: item.updatedat ?? (item as any).updated_at ?? item.lastupdated ?? null,
-          createdat: item.createdat ?? (item as any).created_at ?? null,
-          expiresat: item.expiresat ?? (item as any).expires_at ?? null,
-          mediaurl: item.mediaurl ?? (item as any).media_url ?? null,
-          isdeleted: item.isdeleted ?? (item as any).is_deleted ?? null,
-        }));
+        const summaries = rawSummaries.map((item) => {
+          const usageValue = Number(item.usageCount ?? item.usage_count ?? 0);
+          const usageCount = Number.isNaN(usageValue) ? 0 : usageValue;
+          return {
+            contentid: item.contentid,
+            content_key: (item as any).content_key ?? (item as any).contentkey ?? null,
+            title: item.title || `Template ${item.contentid}`,
+            type: item.type || "message",
+            status: normalizeStatus(item.status),
+            category: item.category ?? null,
+            lang:
+              ((item.lang ?? item.defaultlang ?? "") as string).toUpperCase() || "",
+            defaultlang: item.defaultlang ?? "",
+            currentversion: item.currentversion ?? null,
+            updatedat: item.updatedat ?? (item as any).updated_at ?? item.lastupdated ?? null,
+            createdat: item.createdat ?? (item as any).created_at ?? null,
+            expiresat: item.expiresat ?? (item as any).expires_at ?? null,
+            mediaurl: item.mediaurl ?? (item as any).media_url ?? null,
+            isdeleted: item.isdeleted ?? (item as any).is_deleted ?? null,
+            usageCount,
+            usage_count: usageCount,
+          };
+        });
 
         // fetch extra fields for preview
         const detailed: TemplateWithPreview[] = await Promise.all(
           summaries.map(async (t) => {
             try {
                 const data = await Api.getTemplate(t.contentid, true);
+              const usageValue = Number(
+                data.usageCount ??
+                  data.usage_count ??
+                  t.usageCount ??
+                  t.usage_count ??
+                  0,
+              );
+              const usageCount = Number.isNaN(usageValue) ? 0 : usageValue;
 
               const placeholders =
                 (data.placeholders as Record<string, unknown> | null) || null;
@@ -322,6 +341,8 @@ export default function TemplateLibraryPage() {
                 interactiveType,
                 menu,
                 isdeleted,
+                usageCount,
+                usage_count: usageCount,
               };
             } catch (err) {
               console.error("Template detail fetch failed:", err);
@@ -446,7 +467,8 @@ export default function TemplateLibraryPage() {
     }
   };
 
-  const handleArchive = async (id: number) => {
+  const handleArchive = async (id: number, usageCount = 0) => {
+    if (usageCount > 0) return;
     if (!canArchive) {
       await showPrivilegeDenied({ action: "archive templates", resource: "Content" });
       return;
@@ -623,6 +645,8 @@ export default function TemplateLibraryPage() {
                   bodyLines.length > 3
                     ? bodyLines.slice(0, 3).join("\n") + "..."
                     : bodyText;
+                const usageCount = Number(t.usageCount ?? t.usage_count ?? 0);
+                const isTemplateInUse = usageCount > 0;
 
                 return (
                   <Link
@@ -656,31 +680,42 @@ export default function TemplateLibraryPage() {
                               {t.type || ""}
                             </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              router.push(buildAddTranslationHref(t));
-                            }}
-                            className="text-[11px] text-primary hover:underline text-left"
-                          >
-                            Add translation
-                          </button>
-                          {canArchive && !t.isdeleted && (
-                            <button
-                              type="button"
-                              className="text-[11px] text-rose-600 hover:underline"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleArchive(Number(t.contentid));
-                              }}
-                              disabled={archivingId === Number(t.contentid)}
-                            >
-                              {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
-                            </button>
-                          )}
+                          <div className="flex flex-col items-end gap-1 text-[10px]">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  router.push(buildAddTranslationHref(t));
+                                }}
+                                className="text-[11px] text-primary hover:underline text-left"
+                              >
+                                Add translation
+                              </button>
+                              {canArchive && !t.isdeleted && (
+                                <button
+                                  type="button"
+                                  className="text-[11px] text-rose-600 hover:underline disabled:opacity-60"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleArchive(Number(t.contentid), usageCount);
+                                  }}
+                                  disabled={
+                                    archivingId === Number(t.contentid) || isTemplateInUse
+                                  }
+                                >
+                                  {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
+                                </button>
+                              )}
+                            </div>
+                            {isTemplateInUse && (
+                              <span className="text-[10px] text-rose-500 text-right">
+                                {formatUsageMessage(usageCount)}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -863,69 +898,84 @@ export default function TemplateLibraryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {pageItems.map((t) => (
-                    <tr key={t.contentid} className="border-t">
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {t.contentid}
-                      </td>
-                      <td className="px-3 py-2">
-                        <Link
-                          href={`/content/templates/${t.contentid}`}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {t.title}
-                        </Link>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground capitalize">
-                        {t.type}
-                      </td>
-                      <td className="px-3 py-2">
-                        {renderStatusPill(t)}
-                      </td>
-                      <td className="px-3 py-2 uppercase">
-                        <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
-                          {t.lang || "-"}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground text-xs">
-                        {t.content_key || "-"}
-                      </td>
-                      <td className="px-3 py-2">{t.category || "-"}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {formatUpdated(t)}
-                      </td>
-                      <td className="px-3 py-2 text-sm">
-                        <div className="flex items-center gap-3">
+                  {pageItems.map((t) => {
+                    const usageCount = Number(t.usageCount ?? t.usage_count ?? 0);
+                    const isTemplateInUse = usageCount > 0;
+                    return (
+                      <tr key={t.contentid} className="border-t">
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {t.contentid}
+                        </td>
+                        <td className="px-3 py-2">
                           <Link
-                            href={buildAddTranslationHref(t)}
-                            className="text-primary hover:underline text-[13px]"
+                            href={`/content/templates/${t.contentid}`}
+                            className="font-medium text-primary hover:underline"
                           >
-                            Add translation
+                            {t.title}
                           </Link>
-                          {canUpdate ? (
-                            <Link
-                              href={`/content/templates/${t.contentid}`}
-                              className="text-primary hover:underline"
-                            >
-                              Edit
-                            </Link>
-                          ) : (
-                            <span className="text-muted-foreground">View only</span>
-                          )}
-                          {canArchive && !t.isdeleted && (
-                            <button
-                              type="button"
-                              className="text-rose-600 hover:underline disabled:opacity-60"
-                              onClick={() => handleArchive(Number(t.contentid))}
-                              disabled={archivingId === Number(t.contentid)}
-                            >
-                              {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground capitalize">
+                          {t.type}
+                        </td>
+                        <td className="px-3 py-2">
+                          {renderStatusPill(t)}
+                        </td>
+                        <td className="px-3 py-2 uppercase">
+                          <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+                            {t.lang || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground text-xs">
+                          {t.content_key || "-"}
+                        </td>
+                        <td className="px-3 py-2">{t.category || "-"}</td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {formatUpdated(t)}
+                        </td>
+                        <td className="px-3 py-2 text-sm">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-3">
+                              <Link
+                                href={buildAddTranslationHref(t)}
+                                className="text-primary hover:underline text-[13px]"
+                              >
+                                Add translation
+                              </Link>
+                              {canUpdate ? (
+                                <Link
+                                  href={`/content/templates/${t.contentid}`}
+                                  className="text-primary hover:underline"
+                                >
+                                  Edit
+                                </Link>
+                              ) : (
+                                <span className="text-muted-foreground">View only</span>
+                              )}
+                              {canArchive && !t.isdeleted && (
+                                <button
+                                  type="button"
+                                  className="text-rose-600 hover:underline disabled:opacity-60"
+                                  onClick={() =>
+                                    handleArchive(Number(t.contentid), usageCount)
+                                  }
+                                  disabled={
+                                    archivingId === Number(t.contentid) || isTemplateInUse
+                                  }
+                                >
+                                  {archivingId === Number(t.contentid) ? "Archiving..." : "Archive"}
+                                </button>
+                              )}
+                            </div>
+                            {isTemplateInUse && (
+                              <div className="text-[10px] text-rose-500">
+                                {formatUsageMessage(usageCount)}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -973,4 +1023,3 @@ export default function TemplateLibraryPage() {
     </div>
   );
 }
-

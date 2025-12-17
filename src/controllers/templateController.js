@@ -177,6 +177,10 @@ export const mapContentToResponse = (content) => {
       })()
       : content.placeholders ?? null;
 
+  const safeUsageCount = Number(
+    content.usageCount ?? content.usage_count ?? content.usage ?? 0
+  );
+
   return {
     content_id: content.content_id,
     contentid: content.content_id,
@@ -202,7 +206,98 @@ export const mapContentToResponse = (content) => {
     isdeleted: content.is_deleted,
     currentversion: null,
     lastupdated: content.updated_at || content.created_at,
+    usageCount: safeUsageCount,
+    usage_count: safeUsageCount,
   };
+};
+
+const parseUsageCountRows = (row) => {
+  const rawValue =
+    row?._count?._all ??
+    row?.usage_count ??
+    row?.count ??
+    row?.template_source_count ??
+    row?.template_source_id_count;
+  const parsed = Number(rawValue);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const fetchTemplateUsageDetails = async (templateId) => {
+  if (Number.isNaN(Number(templateId))) {
+    return [];
+  }
+
+  try {
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT c.campaign_id, c.campaign_name, COUNT(*) AS usage_count
+       FROM campaign_step cs
+       JOIN campaign c ON c.campaign_id = cs.campaign_id
+       WHERE cs.template_source_id = $1
+       GROUP BY c.campaign_id, c.campaign_name
+       ORDER BY usage_count DESC`,
+      Number(templateId),
+    );
+
+    return (rows || []).map((row) => {
+      const campaignId = Number(
+        row?.campaign_id ??
+        row?.campaignid ??
+        row?.campaignId ??
+        row?.cid,
+      );
+      const campaignNameRaw =
+        row?.campaign_name ??
+        row?.campaignname ??
+        row?.campaignName ??
+        "";
+      return {
+        campaignId: Number.isNaN(campaignId) ? null : campaignId,
+        campaignName: campaignNameRaw?.toString().trim() || null,
+        stepCount: parseUsageCountRows(row),
+      };
+    });
+  } catch (err) {
+    console.error("Failed to fetch template usage details:", err);
+    return [];
+  }
+};
+
+const buildTemplateUsageMap = async () => {
+  try {
+    let rows = [];
+    if (prisma?.campaign_step?.groupBy) {
+      rows = await prisma.campaign_step.groupBy({
+        by: ["template_source_id"],
+        where: { template_source_id: { not: null } },
+        _count: { _all: true },
+      });
+    } else {
+      rows = await prisma.$queryRawUnsafe(
+        `SELECT template_source_id, COUNT(*) AS usage_count
+         FROM campaign_step
+         WHERE template_source_id IS NOT NULL
+         GROUP BY template_source_id`,
+      );
+    }
+
+    const map = new Map();
+    rows.forEach((row) => {
+      const id = Number(
+        row?.template_source_id ??
+        row?.templateSourceId ??
+        row?.template_sourceid ??
+        row?.templateSourceid ??
+        row?.content_id ??
+        row?.contentid,
+      );
+      if (Number.isNaN(id)) return;
+      map.set(id, parseUsageCountRows(row));
+    });
+    return map;
+  } catch (err) {
+    console.error("Template usage map error:", err);
+    return new Map();
+  }
 };
 
 const normalizeTemplatePayload = (body = {}) => {
@@ -344,7 +439,21 @@ export async function listTemplates(req, res) {
       templates = await fallbackList({ where });
     }
 
-    return res.status(200).json(templates.map(mapContentToResponse));
+    const usageMap = await buildTemplateUsageMap();
+    const mappedTemplates = templates
+      .map(mapContentToResponse)
+      .filter(Boolean);
+    const templatesWithUsage = mappedTemplates.map((tpl) => {
+      const templateId = Number(tpl.content_id ?? tpl.contentid ?? tpl?.contentid);
+      const usageCount = usageMap.get(templateId) ?? 0;
+      return {
+        ...tpl,
+        usageCount,
+        usage_count: usageCount,
+      };
+    });
+
+    return res.status(200).json(templatesWithUsage);
   } catch (err) {
     console.error("Template list error:", err);
     return res.status(500).json({ error: err.message });
@@ -460,6 +569,38 @@ export async function softDeleteTemplate(req, res) {
 
     if (Number.isNaN(id)) {
       return res.status(400).json({ error: "Invalid template id" });
+    }
+
+    const usageDetails = await fetchTemplateUsageDetails(id);
+    if (usageDetails.length) {
+      const totalSteps = usageDetails.reduce((sum, detail) => sum + detail.stepCount, 0);
+      const campaignNames = Array.from(
+        new Set(
+          usageDetails
+            .map((detail) =>
+              detail.campaignName ||
+              (detail.campaignId ? `Campaign ${detail.campaignId}` : null)
+            )
+            .filter(Boolean)
+        )
+      );
+      const displayedNames = campaignNames.slice(0, 3);
+      const remaining = campaignNames.length - displayedNames.length;
+      const campaignLabel =
+        displayedNames.length === 1 ? "Campaign" : "Campaigns";
+      const campaignList =
+        displayedNames.length > 0
+          ? `${campaignLabel}: ${displayedNames.join(", ")}${remaining > 0 ? ` and ${remaining} more` : ""}.`
+          : "";
+      console.warn(
+        `Soft delete blocked: template ${id} is used by ${totalSteps} campaign step(s)`
+      );
+      // Manual test: reusing this template in any campaign step should return a 409 conflict with campaign detail.
+      const campaignListSegment = campaignList ? ` ${campaignList}` : "";
+      return res.status(409).json({
+        error:
+          `Template cannot be archived because it is currently used by ${totalSteps} campaign step(s).${campaignListSegment} Remove or replace it in campaigns first.`,
+      });
     }
 
     const contentDelegate = getContentDelegate();

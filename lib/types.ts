@@ -397,6 +397,8 @@ export interface TemplateListItem {
     expiresat?: string | null;
     body?: string | null;
     placeholders?: Record<string, unknown> | null;
+    usageCount?: number;
+    usage_count?: number;
 }
 
 export interface TemplateDetail extends TemplateListItem {
