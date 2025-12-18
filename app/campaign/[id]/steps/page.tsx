@@ -518,6 +518,9 @@ export default function CampaignStepsPage() {
     setSteps((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)));
   };
 
+  const generateChoiceLocalId = () =>
+    `choice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
   const updateChoice = (
     stepIndex: number,
     choiceIndex: number,
@@ -537,6 +540,7 @@ export default function CampaignStepsPage() {
   const addChoice = (stepIndex: number) => {
     const current = steps[stepIndex];
     const choice = {
+      __local_id: generateChoiceLocalId(),
       choice_id: 0,
       campaign_id: current.campaign_id,
       step_id: current.step_id,
@@ -547,7 +551,7 @@ export default function CampaignStepsPage() {
     updateStep(stepIndex, {
       campaign_step_choice: [...(current.campaign_step_choice || []), choice],
     });
-  };
+  }
 
   const removeChoice = (stepIndex: number, choiceIndex: number) => {
     const current = steps[stepIndex];
