@@ -451,7 +451,19 @@ export default function CampaignStepsPage() {
 
   const handleWizardApply = (config: InteractionConfig) => {
     if (wizardTargetStepIndex === null) return;
-    updateStep(wizardTargetStepIndex, { interaction_config: config });
+    const targetStep = steps[wizardTargetStepIndex];
+    if (!targetStep) return;
+    const nextNeighbor = steps[wizardTargetStepIndex + 1] ?? null;
+    const resolvedNextStep =
+      targetStep.next_step_id ??
+      (nextNeighbor ? nextNeighbor.step_id || nextNeighbor.client_id : null);
+    updateStep(wizardTargetStepIndex, {
+      interaction_config: config,
+      choice_mode: "sequential",
+      is_end_step: false,
+      campaign_step_choice: [],
+      next_step_id: resolvedNextStep,
+    });
   };
 
   const handleWizardCandidateMeta = (meta: { response_path: string; count: number }) => {
@@ -772,29 +784,41 @@ export default function CampaignStepsPage() {
     setSaving(true);
     try {
       const payload = steps.map((s, idx) => {
-        const { message_mode, template, local_id, ...rest } = s as StepFormState & { template?: any };
+        const {
+          message_mode,
+          template,
+          local_id,
+          campaign_step_choice,
+          choice_mode,
+          interaction_config,
+          ...rest
+        } = s as StepFormState & { template?: any };
         const mode = resolveMessageMode(s);
         const usesApi = s.action_type === "message" || s.action_type === "choice";
         const resolvedApiId = usesApi ? s.api_id ?? null : null;
         const resolvedFailureStepId = resolvedApiId ? s.failure_step_id ?? null : null;
-        const isSequentialChoice =
-          s.action_type === "choice" && resolveChoiceMode(s) === "sequential";
+        const resolvedChoiceMode = resolveChoiceMode(s);
+        const isChoiceStep = s.action_type === "choice";
+        const isSequentialChoice = isChoiceStep && resolvedChoiceMode === "sequential";
+        const resolvedInteractionConfig = isSequentialChoice ? resolveInteractionConfigForSave(s) : null;
+        const branchChoices = isChoiceStep && resolvedChoiceMode === "branch" ? campaign_step_choice : [];
+        const normalizedNextStepId = isSequentialChoice
+          ? s.next_step_id ?? null
+          : isChoiceStep
+            ? null
+            : s.is_end_step
+              ? null
+              : s.next_step_id ?? null;
         return {
           ...rest,
           api_id: resolvedApiId,
-          next_step_id:
-            isSequentialChoice
-              ? s.next_step_id ?? null
-              : s.action_type === "choice"
-                ? null
-                : s.is_end_step
-                  ? null
-                  : s.next_step_id ?? null,
+          next_step_id: normalizedNextStepId,
           failure_step_id: resolvedFailureStepId,
-          is_end_step: s.action_type === "choice" ? false : !!s.is_end_step,
+          is_end_step: isChoiceStep ? false : !!s.is_end_step,
           template_source_id: mode === "template" ? rest.template_source_id ?? null : null,
-          choice_mode: s.action_type === "choice" ? (s.choice_mode ?? "branch") : undefined,
-          interaction_config: resolveInteractionConfigForSave(s),
+          choice_mode: isChoiceStep ? resolvedChoiceMode : undefined,
+          interaction_config: resolvedInteractionConfig,
+          campaign_step_choice: branchChoices,
           step_number: idx + 1,
           step_code: (s.step_code || `STEP_${idx + 1}`).trim(),
         };
@@ -961,40 +985,39 @@ export default function CampaignStepsPage() {
                             apiForStep && apiForStep.is_active === false;
 
                           const choiceMode = resolveChoiceMode(s);
-                          const isSequentialChoice = s.action_type === "choice" && choiceMode === "sequential";
-                          const targetSteps = steps.filter((st) => st.local_id !== s.local_id);
+                          const isChoiceStep = s.action_type === "choice";
+                          const isSequentialChoice = isChoiceStep && choiceMode === "sequential";
                           const sequentialMissingNext = isSequentialChoice && !s.next_step_id;
+                          const nextNeighbor = steps[idx + 1];
+                          const resolveSequentialNext = () =>
+                            s.next_step_id ??
+                            (nextNeighbor ? nextNeighbor.step_id || nextNeighbor.client_id : null);
                           const handleChoiceModeChange = (mode: "branch" | "sequential") => {
-                            const patch: Partial<StepFormState> = { choice_mode: mode };
-                            if (mode === "sequential") {
-                              patch.is_end_step = false;
-                              if (!s.next_step_id && targetSteps.length) {
-                                const candidate = targetSteps[0];
-                                patch.next_step_id = candidate.step_id || candidate.client_id || null;
-                              }
-                            } else {
-                              patch.next_step_id = null;
-                            }
-                            updateStep(idx, patch);
-                          };
-                          const interactionEnabled = Boolean(s.interaction_config);
-                          const handleInteractionToggle = (enabled: boolean) => {
-                            if (!enabled) {
-                              updateStep(idx, {
-                                interaction_config: null,
-                              });
+                            if (mode === "branch") {
                               removePreviewMetaForStep(s);
+                              updateStep(idx, {
+                                choice_mode: "branch",
+                                next_step_id: null,
+                                interaction_config: null,
+                                api_id: null,
+                              });
                               return;
                             }
-                            if (!s.interaction_config) {
-                              openWizardForStep(idx);
-                            }
+                            updateStep(idx, {
+                              choice_mode: "sequential",
+                              is_end_step: false,
+                              next_step_id: resolveSequentialNext(),
+                              campaign_step_choice: [],
+                            });
                           };
+                          const interactionEnabled = Boolean(s.interaction_config);
                           const handleApiEndpointChange = (value: string) => {
                             const apiIdValue = value ? Number(value) : null;
+                            const clearedConfig =
+                              apiIdValue && apiIdValue === s.api_id ? s.interaction_config : null;
                             updateStep(idx, {
                               api_id: apiIdValue,
-                              interaction_config: apiIdValue ? s.interaction_config : null,
+                              interaction_config: clearedConfig,
                             });
                           };
                           const stepMetaKey = getStepMetaKey(s);
@@ -1003,6 +1026,7 @@ export default function CampaignStepsPage() {
                               ? interactionPreviewInfo[stepMetaKey]
                               : null;
 
+                          // The map callback must return the rendered row for each step.
                           return (
                             <SortableStepRow
                               key={s.local_id}
@@ -1080,6 +1104,59 @@ export default function CampaignStepsPage() {
                                           placeholder="e.g. WELCOME"
                                         />
                                       </label>
+
+                                      {isChoiceStep && (
+                                        <div className="md:col-span-2 space-y-3 rounded-lg border bg-muted/5 p-3 text-sm">
+                                          <div className="font-semibold">Choice behavior</div>
+                                          <div className="grid gap-2 text-left text-sm">
+                                            <label
+                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
+                                              htmlFor={`choice-mode-branch-${idx}`}
+                                            >
+                                              <input
+                                                id={`choice-mode-branch-${idx}`}
+                                                type="radio"
+                                                name={`choice-mode-${idx}`}
+                                                value="branch"
+                                                checked={choiceMode === "branch"}
+                                                onChange={() => handleChoiceModeChange("branch")}
+                                                className="mt-1 h-4 w-4"
+                                              />
+                                              <div>
+                                                <span className="font-semibold">Branch by selected option</span>
+                                                <p className="text-xs text-muted-foreground">
+                                                  Each option can route to a different step.
+                                                </p>
+                                              </div>
+                                            </label>
+                                            <label
+                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
+                                              htmlFor={`choice-mode-seq-${idx}`}
+                                            >
+                                              <input
+                                                id={`choice-mode-seq-${idx}`}
+                                                type="radio"
+                                                name={`choice-mode-${idx}`}
+                                                value="sequential"
+                                                checked={choiceMode === "sequential"}
+                                                onChange={() => handleChoiceModeChange("sequential")}
+                                                className="mt-1 h-4 w-4"
+                                              />
+                                              <div>
+                                                <span className="font-semibold">Continue to next step</span>
+                                                <p className="text-xs text-muted-foreground">
+                                                  User replies are recorded and the flow proceeds automatically.
+                                                </p>
+                                              </div>
+                                            </label>
+                                          </div>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            {choiceMode === "branch"
+                                              ? "Branch choices require manual routing for each option."
+                                              : "API-driven choices always continue to the next step."}
+                                          </p>
+                                        </div>
+                                      )}
 
                                       {/* Step-level jump configuration (NOT for choice steps) */}
                                       {s.action_type !== "choice" ? (
@@ -1389,7 +1466,7 @@ export default function CampaignStepsPage() {
                                       </div>
                                     )}
 
-                                    {(s.action_type === "message" || s.action_type === "choice") && (
+                                    {(s.action_type === "message" || isSequentialChoice) && (
                                       <div className="grid gap-3 md:grid-cols-2">
                                         <label className="space-y-1 text-sm font-medium">
                                           <span>API</span>
@@ -1469,125 +1546,72 @@ export default function CampaignStepsPage() {
                                         </div>
                                       </div>
                                     )}
-                                    {s.action_type === "choice" && (
-                                      <div className="space-y-3 rounded-md border bg-muted/5 px-3 py-3 text-sm">
-                                        <div className="flex items-center justify-between">
-                                          <p className="text-sm font-semibold">Interactive options</p>
-                                          <label className="inline-flex items-center gap-2 text-sm">
-                                            <input
-                                              type="checkbox"
-                                              checked={interactionEnabled}
-                                              disabled={!s.api_id}
-                                              onChange={(e) => handleInteractionToggle(e.target.checked)}
-                                              className="h-4 w-4"
-                                            />
-                                            <span>{interactionEnabled ? "Enabled" : "Disabled"}</span>
-                                          </label>
-                                        </div>
-                                        <div className="space-y-2 rounded-lg border border-border bg-background/70 px-3 py-2 text-xs">
-                                          <div className="flex items-center justify-between">
-                                            <span>Shows</span>
-                                            <span className="font-semibold text-foreground">
-                                              {s.interaction_config?.response_path || "Not set"}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center justify-between">
-                                            <span>Saves as</span>
-                                            <span className="font-semibold text-foreground">
-                                              {s.interaction_config?.save_to || "Not set"}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-center justify-between">
-                                            <span>Mode</span>
-                                            <span className="font-semibold text-foreground">
-                                              {s.interaction_config
-                                                ? s.interaction_config.type === "buttons"
-                                                  ? `Buttons · max ${s.interaction_config.max_items ?? 3}`
-                                                  : `Menu · max ${s.interaction_config.max_items ?? 10}`
-                                                : "Not configured"}
-                                            </span>
-                                          </div>
-                                        </div>
-                                        <div className="flex flex-col gap-2 pt-2">
-                                          <button
-                                            type="button"
-                                            onClick={() => openWizardForStep(idx)}
-                                            disabled={!s.api_id}
-                                            className={`inline-flex items-center justify-center rounded-md border border-primary bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20 ${!s.api_id ? "opacity-50 cursor-not-allowed" : ""}`}
-                                          >
-                                            {interactionEnabled ? "Edit interactive options" : "Configure interactive options"}
-                                          </button>
-                                          {!interactionEnabled && (
-                                            <p className="text-xs text-muted-foreground">
-                                              Toggle on to convert the API response into interactive buttons or a menu.
-                                            </p>
-                                          )}
-                                          {interactionEnabled && (!s.interaction_config?.response_path || !s.interaction_config?.save_to) && (
-                                            <p className="text-xs text-rose-600">
-                                              Configure a response path and save key in the wizard before enabling
-                                              interactive options.
-                                            </p>
-                                          )}
-                                          {interactionEnabled && previewMeta && previewMeta.count > 10 && (
-                                            <p className="text-xs text-amber-600">
-                                              Only the first 10 options will be shown at runtime.
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {s.action_type === "choice" && (
+                                    {isChoiceStep && (
                                       <div className="space-y-4 border-t pt-3">
-                                        <div className="space-y-3 rounded-lg border bg-muted/5 p-3 text-sm">
-                                          <div className="font-semibold">Choice behavior</div>
-                                          <div className="grid gap-2 text-left text-sm">
-                                            <label
-                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
-                                              htmlFor={`choice-mode-branch-${idx}`}
-                                            >
-                                              <input
-                                                id={`choice-mode-branch-${idx}`}
-                                                type="radio"
-                                                name={`choice-mode-${idx}`}
-                                                value="branch"
-                                                checked={choiceMode === "branch"}
-                                                onChange={() => handleChoiceModeChange("branch")}
-                                                className="mt-1 h-4 w-4"
-                                              />
+                                        {isSequentialChoice ? (
+                                          <div className="space-y-3 rounded-lg border bg-muted/5 px-3 py-3 text-sm">
+                                            <div className="flex items-center justify-between">
                                               <div>
-                                                <span className="font-semibold">Branch by selected option</span>
+                                                <p className="text-sm font-semibold">Interactive options</p>
                                                 <p className="text-xs text-muted-foreground">
-                                                  Each option can route to a different step.
+                                                  API-driven choices always continue to the next step.
                                                 </p>
                                               </div>
-                                            </label>
-                                            <label
-                                              className="flex cursor-pointer items-start gap-3 rounded border px-3 py-2"
-                                              htmlFor={`choice-mode-seq-${idx}`}
-                                            >
-                                              <input
-                                                id={`choice-mode-seq-${idx}`}
-                                                type="radio"
-                                                name={`choice-mode-${idx}`}
-                                                value="sequential"
-                                                checked={choiceMode === "sequential"}
-                                                onChange={() => handleChoiceModeChange("sequential")}
-                                                className="mt-1 h-4 w-4"
-                                              />
-                                              <div>
-                                                <span className="font-semibold">Continue to next step</span>
-                                                <p className="text-xs text-muted-foreground">
-                                                  User selection is recorded, then flow continues automatically.
-                                                </p>
+                                              <button
+                                                type="button"
+                                                onClick={() => openWizardForStep(idx)}
+                                                disabled={!s.api_id}
+                                                className={`inline-flex items-center justify-center rounded-md border border-primary bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20 ${!s.api_id ? "opacity-50 cursor-not-allowed" : ""}`}
+                                              >
+                                                {interactionEnabled ? "Edit interactive options" : "Configure interactive options"}
+                                              </button>
+                                            </div>
+                                            <div className="space-y-2 rounded-lg border border-border bg-background/70 px-3 py-2 text-xs">
+                                              <div className="flex items-center justify-between">
+                                                <span>Shows</span>
+                                                <span className="font-semibold text-foreground">
+                                                  {s.interaction_config?.response_path || "Not set"}
+                                                </span>
                                               </div>
-                                            </label>
+                                              <div className="flex items-center justify-between">
+                                                <span>Saves as</span>
+                                                <span className="font-semibold text-foreground">
+                                                  {s.interaction_config?.save_to || "Not set"}
+                                                </span>
+                                              </div>
+                                              <div className="flex items-center justify-between">
+                                                <span>Mode</span>
+                                                <span className="font-semibold text-foreground">
+                                                  {s.interaction_config
+                                                    ? s.interaction_config.type === "buttons"
+                                                      ? `Buttons · max ${s.interaction_config.max_items ?? 3}`
+                                                      : `Menu · max ${s.interaction_config.max_items ?? 10}`
+                                                    : "Not configured"}
+                                                </span>
+                                              </div>
+                                            </div>
+                                            {!s.api_id && (
+                                              <p className="text-xs text-rose-600">
+                                                Select an API before configuring interactive options.
+                                              </p>
+                                            )}
+                                            {!interactionEnabled && s.api_id && (
+                                              <p className="text-xs text-muted-foreground">
+                                                Use the wizard to surface API lists as WhatsApp options.
+                                              </p>
+                                            )}
+                                            {interactionEnabled && (!s.interaction_config?.response_path || !s.interaction_config?.save_to) && (
+                                              <p className="text-xs text-rose-600">
+                                                Configure a response path and save key in the wizard.
+                                              </p>
+                                            )}
+                                            {interactionEnabled && previewMeta && previewMeta.count > 10 && (
+                                              <p className="text-xs text-amber-600">
+                                                Only the first 10 options will be shown at runtime.
+                                              </p>
+                                            )}
                                           </div>
-                                          <p className="text-[11px] text-muted-foreground">
-                                            This controls how the campaign proceeds after the user makes a selection.
-                                          </p>
-                                        </div>
-                                        {choiceMode === "branch" ? (
+                                        ) : (
                                           <div className="space-y-3">
                                             <div className="flex items-center justify-between">
                                               <h4 className="text-sm font-semibold">Choices</h4>
@@ -1651,41 +1675,39 @@ export default function CampaignStepsPage() {
                                                           />
                                                         </label>
                                                       </div>
-                                                      {!isSequentialChoice ? (
-                                                        <div className="grid gap-2 md:grid-cols-2 items-center">
-                                                          <label className="text-sm font-medium space-y-1">
-                                                            <span>Next step (within this campaign)</span>
-                                                            <select
-                                                              className="w-full rounded border px-3 py-2"
-                                                              value={choice.next_step_id ?? ""}
-                                                              onChange={(e) =>
-                                                                updateChoice(idx, cidx, {
-                                                                  next_step_id: e.target.value ? Number(e.target.value) : null,
-                                                                })
-                                                              }
-                                                            >
-                                                              <option value="">Select a target step</option>
-                                                              {steps
-                                                                .filter((st) => st.local_id !== s.local_id)
-                                                                .map((st) => {
-                                                                  const value = st.step_id || st.client_id;
-                                                                  const labelText =
-                                                                    st.prompt_text?.trim() ||
-                                                                    st.step_code ||
-                                                                    "Untitled step";
-                                                                  return (
-                                                                    <option
-                                                                      key={`${st.local_id}-choice-target-${value}`}
-                                                                      value={value}
-                                                                    >
-                                                                      {`Step ${st.step_number} - ${labelText}`}
-                                                                    </option>
-                                                                  );
-                                                                })}
-                                                            </select>
-                                                          </label>
-                                                        </div>
-                                                      ) : null}
+                                                      <div className="grid gap-2 md:grid-cols-2 items-center">
+                                                        <label className="text-sm font-medium space-y-1">
+                                                          <span>Next step (within this campaign)</span>
+                                                          <select
+                                                            className="w-full rounded border px-3 py-2"
+                                                            value={choice.next_step_id ?? ""}
+                                                            onChange={(e) =>
+                                                              updateChoice(idx, cidx, {
+                                                                next_step_id: e.target.value ? Number(e.target.value) : null,
+                                                              })
+                                                            }
+                                                          >
+                                                            <option value="">Select a target step</option>
+                                                            {steps
+                                                              .filter((st) => st.local_id !== s.local_id)
+                                                              .map((st) => {
+                                                                const value = st.step_id || st.client_id;
+                                                                const labelText =
+                                                                  st.prompt_text?.trim() ||
+                                                                  st.step_code ||
+                                                                  "Untitled step";
+                                                                return (
+                                                                  <option
+                                                                    key={`${st.local_id}-choice-target-${value}`}
+                                                                    value={value}
+                                                                  >
+                                                                    {`Step ${st.step_number} - ${labelText}`}
+                                                                  </option>
+                                                                );
+                                                              })}
+                                                          </select>
+                                                        </label>
+                                                      </div>
                                                     </div>
                                                   );
                                                 })
@@ -1693,21 +1715,6 @@ export default function CampaignStepsPage() {
                                                 <p className="text-xs text-muted-foreground">No choices yet.</p>
                                               )}
                                             </div>
-                                          </div>
-                                        ) : (
-                                          <div className="rounded border bg-muted/5 px-3 py-2 text-sm text-muted-foreground space-y-1">
-                                            <p className="font-semibold">
-                                              Choices are defined by the template or user input.
-                                            </p>
-                                            <p>
-                                              In sequential mode, the flow always continues to the configured next
-                                              step.
-                                            </p>
-                                            {sequentialMissingNext && (
-                                              <p className="text-[11px] text-rose-600">
-                                                Next step is required when continuing to the next step.
-                                              </p>
-                                            )}
                                           </div>
                                         )}
                                       </div>

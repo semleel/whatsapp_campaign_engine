@@ -1,4 +1,4 @@
-// src/fake-api/routes/facilities.js
+// src/fake-api/routes/time-slots.js
 
 import express from "express";
 import fs from "fs";
@@ -6,20 +6,20 @@ import path from "path";
 
 const router = express.Router();
 
-const facilitiesFile = path.join(
+const timeSlotsFile = path.join(
     process.cwd(),
     "src",
     "fake-api",
     "data",
-    "facilities.json"
+    "time-slots.json"
 );
 
-const facilities = JSON.parse(fs.readFileSync(facilitiesFile, "utf-8"));
+const timeSlots = JSON.parse(fs.readFileSync(timeSlotsFile, "utf-8"));
 
 router.get("/", (_req, res) => {
     res.json({
         success: true,
-        facilities,
+        time_slots: timeSlots,
     });
 });
 

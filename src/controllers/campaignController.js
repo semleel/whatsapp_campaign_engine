@@ -936,7 +936,7 @@ export async function saveCampaignStepsBulk(req, res) {
               `[CAMPAIGN] Branch choice missing next_step_id for step ${source.step_code || source.step_number}`,
               {
                 campaignId,
-                stepId,
+                stepId: stepId,
                 choiceCode: c.choice_code || c.choicecode || null,
               }
             );
