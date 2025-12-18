@@ -349,18 +349,6 @@ export default function CampaignDetailPage() {
                 The first word of an incoming message must match one of these keywords (single word,
                 no spaces). Anything after the keyword becomes arguments.
               </span>
-              <span>
-                Examples for admins to promote:
-                <br />
-                <span className="font-mono">pokemon pikachu</span> /{" "}
-                <span className="font-mono">pokemon random</span>
-                <br />
-                <span className="font-mono">weather cheras</span> /{" "}
-                <span className="font-mono">weather random</span>
-                <br />
-                <span className="font-mono">quote confucius</span> /{" "}
-                <span className="font-mono">quote random</span>
-              </span>
             </p>
           </div>
 

@@ -94,9 +94,9 @@ export default function CampaignCreatePage() {
             : "";
         setKeywordMessage(
           (data && data.error) ||
-            (data && data.available === false
-              ? `Keyword already taken.${campaignHint}`
-              : "Unable to validate keyword. Please try again.")
+          (data && data.available === false
+            ? `Keyword already taken.${campaignHint}`
+            : "Unable to validate keyword. Please try again.")
         );
         return;
       }
@@ -310,18 +310,6 @@ export default function CampaignCreatePage() {
                 Keywords route inbound WhatsApp users into this campaign. The
                 first word must match a keyword you configure (single word,
                 no spaces), and anything after it is treated as arguments.
-              </span>
-              <span>
-                Examples you can promote to users:
-                <br />
-                <span className="font-mono">pokemon pikachu</span> /{" "}
-                <span className="font-mono">pokemon random</span>
-                <br />
-                <span className="font-mono">weather cheras</span> /{" "}
-                <span className="font-mono">weather random</span>
-                <br />
-                <span className="font-mono">quote confucius</span> /{" "}
-                <span className="font-mono">quote random</span>
               </span>
             </p>
           </div>
