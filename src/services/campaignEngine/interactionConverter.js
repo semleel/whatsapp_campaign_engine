@@ -37,7 +37,6 @@ export function convertApiResponseToInteraction({ response, config = {} }) {
     const root = resolvePath(response, response_path);
     if (!root) return { rows: [], sections: [] };
 
-    // ✅ CASE 1: ARRAY → flat list
     if (Array.isArray(root)) {
         const rows = root
             .map((item) => ({
@@ -51,7 +50,6 @@ export function convertApiResponseToInteraction({ response, config = {} }) {
             : { rows };
     }
 
-    // ✅ CASE 2: OBJECT OF ARRAYS → sectioned menu (FACILITIES)
     if (isObject(root)) {
         const sections = Object.entries(root)
             .map(([group, items]) => {

@@ -172,18 +172,15 @@ function normalizeLastAnswer(rawAnswer) {
 }
 
 function buildTemplateResponse(responseBody) {
-  // If API returns array, expose first item directly
   if (Array.isArray(responseBody)) {
     return responseBody.length > 0 && typeof responseBody[0] === "object"
       ? responseBody[0]
       : { value: responseBody };
   }
 
-  // If API returns object
   if (responseBody && typeof responseBody === "object") {
     const keys = Object.keys(responseBody);
 
-    // Preserve existing "single-key unwrap" behavior
     if (keys.length === 1) {
       const singleValue = responseBody[keys[0]];
       if (singleValue && typeof singleValue === "object") {
@@ -194,15 +191,12 @@ function buildTemplateResponse(responseBody) {
     return responseBody;
   }
 
-  // Fallback
   if (responseBody != null) {
     return { value: responseBody };
   }
 
   return {};
 }
-
-
 
 function ensureHttps(url) {
   if (!/^https:\/\//i.test(url)) {
@@ -289,7 +283,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     name: endpoint.name,
     isActive: endpoint.is_active ?? endpoint.isActive ?? true,
   };
-  // HARD BLOCK disabled API
+  
   if (apiMeta.isActive === false && source !== "manual_test") {
     const err = new Error("API_DISABLED");
     err.code = "API_DISABLED";
@@ -297,7 +291,7 @@ export async function dispatchEndpoint(endpointId, vars = {}, options = {}) {
     throw err;
   }
 
-  // If response_template is not hydrated in the runtime cache, fetch from DB once.
+  
   if (!endpoint.response_template && endpointNumericId) {
     try {
       const apiRow = await prisma.api.findUnique({
